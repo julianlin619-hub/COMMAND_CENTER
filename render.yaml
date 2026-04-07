@@ -1,0 +1,124 @@
+services:
+  # ── Dashboard (Next.js) ────────────────────────────────────────────────
+  - type: web
+    name: command-center-dashboard
+    runtime: node
+    rootDir: dashboard
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    plan: starter
+    envVars:
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: NEXT_PUBLIC_CLERK_SIGN_IN_URL
+        value: /sign-in
+
+  # ── Cron Jobs (Python) ─────────────────────────────────────────────────
+  # IMPORTANT: Update the schedule values to match your actual posting cadence.
+  # These are placeholders.
+
+  - type: cron
+    name: youtube-cron
+    runtime: python
+    buildCommand: pip install -e .
+    startCommand: python -m cron.youtube_cron
+    schedule: "0 */4 * * *"  # TODO: set your real schedule
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: YOUTUBE_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_REFRESH_TOKEN
+        sync: false
+
+  - type: cron
+    name: instagram-cron
+    runtime: python
+    buildCommand: pip install -e .
+    startCommand: python -m cron.instagram_cron
+    schedule: "0 */4 * * *"  # TODO: set your real schedule
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: INSTAGRAM_ACCESS_TOKEN
+        sync: false
+
+  - type: cron
+    name: tiktok-cron
+    runtime: python
+    buildCommand: pip install -e .
+    startCommand: python -m cron.tiktok_cron
+    schedule: "0 */4 * * *"  # TODO: set your real schedule
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: TIKTOK_CLIENT_KEY
+        sync: false
+      - key: TIKTOK_CLIENT_SECRET
+        sync: false
+
+  - type: cron
+    name: linkedin-cron
+    runtime: python
+    buildCommand: pip install -e .
+    startCommand: python -m cron.linkedin_cron
+    schedule: "0 */4 * * *"  # TODO: set your real schedule
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: LINKEDIN_CLIENT_ID
+        sync: false
+      - key: LINKEDIN_CLIENT_SECRET
+        sync: false
+
+  - type: cron
+    name: x-cron
+    runtime: python
+    buildCommand: pip install -e .
+    startCommand: python -m cron.x_cron
+    schedule: "0 */4 * * *"  # TODO: set your real schedule
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: X_API_KEY
+        sync: false
+      - key: X_API_SECRET
+        sync: false
+      - key: X_ACCESS_TOKEN
+        sync: false
+      - key: X_ACCESS_SECRET
+        sync: false
+
+  - type: cron
+    name: threads-cron
+    runtime: python
+    buildCommand: pip install -e .
+    startCommand: python -m cron.threads_cron
+    schedule: "0 */4 * * *"  # TODO: set your real schedule
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: THREADS_ACCESS_TOKEN
+        sync: false
