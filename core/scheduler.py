@@ -1,4 +1,21 @@
-"""Scheduling logic: process posts that are due for publishing."""
+"""Scheduling logic: process posts that are due for publishing.
+
+This is the heart of the cron job. Every 4 hours, each platform's cron job
+calls process_due_posts(), which:
+  1. Queries Supabase for schedules whose time has arrived (and haven't
+     been claimed yet).
+  2. For each one, marks it as "picked up" immediately — this prevents
+     another cron run from grabbing the same post if jobs overlap.
+  3. Calls the platform adapter to actually publish the post.
+  4. Updates the post status to "published" or "failed".
+
+The key design choice is step 2: we mark the schedule as picked up BEFORE
+attempting to publish. This is a "claim first, then work" pattern that
+prevents double-publishing even if two cron instances run at the same time.
+The downside is that if the process crashes after claiming but before
+publishing, the post gets stuck. That's an acceptable tradeoff — a stuck
+post can be manually retried, but a double-published post can't be undone.
+"""
 
 from __future__ import annotations
 
@@ -25,15 +42,25 @@ def process_due_posts(platform_client, platform: str) -> int:
 
     for schedule in schedules:
         schedule_id = schedule["id"]
+        # The "posts" key comes from the Supabase join (select "*, posts(*)")
+        # in get_due_schedules — it's the related row from the posts table.
         post_data = schedule.get("posts")
         if not post_data:
             logger.warning("Schedule %s has no associated post, skipping", schedule_id)
             continue
 
+        # Hydrate the raw dict into a typed Pydantic model for validation
         post = Post(**post_data)
+
+        # IMPORTANT: Claim the schedule BEFORE publishing. This is the
+        # "pick up" step that prevents double-processing (see module docstring).
         mark_schedule_picked_up(schedule_id)
+        # Set status to "publishing" so the dashboard shows it's in progress
         update_post(post.id, status="publishing")
 
+        # Each post is wrapped in its own try/except so one failure doesn't
+        # stop the rest of the batch from being processed. If post #2 of 5
+        # fails, posts #3-5 still get published.
         try:
             platform_post_id = platform_client.create_post(post)
             update_post(
@@ -44,6 +71,8 @@ def process_due_posts(platform_client, platform: str) -> int:
             processed += 1
             logger.info("Published post %s -> %s", post.id, platform_post_id)
         except Exception as e:
+            # Mark as failed and store the error message so it's visible
+            # in the dashboard. The post can be retried manually later.
             logger.error("Failed to publish post %s: %s", post.id, e)
             update_post(post.id, status="failed", error_message=str(e))
 

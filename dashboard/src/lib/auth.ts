@@ -8,7 +8,12 @@ import { auth } from "@clerk/nextjs/server";
  * Returns true if authenticated, false otherwise.
  */
 export async function verifyApiAuth(request: Request): Promise<boolean> {
-  // Check for CRON_SECRET in Authorization header
+  // --- Auth path 1: Bearer token (for cron jobs) ---
+  // Cron jobs running on Render don't have a browser session, so they can't
+  // use Clerk. Instead, they send a shared secret in the Authorization header:
+  //   Authorization: Bearer <CRON_SECRET>
+  // We compare this token against the CRON_SECRET environment variable.
+  // If it matches, the request is authorized immediately — no Clerk needed.
   const authHeader = request.headers.get("authorization");
   if (authHeader) {
     const token = authHeader.replace("Bearer ", "");
@@ -17,7 +22,11 @@ export async function verifyApiAuth(request: Request): Promise<boolean> {
     }
   }
 
-  // Fall back to Clerk session auth
+  // --- Auth path 2: Clerk session (for dashboard users) ---
+  // When a user is browsing the dashboard, Clerk automatically attaches a
+  // session cookie to every request. `auth()` reads that cookie and returns
+  // the user's ID if the session is valid. The `!!` converts the userId
+  // to a boolean: truthy string -> true, null/undefined -> false.
   const { userId } = await auth();
   return !!userId;
 }

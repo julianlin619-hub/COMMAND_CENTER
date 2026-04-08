@@ -1,8 +1,37 @@
+/**
+ * Cron Logs Page — history of background cron job runs.
+ *
+ * Shows status, timing, and error info for each platform's cron jobs.
+ */
+
 import { getSupabaseClient } from "@/lib/supabase";
-import { UserButton } from "@clerk/nextjs";
-import Link from "next/link";
+import { AppShell } from "@/components/app-shell";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { StaggeredTableBody, StaggeredTableRow } from "@/components/motion/staggered-list";
 
 export const dynamic = "force-dynamic";
+
+function CronStatusBadge({ status }: { status: string }) {
+  if (status === "success") {
+    return (
+      <Badge className="bg-green-500/15 text-green-500 border-green-500/25">
+        success
+      </Badge>
+    );
+  }
+  if (status === "failed") {
+    return <Badge variant="destructive">failed</Badge>;
+  }
+  return <Badge variant="secondary">{status}</Badge>;
+}
 
 export default async function CronLogsPage() {
   const supabase = getSupabaseClient();
@@ -14,79 +43,76 @@ export default async function CronLogsPage() {
     .limit(100);
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b bg-white px-6 py-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">
-          <Link href="/">Command Center</Link> / Cron Logs
-        </h1>
-        <UserButton />
-      </header>
+    <AppShell>
+      <div className="mb-6">
+        <h2 className="text-lg font-medium">Cron Logs</h2>
+        <p className="text-sm text-muted-foreground">
+          Background job history across all platforms
+        </p>
+      </div>
 
-      <main className="p-6">
-        <div className="bg-white rounded-lg border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="text-left p-3">Platform</th>
-                <th className="text-left p-3">Job Type</th>
-                <th className="text-left p-3">Status</th>
-                <th className="text-left p-3">Started</th>
-                <th className="text-left p-3">Duration</th>
-                <th className="text-left p-3">Posts</th>
-                <th className="text-left p-3">Error</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs?.map((run) => {
-                const duration =
-                  run.finished_at && run.started_at
-                    ? Math.round(
-                        (new Date(run.finished_at).getTime() -
-                          new Date(run.started_at).getTime()) /
-                          1000
-                      )
-                    : null;
-                return (
-                  <tr key={run.id} className="border-b last:border-0">
-                    <td className="p-3 capitalize">{run.platform}</td>
-                    <td className="p-3">{run.job_type}</td>
-                    <td className="p-3">
-                      <span
-                        className={`px-2 py-0.5 rounded text-xs font-medium ${
-                          run.status === "success"
-                            ? "bg-green-100 text-green-800"
-                            : run.status === "failed"
-                              ? "bg-red-100 text-red-800"
-                              : "bg-yellow-100 text-yellow-800"
-                        }`}
-                      >
-                        {run.status}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      {new Date(run.started_at).toLocaleString()}
-                    </td>
-                    <td className="p-3">
-                      {duration !== null ? `${duration}s` : "running..."}
-                    </td>
-                    <td className="p-3">{run.posts_processed}</td>
-                    <td className="p-3 max-w-xs truncate text-red-600">
-                      {run.error_message || "-"}
-                    </td>
-                  </tr>
-                );
-              })}
-              {(!runs || runs.length === 0) && (
-                <tr>
-                  <td colSpan={7} className="p-6 text-center text-gray-500">
-                    No cron runs yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </main>
-    </div>
+      <Card className="overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow className="border-border hover:bg-transparent">
+              <TableHead>Platform</TableHead>
+              <TableHead>Job Type</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Started</TableHead>
+              <TableHead>Duration</TableHead>
+              <TableHead>Posts</TableHead>
+              <TableHead>Error</TableHead>
+            </TableRow>
+          </TableHeader>
+          <StaggeredTableBody>
+            {runs?.map((run) => {
+              const duration =
+                run.finished_at && run.started_at
+                  ? Math.round(
+                      (new Date(run.finished_at).getTime() -
+                        new Date(run.started_at).getTime()) /
+                        1000
+                    )
+                  : null;
+              return (
+                <StaggeredTableRow key={run.id} className="border-border">
+                  <TableCell className="capitalize">{run.platform}</TableCell>
+                  <TableCell>{run.job_type}</TableCell>
+                  <TableCell>
+                    <CronStatusBadge status={run.status} />
+                  </TableCell>
+                  <TableCell>
+                    {new Date(run.started_at).toLocaleString()}
+                  </TableCell>
+                  <TableCell>
+                    {duration !== null ? (
+                      `${duration}s`
+                    ) : (
+                      <span className="text-muted-foreground">running...</span>
+                    )}
+                  </TableCell>
+                  <TableCell>{run.posts_processed}</TableCell>
+                  <TableCell className="max-w-xs truncate text-red-500">
+                    {run.error_message || (
+                      <span className="text-zinc-600">-</span>
+                    )}
+                  </TableCell>
+                </StaggeredTableRow>
+              );
+            })}
+            {(!runs || runs.length === 0) && (
+              <TableRow>
+                <TableCell
+                  colSpan={7}
+                  className="h-24 text-center text-muted-foreground"
+                >
+                  No cron runs yet.
+                </TableCell>
+              </TableRow>
+            )}
+          </StaggeredTableBody>
+        </Table>
+      </Card>
+    </AppShell>
   );
 }

@@ -1,6 +1,19 @@
+/**
+ * Schedule Page — shows upcoming (not yet picked up) scheduled posts.
+ */
+
 import { getSupabaseClient } from "@/lib/supabase";
-import { UserButton } from "@clerk/nextjs";
-import Link from "next/link";
+import { AppShell } from "@/components/app-shell";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { StaggeredTableBody, StaggeredTableRow } from "@/components/motion/staggered-list";
 
 export const dynamic = "force-dynamic";
 
@@ -15,53 +28,56 @@ export default async function SchedulePage() {
     .limit(50);
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b bg-white px-6 py-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">
-          <Link href="/">Command Center</Link> / Schedule
-        </h1>
-        <UserButton />
-      </header>
+    <AppShell>
+      <div className="mb-6">
+        <h2 className="text-lg font-medium">Schedule</h2>
+        <p className="text-sm text-muted-foreground">
+          Upcoming posts waiting to be published
+        </p>
+      </div>
 
-      <main className="p-6">
-        <div className="bg-white rounded-lg border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b">
-              <tr>
-                <th className="text-left p-3">Platform</th>
-                <th className="text-left p-3">Title / Caption</th>
-                <th className="text-left p-3">Scheduled For</th>
-                <th className="text-left p-3">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {schedules?.map((s) => (
-                <tr key={s.id} className="border-b last:border-0">
-                  <td className="p-3 capitalize">{s.posts?.platform}</td>
-                  <td className="p-3 max-w-xs truncate">
-                    {s.posts?.title || s.posts?.caption || "-"}
-                  </td>
-                  <td className="p-3">
-                    {new Date(s.scheduled_for).toLocaleString()}
-                  </td>
-                  <td className="p-3">
-                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                      {s.posts?.status || "scheduled"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {(!schedules || schedules.length === 0) && (
-                <tr>
-                  <td colSpan={4} className="p-6 text-center text-gray-500">
-                    No upcoming scheduled posts.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </main>
-    </div>
+      <Card className="overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow className="border-border hover:bg-transparent">
+              <TableHead>Platform</TableHead>
+              <TableHead>Title / Caption</TableHead>
+              <TableHead>Scheduled For</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <StaggeredTableBody>
+            {schedules?.map((s) => (
+              <StaggeredTableRow key={s.id} className="border-border">
+                <TableCell className="capitalize">
+                  {s.posts?.platform}
+                </TableCell>
+                <TableCell className="max-w-xs truncate">
+                  {s.posts?.title || s.posts?.caption || "-"}
+                </TableCell>
+                <TableCell>
+                  {new Date(s.scheduled_for).toLocaleString()}
+                </TableCell>
+                <TableCell>
+                  <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/25">
+                    {s.posts?.status || "scheduled"}
+                  </Badge>
+                </TableCell>
+              </StaggeredTableRow>
+            ))}
+            {(!schedules || schedules.length === 0) && (
+              <TableRow>
+                <TableCell
+                  colSpan={4}
+                  className="h-24 text-center text-muted-foreground"
+                >
+                  No upcoming scheduled posts.
+                </TableCell>
+              </TableRow>
+            )}
+          </StaggeredTableBody>
+        </Table>
+      </Card>
+    </AppShell>
   );
 }

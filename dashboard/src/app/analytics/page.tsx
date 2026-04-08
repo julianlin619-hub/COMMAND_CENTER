@@ -1,6 +1,19 @@
+/**
+ * Analytics Page — aggregated engagement metrics per platform.
+ *
+ * Supports URL query params: /analytics?days=7&platform=youtube
+ */
+
 import { getSupabaseClient } from "@/lib/supabase";
-import { UserButton } from "@clerk/nextjs";
-import Link from "next/link";
+import { AppShell } from "@/components/app-shell";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { StaggeredContainer, StaggeredItem } from "@/components/motion/staggered-list";
+import { HoverCard } from "@/components/motion/hover-card";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +24,7 @@ export default async function AnalyticsPage({
 }) {
   const params = await searchParams;
   const supabase = getSupabaseClient();
+
   const days = parseInt(params.days || "30", 10);
   const since = new Date(Date.now() - days * 86400000).toISOString();
 
@@ -25,7 +39,7 @@ export default async function AnalyticsPage({
 
   const { data: metrics } = await query;
 
-  // Aggregate totals by platform
+  // Aggregate totals per platform
   const totals: Record<
     string,
     { views: number; likes: number; comments: number; shares: number }
@@ -41,51 +55,57 @@ export default async function AnalyticsPage({
   }
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b bg-white px-6 py-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">
-          <Link href="/">Command Center</Link> / Analytics
-        </h1>
-        <UserButton />
-      </header>
-
-      <main className="p-6">
-        <p className="text-sm text-gray-500 mb-4">
-          Last {days} days. Add <code>?days=7</code> or{" "}
-          <code>?platform=youtube</code> to filter.
+    <AppShell>
+      <div className="mb-6">
+        <h2 className="text-lg font-medium">Analytics</h2>
+        <p className="text-sm text-muted-foreground">
+          Last {days} days
+          {params.platform && <span> &middot; {params.platform}</span>}
+          <span className="ml-2 text-zinc-600">
+            Filter with ?days=7 or ?platform=youtube
+          </span>
         </p>
+      </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+      {Object.keys(totals).length === 0 ? (
+        <p className="text-muted-foreground">No metrics data yet.</p>
+      ) : (
+        <StaggeredContainer className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {Object.entries(totals).map(([platform, t]) => (
-            <div key={platform} className="bg-white rounded-lg border p-4">
-              <h3 className="font-medium capitalize mb-2">{platform}</h3>
-              <dl className="text-sm text-gray-600 space-y-1">
-                <div className="flex justify-between">
-                  <dt>Views</dt>
-                  <dd>{t.views.toLocaleString()}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt>Likes</dt>
-                  <dd>{t.likes.toLocaleString()}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt>Comments</dt>
-                  <dd>{t.comments.toLocaleString()}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt>Shares</dt>
-                  <dd>{t.shares.toLocaleString()}</dd>
-                </div>
-              </dl>
-            </div>
+            <StaggeredItem key={platform}>
+            <HoverCard>
+            <Card>
+              <CardHeader>
+                <CardTitle className="capitalize">{platform}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <dl className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Views</dt>
+                    <dd className="font-medium">{t.views.toLocaleString()}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Likes</dt>
+                    <dd className="font-medium">{t.likes.toLocaleString()}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Comments</dt>
+                    <dd className="font-medium">
+                      {t.comments.toLocaleString()}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Shares</dt>
+                    <dd className="font-medium">{t.shares.toLocaleString()}</dd>
+                  </div>
+                </dl>
+              </CardContent>
+            </Card>
+            </HoverCard>
+            </StaggeredItem>
           ))}
-          {Object.keys(totals).length === 0 && (
-            <p className="text-gray-500 col-span-full">
-              No metrics data yet.
-            </p>
-          )}
-        </div>
-      </main>
-    </div>
+        </StaggeredContainer>
+      )}
+    </AppShell>
   );
 }
