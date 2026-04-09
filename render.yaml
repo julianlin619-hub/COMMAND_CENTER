@@ -20,10 +20,6 @@ services:
         sync: false
       - key: ZERNIO_API_KEY
         sync: false
-      - key: GOOGLE_DRIVE_FOLDER_ID
-        sync: false
-      - key: GOOGLE_SERVICE_ACCOUNT_KEY
-        sync: false
       - key: TWEET_BANK_DATA_DIR
         sync: false
       - key: NEXT_PUBLIC_CLERK_SIGN_IN_URL

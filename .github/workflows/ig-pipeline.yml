@@ -46,20 +46,12 @@ jobs:
         working-directory: dashboard
         run: npm ci
 
-      # The service account JSON file is used by googleapis to authenticate
-      # with Google Drive. It's stored as a GitHub secret (not in the repo).
-      - name: Write service-account.json from secret
-        working-directory: dashboard
-        run: echo '${{ secrets.SERVICE_ACCOUNT_JSON }}' > service-account.json
-
       # Build the .env.local file from GitHub secrets so the Next.js app
       # can access all required API keys and configuration at runtime.
       - name: Write .env.local from secrets
         working-directory: dashboard
         run: |
           {
-            echo "GOOGLE_DRIVE_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}"
-            echo "GOOGLE_SERVICE_ACCOUNT_KEY_FILE=service-account.json"
             echo "ZERNIO_API_KEY=${{ secrets.ZERNIO_API_KEY }}"
             echo "CRON_SECRET=${{ secrets.CRON_SECRET }}"
             echo "TWEET_BANK_DATA_DIR=${{ github.workspace }}/data"
@@ -86,7 +78,7 @@ jobs:
           done
 
       # This is the main pipeline step — it triggers the full flow:
-      # pick tweets → generate images → convert to video → upload to Drive → schedule on Instagram
+      # pick tweets → generate images → convert to video → schedule on Instagram via Zernio
       - name: Run Instagram bank pipeline
         run: |
           echo "Running Instagram bank auto-pipeline..."
@@ -121,4 +113,4 @@ jobs:
       - name: Clean up secrets from disk
         if: always()
         working-directory: dashboard
-        run: rm -f .env.local service-account.json
+        run: rm -f .env.local

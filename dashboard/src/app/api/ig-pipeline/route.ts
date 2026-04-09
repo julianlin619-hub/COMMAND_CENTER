@@ -3,7 +3,7 @@
  *
  * This is the main orchestrator for the automated Instagram posting pipeline.
  * It runs the full flow: pick tweets → generate images → convert to video →
- * upload to Google Drive → schedule on Instagram via Zernio.
+ * schedule on Instagram via Zernio.
  *
  * Triggered by GitHub Actions on a daily schedule (see .github/workflows/ig-pipeline.yml).
  * Protected by CRON_SECRET bearer token to prevent unauthorized access.
@@ -15,11 +15,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs/promises';
-import { pickRandomUnused, markUsed, getNextBankBatchNumber } from '@/lib/tweet-bank';
+import { pickRandomUnused, markUsed } from '@/lib/tweet-bank';
 import { normalizeTweetText } from '@/lib/tweet-normalize';
 import { renderTweetToBuffer } from '@/lib/canvas-render';
 import { renderPngToVideo } from '@/lib/video-render';
-import { createFolder, uploadToDrive } from '@/lib/google-drive';
 import { getInstagramAccount, scheduleVideoToInstagram } from '@/lib/zernio';
 
 // How many tweets to process per pipeline run
@@ -61,21 +60,9 @@ export async function POST(req: NextRequest) {
     generated.push({ hash: tweet.hash, text: tweet.text, pngPath, mp4Path });
   }
 
-  // 3. Upload everything to Google Drive for backup/archival.
-  //    Creates a batch folder (e.g., "IG Bank Batch #6") with a Videos subfolder.
-  const parentFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID!;
-  const batchNum = getNextBankBatchNumber('instagram');
-  const batchFolder = await createFolder(`IG Bank Batch #${batchNum}`, parentFolderId);
-  const videosFolder = await createFolder('Videos', batchFolder.id);
-
-  for (const g of generated) {
-    await uploadToDrive(g.pngPath, `tweet-${g.hash}.png`, batchFolder.id);
-    await uploadToDrive(g.mp4Path, `tweet-${g.hash}.mp4`, videosFolder.id);
-  }
-
-  // 4. Schedule each video to Instagram via Zernio.
-  //    Zernio handles the actual Instagram API interaction — we just upload
-  //    the video and provide the caption text.
+  // 3. Schedule each video to Instagram via Zernio.
+  //    Zernio handles the actual Instagram API interaction — we upload
+  //    the video directly to Zernio's storage and provide the caption text.
   const { accountId, profileId } = await getInstagramAccount();
   const scheduled: { hash: string; postId: string }[] = [];
   for (const g of generated) {
@@ -83,7 +70,7 @@ export async function POST(req: NextRequest) {
     scheduled.push({ hash: g.hash, postId: post.id });
   }
 
-  // 5. Mark tweets as used ONLY after everything succeeded.
+  // 4. Mark tweets as used ONLY after everything succeeded.
   //    This is intentionally the last step — if any earlier step fails,
   //    the tweets remain in the unused pool and will be retried next run.
   markUsed('instagram', picked.map((t) => t.hash));
@@ -91,7 +78,6 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     processed: picked.length,
     remainingUnused,
-    batchFolder: batchFolder.name,
     scheduled,
   });
 }
