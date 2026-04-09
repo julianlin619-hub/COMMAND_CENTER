@@ -12,7 +12,7 @@
 -- Every platform we support. Adding a new platform means adding a value
 -- here first (ALTER TYPE platform_enum ADD VALUE 'newplatform').
 CREATE TYPE platform_enum AS ENUM (
-    'youtube', 'instagram', 'tiktok', 'linkedin', 'facebook', 'threads'
+    'youtube', 'instagram', 'instagram_2nd', 'tiktok', 'linkedin', 'facebook', 'threads'
 );
 
 -- Lifecycle of a post: draft -> scheduled -> publishing -> published
