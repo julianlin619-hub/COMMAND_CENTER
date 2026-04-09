@@ -8,7 +8,7 @@ PlatformBase and implements the exact same set of methods.
 
 Why does this matter?  Because the rest of the codebase (cron jobs, core logic)
 never needs to know *which* platform it's talking to.  It just calls methods
-like `create_post()` or `get_post_metrics()` on whatever PlatformBase subclass
+like `create_post()` or `upload_media()` on whatever PlatformBase subclass
 it receives.  This is the "strategy pattern" — swap in any strategy (platform)
 and the calling code stays the same.
 
@@ -29,7 +29,7 @@ from abc import ABC, abstractmethod
 # These are our shared Pydantic data models (defined in core/models.py).
 # Using them here means every platform adapter speaks the same data language —
 # the cron job doesn't need to translate between different return types.
-from core.models import EngagementSnapshot, MediaUploadResult, Post
+from core.models import MediaUploadResult, Post
 
 
 class PlatformBase(ABC):
@@ -112,16 +112,3 @@ class PlatformBase(ABC):
         """
         ...
 
-    # ── Analytics ───────────────────────────────────────────────
-    # After a post is published, the cron job periodically calls this to
-    # pull engagement data (likes, views, comments, etc.) back into Supabase.
-    # Each platform returns different field names, so the adapter's job is to
-    # map them into our unified EngagementSnapshot model.
-
-    @abstractmethod
-    def get_post_metrics(self, platform_post_id: str) -> EngagementSnapshot:
-        """Fetch current engagement metrics for a single post.
-
-        Maps platform-specific field names to the unified EngagementSnapshot.
-        """
-        ...

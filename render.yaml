@@ -20,6 +20,18 @@ services:
         sync: false
       - key: NEXT_PUBLIC_CLERK_SIGN_IN_URL
         value: /sign-in
+      - key: BUFFER_ACCESS_TOKEN
+        sync: false
+      - key: BUFFER_THREADS_CHANNEL_ID
+        sync: false
+      - key: APIFY_API_KEY
+        sync: false
+      - key: APIFY_TWITTER_HANDLE
+        sync: false
+      - key: CONTENT_BANK_PATH
+        sync: false
+      - key: CONTENT_BANK_COUNT
+        sync: false
 
   # ── Cron Jobs (Python) ─────────────────────────────────────────────────
   # IMPORTANT: Update the schedule values to match your actual posting cadence.
@@ -90,23 +102,23 @@ services:
         sync: false
 
   - type: cron
-    name: x-cron
+    name: facebook-cron
     runtime: python
     buildCommand: pip install -e .
-    startCommand: python -m cron.x_cron
+    startCommand: python -m cron.facebook_cron
     schedule: "0 */4 * * *"  # TODO: set your real schedule
     envVars:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
-      - key: X_API_KEY
+      - key: FACEBOOK_APP_ID
         sync: false
-      - key: X_API_SECRET
+      - key: FACEBOOK_APP_SECRET
         sync: false
-      - key: X_ACCESS_TOKEN
+      - key: FACEBOOK_ACCESS_TOKEN
         sync: false
-      - key: X_ACCESS_SECRET
+      - key: FACEBOOK_PAGE_ID
         sync: false
 
   - type: cron
@@ -114,11 +126,23 @@ services:
     runtime: python
     buildCommand: pip install -e .
     startCommand: python -m cron.threads_cron
-    schedule: "0 */4 * * *"  # TODO: set your real schedule
+    schedule: "0 11 * * *"  # Daily at 4am Las Vegas time (PDT = UTC-7)
     envVars:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
-      - key: THREADS_ACCESS_TOKEN
+      - key: BUFFER_ACCESS_TOKEN
+        sync: false
+      - key: BUFFER_THREADS_CHANNEL_ID
+        sync: false
+      - key: THREADS_ACCESS_TOKEN  # optional — only needed for metrics
+        sync: false
+      - key: APIFY_API_KEY  # optional — needed for tweet scraping
+        sync: false
+      - key: APIFY_TWITTER_HANDLE  # optional — defaults to AlexHormozi
+        sync: false
+      - key: CONTENT_BANK_PATH
+        sync: false
+      - key: CONTENT_BANK_COUNT
         sync: false

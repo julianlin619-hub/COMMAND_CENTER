@@ -20,6 +20,7 @@ post can be manually retried, but a double-published post can't be undone.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from core.database import get_due_schedules, mark_schedule_picked_up, update_post
 from core.models import Post
@@ -67,6 +68,7 @@ def process_due_posts(platform_client, platform: str) -> int:
                 post.id,
                 status="published",
                 platform_post_id=platform_post_id,
+                published_at=datetime.now(timezone.utc).isoformat(),
             )
             processed += 1
             logger.info("Published post %s -> %s", post.id, platform_post_id)

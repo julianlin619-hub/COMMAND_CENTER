@@ -21,7 +21,7 @@ API docs: https://developers.tiktok.com/doc/content-posting-api-get-started
 """
 
 from platforms.base import PlatformBase
-from core.models import EngagementSnapshot, MediaUploadResult, Post
+from core.models import MediaUploadResult, Post
 
 
 class TikTok(PlatformBase):
@@ -58,10 +58,4 @@ class TikTok(PlatformBase):
         # Will return TikTok's limits: videos up to 10 min (287.6 MB via
         # API), supported formats (mp4, webm), aspect ratio 9:16 preferred,
         # caption max 2200 chars, etc.
-        raise NotImplementedError("TODO: port from existing repo")
-
-    def get_post_metrics(self, platform_post_id: str) -> EngagementSnapshot:
-        # Will call POST /v2/video/query/ with the video ID to fetch
-        # view_count, like_count, comment_count, share_count, etc.
-        # Maps these into an EngagementSnapshot.
         raise NotImplementedError("TODO: port from existing repo")

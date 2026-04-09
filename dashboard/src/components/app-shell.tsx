@@ -8,11 +8,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/", label: "Overview" },
-  { href: "/posts", label: "Posts" },
-  { href: "/schedule", label: "Schedule" },
-  { href: "/analytics", label: "Analytics" },
-  { href: "/upload", label: "Upload" },
-  { href: "/cron-logs", label: "Cron Logs" },
+  { href: "/cron-logs", label: "Cron Jobs" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

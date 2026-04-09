@@ -12,7 +12,7 @@
 -- Every platform we support. Adding a new platform means adding a value
 -- here first (ALTER TYPE platform_enum ADD VALUE 'newplatform').
 CREATE TYPE platform_enum AS ENUM (
-    'youtube', 'instagram', 'tiktok', 'linkedin', 'x', 'threads'
+    'youtube', 'instagram', 'tiktok', 'linkedin', 'facebook', 'threads'
 );
 
 -- Lifecycle of a post: draft -> scheduled -> publishing -> published
@@ -157,62 +157,6 @@ CREATE TABLE schedules (
 -- small and fast, only covering the rows we actually care about.
 CREATE INDEX idx_schedules_due ON schedules (scheduled_for)
     WHERE picked_up_at IS NULL;
-
--- ── Engagement Metrics ──────────────────────────────────────────────────
--- Why snapshots instead of updating a single row?
--- We insert a NEW row every time the cron fetches metrics, rather than
--- overwriting the previous values. This gives us a time series — we can
--- see that a post had 100 views on Monday, 500 on Tuesday, and 2,000 on
--- Friday. That trend data is invaluable for understanding *when* content
--- takes off and how it performs over time. If we just updated one row,
--- we'd only ever know the latest numbers and lose the entire history.
-
-CREATE TABLE engagement_metrics (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    -- Which post these metrics belong to.
-    post_id         UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-
-    -- Redundant with posts.platform, but stored here too so we can query
-    -- metrics by platform without joining the posts table.
-    platform        platform_enum NOT NULL,
-
-    -- Standard engagement metrics that most platforms provide.
-    -- BIGINT (not INT) because viral posts can exceed 2 billion views
-    -- (INT max is ~2.1 billion). Better safe than sorry.
-    views           BIGINT DEFAULT 0,
-    likes           BIGINT DEFAULT 0,
-    comments        BIGINT DEFAULT 0,
-    shares          BIGINT DEFAULT 0,
-    saves           BIGINT DEFAULT 0,        -- Instagram saves, TikTok favorites, etc.
-    clicks          BIGINT DEFAULT 0,        -- Link clicks (LinkedIn, X)
-    impressions     BIGINT DEFAULT 0,        -- Times shown in a feed
-    reach           BIGINT DEFAULT 0,        -- Unique accounts that saw the post
-    watch_time_sec  BIGINT DEFAULT 0,        -- Total watch time (YouTube, TikTok)
-    followers_delta INT DEFAULT 0,           -- Followers gained/lost from this post
-
-    -- JSONB is a flexible JSON column for platform-specific metrics that
-    -- don't fit neatly into the standard columns above. For example:
-    --   YouTube: {"avg_view_duration_sec": 45, "subscribers_gained": 12}
-    --   Instagram: {"story_replies": 8, "profile_visits": 340}
-    --   TikTok: {"full_video_watched_rate": 0.42}
-    -- JSONB (binary JSON) is preferred over JSON because it's faster to
-    -- query and supports indexing. DEFAULT '{}' means it starts as an
-    -- empty object, not NULL.
-    extra           JSONB DEFAULT '{}',
-
-    -- When this snapshot was taken. Each row is a point-in-time capture.
-    snapshot_at     TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Composite index: quickly find all metric snapshots for a specific post,
--- sorted newest-first. This powers the post detail page's analytics chart.
-CREATE INDEX idx_metrics_post ON engagement_metrics (post_id, snapshot_at DESC);
-
--- Find all metric snapshots for a platform, sorted by time. Useful for
--- the dashboard's cross-post analytics view (e.g., "all Instagram metrics
--- from the past week").
-CREATE INDEX idx_metrics_platform_time ON engagement_metrics (platform, snapshot_at DESC);
 
 -- ── Cron Runs ───────────────────────────────────────────────────────────
 -- Observability table — logs every execution of every cron job. Without

@@ -60,32 +60,6 @@ class ScheduledPost(BaseModel):
     scheduled_for: datetime
 
 
-# ── EngagementSnapshot ──────────────────────────────────────────────────
-# A point-in-time snapshot of a post's metrics pulled from the platform API.
-# We store snapshots (not just latest values) so the dashboard can show
-# engagement trends over time — e.g. how likes grew in the first 48 hours.
-
-class EngagementSnapshot(BaseModel):
-    # Links back to the platform's post ID (not our internal post.id)
-    platform_post_id: str
-    platform: str
-    # Core engagement metrics — not every platform provides all of these,
-    # so they all default to 0. The cron job fills in whatever the API returns.
-    views: int = 0
-    likes: int = 0
-    comments: int = 0
-    shares: int = 0
-    saves: int = 0           # Instagram/TikTok "save" action
-    clicks: int = 0          # Link clicks (LinkedIn, X)
-    impressions: int = 0     # Times shown in a feed (may differ from views)
-    reach: int = 0           # Unique accounts that saw the post
-    watch_time_sec: int = 0  # Total seconds watched (YouTube, TikTok)
-    followers_delta: int = 0 # Net new followers attributed to this post
-    # Catch-all for platform-specific metrics that don't fit the fields above.
-    # Example: {"avg_watch_pct": 45.2} for YouTube retention data.
-    extra: dict = {}
-
-
 # ── MediaUploadResult ───────────────────────────────────────────────────
 # Returned by platform adapters after uploading media. Some platforms
 # (e.g. YouTube) give back a media ID; others (e.g. LinkedIn) give an
@@ -107,7 +81,7 @@ class CronRun(BaseModel):
     id: str | None = None
     platform: str
     # What the cron job did: 'post' (publish scheduled posts) or
-    # 'metrics' (pull latest engagement numbers from the platform API)
+    # 'content' (source new content from external sources)
     job_type: str
     # Starts as "running", ends as "success" or "error"
     status: str = "running"

@@ -20,7 +20,7 @@ API docs: https://developers.facebook.com/docs/instagram-api
 """
 
 from platforms.base import PlatformBase
-from core.models import EngagementSnapshot, MediaUploadResult, Post
+from core.models import MediaUploadResult, Post
 
 
 class Instagram(PlatformBase):
@@ -58,10 +58,4 @@ class Instagram(PlatformBase):
         # Will return Instagram's limits: images up to 8 MB, videos up to
         # 100 MB (Reels up to 90 sec via API), aspect ratios 4:5 to 1.91:1,
         # caption max 2200 chars, max 30 hashtags, etc.
-        raise NotImplementedError("TODO: port from existing repo")
-
-    def get_post_metrics(self, platform_post_id: str) -> EngagementSnapshot:
-        # Will call GET /{media-id}/insights to fetch impressions, reach,
-        # likes, comments, saves, shares, etc.  Maps these platform-specific
-        # metric names into the unified EngagementSnapshot fields.
         raise NotImplementedError("TODO: port from existing repo")

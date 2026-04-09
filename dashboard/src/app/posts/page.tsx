@@ -33,7 +33,7 @@ const PLATFORM_INITIALS: Record<string, string> = {
   instagram: "IG",
   tiktok: "TK",
   linkedin: "LI",
-  x: "X",
+  facebook: "FB",
   threads: "TH",
 };
 

@@ -8,29 +8,43 @@ schedule, like an alarm clock that goes off every 4 hours.
 
 The dashboard and this cron job never talk to each other directly. They communicate
 through the Supabase database: the dashboard writes posts/schedules into the DB,
-and this cron job reads them out, publishes them to Threads, and writes metrics back.
+and this cron job reads them out and publishes them to Threads.
 
 This script does two things each time it runs:
+  Phase 0 - SOURCE: Pull new content from external sources (Apify tweet scraping
+            and a pre-written content bank CSV). Creates scheduled posts in Supabase
+            so Phase 1 can pick them up immediately. Ported from the original THREADS
+            repo (github.com/julianlin619-hub/THREADS).
   Phase 1 - PUBLISH: Find posts that are due to be published and send them to Threads.
-  Phase 2 - METRICS: For posts already published, pull engagement data (likes, replies,
-            reposts, quotes, etc.) from the Threads API and store it in the database.
 
 These are tracked as separate "cron runs" in the database so we can see independently
-whether posting succeeded vs. whether metrics collection succeeded. A failure in
-Phase 1 does NOT prevent Phase 2 from running in the next execution -- but within a
-single execution, a Phase 1 failure will exit early (before Phase 2 starts).
+whether each phase succeeded. A failure in Phase 0 does NOT prevent Phase 1 from
+running — content sourcing is best-effort, and we don't want a scraping hiccup to
+block publishing of posts that are already scheduled.
 """
 
 import logging
+import os
 import sys
+from datetime import datetime, timezone
 
+# Content sourcing functions (ported from the original THREADS repo)
+from core.content_sources import fetch_apify_tweets, select_bank_content
 # Database helpers for tracking cron runs and storing data
-from core.database import log_cron_start, log_cron_finish, get_posts, upsert_metrics
+from core.database import (
+    get_posts,
+    insert_post,
+    insert_schedule,
+    log_cron_finish,
+    log_cron_start,
+    post_caption_exists,
+)
+from core.models import Post
 # process_due_posts handles the logic of finding posts whose scheduled time has passed
 # and calling the platform client to publish them
 from core.scheduler import process_due_posts
 # Threads is the platform adapter -- it implements the PlatformBase interface
-# (create_post, get_post_metrics, refresh_credentials, etc.)
+# (create_post, refresh_credentials, etc.)
 from platforms.threads import Threads
 
 # Set up logging so we can see what happens when this script runs.
@@ -43,8 +57,69 @@ logger = logging.getLogger(__name__)
 def main():
     # Create the Threads platform client. This object knows how to talk to
     # the Threads API -- publishing posts, fetching metrics, refreshing tokens, etc.
-    # (Threads uses Meta's API infrastructure, similar to Instagram.)
+    # (Threads uses Buffer's API — see platforms/threads.py for details.)
     client = Threads()
+
+    # -------------------------------------------------------------------------
+    # PHASE 0a: Source tweets via Apify
+    # -------------------------------------------------------------------------
+    # Fetches recent tweets from a Twitter account and creates scheduled posts.
+    # Tracked separately from the content bank so each source has its own
+    # run history and can be triggered independently from the dashboard.
+    run_id = log_cron_start(platform="threads", job_type="content_apify")
+    try:
+        apify_sourced = 0
+        now = datetime.now(timezone.utc)
+
+        twitter_handle = os.environ.get("APIFY_TWITTER_HANDLE", "AlexHormozi")
+        tweets = fetch_apify_tweets(twitter_handle)
+
+        for tweet in tweets:
+            if post_caption_exists("threads", tweet["text"]):
+                continue
+            post = Post(platform="threads", caption=tweet["text"], status="scheduled")
+            post_id = insert_post(post)
+            insert_schedule(post_id, now)
+            apify_sourced += 1
+
+        log_cron_finish(run_id, status="success", posts_processed=apify_sourced)
+        logger.info("Apify sourcing complete: %d new posts", apify_sourced)
+    except Exception as e:
+        logger.error("Apify sourcing failed: %s", e)
+        log_cron_finish(run_id, status="failed", error_message=str(e))
+
+    # -------------------------------------------------------------------------
+    # PHASE 0b: Source from content bank
+    # -------------------------------------------------------------------------
+    # Picks random entries from a pre-written CSV file. Tracked as its own
+    # cron run so failures here don't mask Apify results (and vice versa).
+    run_id = log_cron_start(platform="threads", job_type="content_bank")
+    try:
+        bank_sourced = 0
+        now = datetime.now(timezone.utc)
+
+        bank_path = os.environ.get("CONTENT_BANK_PATH", "data/threads_bank.csv")
+        bank_count = int(os.environ.get("CONTENT_BANK_COUNT", "5"))
+
+        existing_posts = get_posts(platform="threads", limit=5000)
+        existing_captions = {
+            p["caption"] for p in existing_posts if p.get("caption")
+        }
+
+        bank_items = select_bank_content(
+            bank_path, count=bank_count, already_used=existing_captions,
+        )
+        for text in bank_items:
+            post = Post(platform="threads", caption=text, status="scheduled")
+            post_id = insert_post(post)
+            insert_schedule(post_id, now)
+            bank_sourced += 1
+
+        log_cron_finish(run_id, status="success", posts_processed=bank_sourced)
+        logger.info("Bank sourcing complete: %d new posts", bank_sourced)
+    except Exception as e:
+        logger.error("Bank sourcing failed: %s", e)
+        log_cron_finish(run_id, status="failed", error_message=str(e))
 
     # -------------------------------------------------------------------------
     # PHASE 1: Publish due posts
@@ -53,16 +128,16 @@ def main():
     # of when this job ran and whether it succeeded or failed.
     run_id = log_cron_start(platform="threads", job_type="post")
     try:
-        # OAuth tokens expire after a set time. We MUST refresh credentials
-        # before making any API calls, otherwise we risk getting 401 Unauthorized
-        # errors. This exchanges our stored refresh token for a fresh access token.
-        # Threads tokens follow the same lifecycle as Instagram (Meta) tokens.
+        # Refresh credentials before making API calls. For Buffer tokens this
+        # is a no-op (they're long-lived), but the Threads metrics token may
+        # need refreshing.
         client.refresh_credentials()
 
         # process_due_posts queries the database for Threads posts whose
         # scheduled_time has passed and status is still "scheduled", then
-        # publishes each one via the Threads API. Returns the count of
-        # posts that were processed.
+        # publishes each one via Buffer. Returns the count of posts processed.
+        # This picks up both dashboard-scheduled posts AND the auto-sourced
+        # posts created in Phase 0 above.
         processed = process_due_posts(client, "threads")
 
         # Record this cron run as successful in the database
@@ -77,36 +152,6 @@ def main():
         # failure in the Render dashboard. Exit code 0 means success.
         sys.exit(1)
 
-    # -------------------------------------------------------------------------
-    # PHASE 2: Pull metrics for published posts
-    # -------------------------------------------------------------------------
-    # This is a separate cron run record because we want to track posting and
-    # metrics collection independently. If metrics fail, we still want to know
-    # that posting succeeded (and vice versa in future runs).
-    run_id = log_cron_start(platform="threads", job_type="metrics")
-    try:
-        # Fetch up to 50 posts that have already been published to Threads.
-        # We limit to 50 to avoid hitting API rate limits.
-        posts = get_posts(platform="threads", status="published", limit=50)
-        for post in posts:
-            # We check for platform_post_id because a post might be marked as
-            # "published" in our database but not yet have a Threads media ID.
-            # This can happen if the post was partially processed (e.g., created
-            # on Threads but the ID wasn't saved due to a crash). Without a
-            # Threads media ID, we can't ask the API for metrics -- we wouldn't
-            # know which post to ask about.
-            if post.get("platform_post_id"):
-                # Ask the Threads API for current engagement data (likes, replies,
-                # reposts, quotes, etc.) and store the snapshot in our database.
-                snapshot = client.get_post_metrics(post["platform_post_id"])
-                upsert_metrics(post["id"], snapshot)
-        log_cron_finish(run_id, status="success", posts_processed=len(posts))
-        logger.info("Metrics pull complete: %d posts updated", len(posts))
-    except Exception as e:
-        logger.error("Metrics pull failed: %s", e)
-        log_cron_finish(run_id, status="failed", error_message=str(e))
-        # Same as above -- exit with code 1 so Render knows this run failed.
-        sys.exit(1)
 
 
 # This is Python's standard entry-point guard. It means "only run main() when

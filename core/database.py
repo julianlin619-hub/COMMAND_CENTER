@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 from supabase import Client, create_client
 
-from core.models import CronRun, EngagementSnapshot, Post
+from core.models import CronRun, Post
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ def get_due_schedules(platform: str) -> list[dict]:
         client.table("schedules")
         # "*, posts(*)" is a Supabase join: fetch the schedule row AND the
         # related post row in one query (PostgREST embedded resources).
-        .select("*, posts(*)")
+        .select("*, posts!inner(*)")
         # picked_up_at being null means no cron run has claimed this schedule yet.
         # This prevents two overlapping cron runs from publishing the same post twice.
         .is_("picked_up_at", "null")
@@ -108,6 +108,24 @@ def get_due_schedules(platform: str) -> list[dict]:
         .execute()
         .data
     )
+
+
+def insert_schedule(post_id: str, scheduled_for: datetime) -> str:
+    """Create a schedule linking a post to a publish time. Returns the schedule ID.
+
+    Used by content sourcing (cron Phase 0) to schedule auto-generated posts
+    for immediate or future publishing. The normal flow is:
+      1. insert_post() creates the post record
+      2. insert_schedule() links it to a publish time
+      3. get_due_schedules() finds it when the time arrives
+    """
+    client = get_client()
+    result = (
+        client.table("schedules")
+        .insert({"post_id": post_id, "scheduled_for": scheduled_for.isoformat()})
+        .execute()
+    )
+    return result.data[0]["id"]
 
 
 def mark_schedule_picked_up(schedule_id: str) -> None:
@@ -121,41 +139,23 @@ def mark_schedule_picked_up(schedule_id: str) -> None:
     ).eq("id", schedule_id).execute()
 
 
-# ── Engagement Metrics ───────────────────────────────────────────────────
-# We store periodic snapshots of engagement data (not just the latest values)
-# so the dashboard can chart trends over time.
+def post_caption_exists(platform: str, caption: str) -> bool:
+    """Check if a post with this exact caption already exists for a platform.
 
-
-def upsert_metrics(post_id: str, snapshot: EngagementSnapshot) -> None:
-    """Insert an engagement metrics snapshot."""
+    Used by content sourcing to avoid creating duplicate posts. For example,
+    if an Apify tweet was already sourced in a previous cron run, we skip it.
+    """
     client = get_client()
-    data = snapshot.model_dump()
-    # Attach our internal post_id so we can join metrics back to posts
-    data["post_id"] = post_id
-    # We always insert (not upsert) because each snapshot is a new data point
-    # in the time series, not a replacement for the previous one.
-    client.table("engagement_metrics").insert(data).execute()
+    result = (
+        client.table("posts")
+        .select("id")
+        .eq("platform", platform)
+        .eq("caption", caption)
+        .limit(1)
+        .execute()
+    )
+    return len(result.data) > 0
 
-
-def get_metrics(
-    post_id: str | None = None,
-    platform: str | None = None,
-    since: str | None = None,
-    limit: int = 100,
-) -> list[dict]:
-    """Fetch engagement metrics with optional filters."""
-    client = get_client()
-    query = client.table("engagement_metrics").select("*").order("snapshot_at", desc=True)
-    if post_id:
-        query = query.eq("post_id", post_id)
-    if platform:
-        query = query.eq("platform", platform)
-    # "since" lets the dashboard request only recent data (e.g. last 7 days)
-    # instead of the entire history, keeping responses fast.
-    if since:
-        query = query.gte("snapshot_at", since)
-    query = query.limit(limit)
-    return query.execute().data
 
 
 # ── Cron Runs ────────────────────────────────────────────────────────────

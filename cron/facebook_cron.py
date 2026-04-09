@@ -1,5 +1,5 @@
 """
-Instagram cron job entry point.
+Facebook cron job entry point.
 
 This is a "cron job" -- a scheduled background task that runs automatically on a
 timer (every 4 hours via Render's cron scheduler). It is NOT triggered by a user
@@ -8,9 +8,9 @@ schedule, like an alarm clock that goes off every 4 hours.
 
 The dashboard and this cron job never talk to each other directly. They communicate
 through the Supabase database: the dashboard writes posts/schedules into the DB,
-and this cron job reads them out and publishes them to Instagram.
+and this cron job reads them out and publishes them to Facebook.
 
-This script publishes posts that are due to be sent to Instagram.
+This script publishes posts that are due to be sent to Facebook.
 """
 
 import logging
@@ -21,9 +21,9 @@ from core.database import log_cron_start, log_cron_finish
 # process_due_posts handles the logic of finding posts whose scheduled time has passed
 # and calling the platform client to publish them
 from core.scheduler import process_due_posts
-# Instagram is the platform adapter -- it implements the PlatformBase interface
+# Facebook is the platform adapter -- it implements the PlatformBase interface
 # (create_post, refresh_credentials, etc.)
-from platforms.instagram import Instagram
+from platforms.facebook import Facebook
 
 # Set up logging so we can see what happens when this script runs.
 # The format includes timestamp, log level, and logger name, which makes it
@@ -33,28 +33,27 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    # Create the Instagram platform client. This object knows how to talk to
-    # the Instagram Graph API -- publishing posts, fetching metrics, refreshing tokens, etc.
-    client = Instagram()
+    # Create the Facebook platform client. This object knows how to talk to
+    # the Facebook Graph API -- posting to pages, fetching metrics, refreshing
+    # tokens, etc.
+    client = Facebook()
 
     # -------------------------------------------------------------------------
     # PHASE 1: Publish due posts
     # -------------------------------------------------------------------------
     # We log a "cron run" in the database so the dashboard can show a history
     # of when this job ran and whether it succeeded or failed.
-    run_id = log_cron_start(platform="instagram", job_type="post")
+    run_id = log_cron_start(platform="facebook", job_type="post")
     try:
-        # OAuth tokens expire after a set time (Instagram long-lived tokens last
-        # 60 days, but we refresh proactively to avoid surprises). We MUST refresh
-        # credentials before making any API calls, otherwise we risk getting
-        # 401 Unauthorized errors.
+        # Facebook page tokens can be long-lived or non-expiring, but we still
+        # call refresh_credentials to handle any token exchange if needed.
         client.refresh_credentials()
 
-        # process_due_posts queries the database for Instagram posts whose
+        # process_due_posts queries the database for Facebook posts whose
         # scheduled_time has passed and status is still "scheduled", then
-        # publishes each one via the Instagram API. Returns the count of
+        # publishes each one via the Facebook API. Returns the count of
         # posts that were processed.
-        processed = process_due_posts(client, "instagram")
+        processed = process_due_posts(client, "facebook")
 
         # Record this cron run as successful in the database
         log_cron_finish(run_id, status="success", posts_processed=processed)
@@ -71,7 +70,7 @@ def main():
 
 
 # This is Python's standard entry-point guard. It means "only run main() when
-# this file is executed directly (e.g., `python instagram_cron.py`), NOT when it's
+# this file is executed directly (e.g., `python facebook_cron.py`), NOT when it's
 # imported as a module by another file." This is a Python convention that keeps
 # the script from accidentally running when imported elsewhere.
 if __name__ == "__main__":

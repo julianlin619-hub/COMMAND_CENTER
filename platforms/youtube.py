@@ -18,7 +18,7 @@ API docs: https://developers.google.com/youtube/v3
 """
 
 from platforms.base import PlatformBase
-from core.models import EngagementSnapshot, MediaUploadResult, Post
+from core.models import MediaUploadResult, Post
 
 
 class YouTube(PlatformBase):
@@ -52,10 +52,4 @@ class YouTube(PlatformBase):
         # Will return YouTube's limits: max 256 GB or 12 hours video,
         # supported formats (mp4, mov, avi, etc.), max title/description
         # lengths, thumbnail size limits, etc.
-        raise NotImplementedError("TODO: port from existing repo")
-
-    def get_post_metrics(self, platform_post_id: str) -> EngagementSnapshot:
-        # Will call videos.list with part=statistics to fetch viewCount,
-        # likeCount, commentCount, etc., then map those into an
-        # EngagementSnapshot.
         raise NotImplementedError("TODO: port from existing repo")

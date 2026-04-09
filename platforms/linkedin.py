@@ -19,7 +19,7 @@ API docs: https://learn.microsoft.com/en-us/linkedin/marketing/
 """
 
 from platforms.base import PlatformBase
-from core.models import EngagementSnapshot, MediaUploadResult, Post
+from core.models import MediaUploadResult, Post
 
 
 class LinkedIn(PlatformBase):
@@ -60,12 +60,4 @@ class LinkedIn(PlatformBase):
         # Will return LinkedIn's limits: images up to 10 MB (PNG, JPG, GIF),
         # videos up to 200 MB and 10 min, article links with preview images,
         # post text up to 3000 chars, etc.
-        raise NotImplementedError("TODO: port from existing repo")
-
-    def get_post_metrics(self, platform_post_id: str) -> EngagementSnapshot:
-        # Will call GET /rest/socialActions/{post-urn} to fetch likes,
-        # comments, and shares.  For company pages, the
-        # /organizationalEntityShareStatistics endpoint provides richer
-        # data (impressions, clicks, engagement rate).  Maps these into
-        # an EngagementSnapshot.
         raise NotImplementedError("TODO: port from existing repo")
