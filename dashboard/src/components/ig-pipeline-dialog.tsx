@@ -384,7 +384,7 @@ export function IgPipelineDialog({
                 </div>
 
                 {/* Show picked tweets preview */}
-                {step.key === "pick" && state.status === "success" && pickedTweets.length > 0 && (
+                {step.key === "pick" && state.status === "success" && pickedTweets.length > 0 ? (
                   <div className="ml-10 mb-2 max-h-24 overflow-y-auto rounded-lg bg-zinc-900 p-2 text-xs text-zinc-400 space-y-1">
                     {pickedTweets.map((t) => (
                       <div key={t.hash} className="truncate">
@@ -394,10 +394,10 @@ export function IgPipelineDialog({
                       </div>
                     ))}
                   </div>
-                )}
+                ) : null}
 
                 {/* Show scheduled post IDs */}
-                {step.key === "schedule" && state.status === "success" && state.data && (
+                {step.key === "schedule" && state.status === "success" && state.data ? (
                   <div className="ml-10 mb-2 max-h-24 overflow-y-auto rounded-lg bg-zinc-900 p-2 text-xs text-zinc-400 space-y-1">
                     {(state.data as { hash: string; postId: string }[]).map((s) => (
                       <div key={s.hash} className="truncate">
@@ -407,7 +407,7 @@ export function IgPipelineDialog({
                       </div>
                     ))}
                   </div>
-                )}
+                ) : null}
 
                 {i < STEP_CONFIG.length - 1 && <Separator />}
               </div>
