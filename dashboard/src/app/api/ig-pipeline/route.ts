@@ -20,6 +20,7 @@ import { normalizeTweetText } from '@/lib/tweet-normalize';
 import { renderTweetToBuffer } from '@/lib/canvas-render';
 import { renderPngToVideo } from '@/lib/video-render';
 import { getInstagramAccount, scheduleVideoToInstagram } from '@/lib/zernio';
+import { getSupabaseClient } from '@/lib/supabase';
 
 // How many tweets to process per pipeline run
 const BATCH_SIZE = 10;
@@ -33,51 +34,89 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // 1. Pick random unused tweets from the shared CSV bank.
-  //    The 'instagram' parameter ensures we only check Instagram's history —
-  //    Threads has its own independent tracking.
-  const { picked, remainingUnused } = pickRandomUnused('instagram', BATCH_SIZE);
-  if (picked.length === 0) {
-    return NextResponse.json({ message: 'No unused tweets remaining in bank', remainingUnused: 0 });
+  const supabase = getSupabaseClient();
+  const startedAt = new Date().toISOString();
+
+  try {
+    // 1. Pick random unused tweets from the shared CSV bank.
+    //    The 'instagram' parameter ensures we only check Instagram's history —
+    //    Threads has its own independent tracking.
+    const { picked, remainingUnused } = pickRandomUnused('instagram', BATCH_SIZE);
+    if (picked.length === 0) {
+      // Log a successful cron run even when there's nothing to process
+      await supabase.from('cron_runs').insert({
+        platform: 'instagram_2nd',
+        job_type: 'post',
+        status: 'success',
+        started_at: startedAt,
+        finished_at: new Date().toISOString(),
+        posts_processed: 0,
+        error_message: null,
+      });
+      return NextResponse.json({ message: 'No unused tweets remaining in bank', remainingUnused: 0 });
+    }
+
+    // 2. Generate PNG images and MP4 videos for each tweet.
+    //    Each tweet gets rendered onto a branded canvas image, then the image
+    //    is converted to a 5-second video (required format for Instagram Reels).
+    const imagesDir = path.join(process.cwd(), 'exports', 'bank-images');
+    const videosDir = path.join(process.cwd(), 'exports', 'bank-videos');
+    await fs.mkdir(imagesDir, { recursive: true });
+    await fs.mkdir(videosDir, { recursive: true });
+
+    const generated: { hash: string; text: string; pngPath: string; mp4Path: string }[] = [];
+    for (const tweet of picked) {
+      const normalized = normalizeTweetText(tweet.text);
+      const buffer = await renderTweetToBuffer(normalized);
+      const pngPath = path.join(imagesDir, `tweet-${tweet.hash}.png`);
+      const mp4Path = path.join(videosDir, `tweet-${tweet.hash}.mp4`);
+      await fs.writeFile(pngPath, buffer);
+      await renderPngToVideo(pngPath, mp4Path);
+      generated.push({ hash: tweet.hash, text: tweet.text, pngPath, mp4Path });
+    }
+
+    // 3. Schedule each video to Instagram via Zernio.
+    //    Zernio handles the actual Instagram API interaction — we upload
+    //    the video directly to Zernio's storage and provide the caption text.
+    const { accountId, profileId } = await getInstagramAccount();
+    const scheduled: { hash: string; postId: string }[] = [];
+    for (const g of generated) {
+      const post = await scheduleVideoToInstagram(accountId, profileId, g.text, g.mp4Path);
+      scheduled.push({ hash: g.hash, postId: post.id });
+    }
+
+    // 4. Mark tweets as used ONLY after everything succeeded.
+    //    This is intentionally the last step — if any earlier step fails,
+    //    the tweets remain in the unused pool and will be retried next run.
+    markUsed('instagram', picked.map((t) => t.hash));
+
+    // 5. Log successful cron run to Supabase so the dashboard shows "Healthy"
+    await supabase.from('cron_runs').insert({
+      platform: 'instagram_2nd',
+      job_type: 'post',
+      status: 'success',
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+      posts_processed: picked.length,
+      error_message: null,
+    });
+
+    return NextResponse.json({
+      processed: picked.length,
+      remainingUnused,
+      scheduled,
+    });
+  } catch (err) {
+    // Log failed cron run so the dashboard accurately reflects the failure
+    await supabase.from('cron_runs').insert({
+      platform: 'instagram_2nd',
+      job_type: 'post',
+      status: 'failed',
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+      posts_processed: 0,
+      error_message: (err as Error).message,
+    });
+    throw err;
   }
-
-  // 2. Generate PNG images and MP4 videos for each tweet.
-  //    Each tweet gets rendered onto a branded canvas image, then the image
-  //    is converted to a 5-second video (required format for Instagram Reels).
-  const imagesDir = path.join(process.cwd(), 'exports', 'bank-images');
-  const videosDir = path.join(process.cwd(), 'exports', 'bank-videos');
-  await fs.mkdir(imagesDir, { recursive: true });
-  await fs.mkdir(videosDir, { recursive: true });
-
-  const generated: { hash: string; text: string; pngPath: string; mp4Path: string }[] = [];
-  for (const tweet of picked) {
-    const normalized = normalizeTweetText(tweet.text);
-    const buffer = await renderTweetToBuffer(normalized);
-    const pngPath = path.join(imagesDir, `tweet-${tweet.hash}.png`);
-    const mp4Path = path.join(videosDir, `tweet-${tweet.hash}.mp4`);
-    await fs.writeFile(pngPath, buffer);
-    await renderPngToVideo(pngPath, mp4Path);
-    generated.push({ hash: tweet.hash, text: tweet.text, pngPath, mp4Path });
-  }
-
-  // 3. Schedule each video to Instagram via Zernio.
-  //    Zernio handles the actual Instagram API interaction — we upload
-  //    the video directly to Zernio's storage and provide the caption text.
-  const { accountId, profileId } = await getInstagramAccount();
-  const scheduled: { hash: string; postId: string }[] = [];
-  for (const g of generated) {
-    const post = await scheduleVideoToInstagram(accountId, profileId, g.text, g.mp4Path);
-    scheduled.push({ hash: g.hash, postId: post.id });
-  }
-
-  // 4. Mark tweets as used ONLY after everything succeeded.
-  //    This is intentionally the last step — if any earlier step fails,
-  //    the tweets remain in the unused pool and will be retried next run.
-  markUsed('instagram', picked.map((t) => t.hash));
-
-  return NextResponse.json({
-    processed: picked.length,
-    remainingUnused,
-    scheduled,
-  });
 }
