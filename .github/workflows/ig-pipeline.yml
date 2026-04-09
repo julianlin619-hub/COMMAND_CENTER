@@ -57,6 +57,8 @@ jobs:
             echo "TWEET_BANK_DATA_DIR=${{ github.workspace }}/data"
             echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}"
             echo "SUPABASE_SERVICE_KEY=${{ secrets.SUPABASE_SERVICE_KEY }}"
+            echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}"
+            echo "CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}"
           } > .env.local
 
       - name: Build Next.js app
