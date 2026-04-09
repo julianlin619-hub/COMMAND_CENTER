@@ -14,13 +14,15 @@ export function IgPipelineCard({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setOpen(true)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setOpen(true); }}
         className="w-full text-left cursor-pointer"
       >
         {children}
-      </button>
+      </div>
       <IgPipelineDialog open={open} onOpenChange={setOpen} />
     </>
   );

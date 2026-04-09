@@ -19,7 +19,6 @@ import { PlatformIcon } from "@/components/platform-icon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StaggeredContainer, StaggeredItem } from "@/components/motion/staggered-list";
 import { HoverCard } from "@/components/motion/hover-card";
-import { IgPipelineCard } from "@/components/ig-pipeline-card";
 
 export const dynamic = "force-dynamic";
 
@@ -160,11 +159,7 @@ export default async function DashboardHome() {
           return (
             <StaggeredItem key={s.key}>
               <HoverCard>
-                {s.key === "instagram-2nd" ? (
-                  <IgPipelineCard>{cardContent}</IgPipelineCard>
-                ) : (
-                  <Link href={`/${s.key}`}>{cardContent}</Link>
-                )}
+                <Link href={`/${s.key}`}>{cardContent}</Link>
               </HoverCard>
             </StaggeredItem>
           );

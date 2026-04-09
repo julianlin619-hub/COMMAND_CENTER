@@ -18,6 +18,7 @@ import {
 // ── Cron schedule config (mirrors render.yaml) ──────────────────────────
 const CRON_SCHEDULES = [
   { platform: "threads", schedule: "0 11 * * *", description: "Daily at 4:00 AM PT" },
+  { platform: "instagram_2nd", schedule: "0 11 * * *", description: "Daily at 4:00 AM PT (GitHub Actions)" },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────────
