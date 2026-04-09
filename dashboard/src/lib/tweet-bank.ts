@@ -17,7 +17,6 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { parse } from 'csv-parse/sync';
 
 // The data directory lives at the repo root, one level up from the dashboard.
 // In GitHub Actions, TWEET_BANK_DATA_DIR is set explicitly to the absolute path.
@@ -66,6 +65,10 @@ export function hashTweet(text: string): string {
  * The CSV has one tweet per row (first column), no header row.
  */
 export function parseBankFile(): BankTweet[] {
+  // Lazy-require csv-parse — it's an optionalDependency that may not be
+  // installed in every environment (e.g. local dev without the pipeline).
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { parse } = require('csv-parse/sync');
   const raw = fs.readFileSync(getBankFilePath(), 'utf-8');
   const rows: string[][] = parse(raw, {
     relax_column_count: true,

@@ -11,22 +11,39 @@
  *
  * Configuration (font sizes, colors, spacing) is loaded from
  * data/canvas-config.json so you can tweak the design without changing code.
+ *
+ * NOTE: The `canvas` npm package is an optionalDependency — it requires native
+ * libs (libcairo, etc.) that aren't available in every environment. This module
+ * lazy-loads it so the dashboard can build and run without it. The pipeline
+ * API routes that call renderTweetToBuffer() only run in GitHub Actions where
+ * the native deps are installed.
  */
 
-import { createCanvas, loadImage, registerFont } from 'canvas';
 import path from 'path';
 import fs from 'fs';
-
-// Register the custom font at module load time (once).
-// This font is used for all tweet text rendering.
-registerFont(path.join(process.cwd(), 'public/ig-pipeline/fonts/LibreFranklin-Regular.otf'), {
-  family: 'Libre Franklin',
-  weight: '400',
-});
 
 const FONT_WEIGHT = 400;
 const W = 1080;
 const H = 1920;
+
+// Lazy-load node-canvas to avoid crashing environments where it's not installed.
+// The font is registered once on first use.
+let canvasModule: typeof import('canvas') | null = null;
+let fontRegistered = false;
+
+async function getCanvas() {
+  if (!canvasModule) {
+    canvasModule = await import('canvas');
+  }
+  if (!fontRegistered) {
+    canvasModule.registerFont(
+      path.join(process.cwd(), 'public/ig-pipeline/fonts/LibreFranklin-Regular.otf'),
+      { family: 'Libre Franklin', weight: '400' }
+    );
+    fontRegistered = true;
+  }
+  return canvasModule;
+}
 
 interface CanvasConfig {
   minTopPadding: number;
@@ -133,6 +150,7 @@ function computeLayout(
 }
 
 export async function renderTweetToBuffer(text: string, configOverride?: Partial<CanvasConfig>): Promise<Buffer> {
+  const { createCanvas, loadImage } = await getCanvas();
   const cfg: CanvasConfig = { ...loadConfig(), ...configOverride };
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');

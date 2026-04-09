@@ -8,17 +8,22 @@
  * The silent audio track is required because Instagram may reject videos
  * without an audio stream — even if the audio is silence.
  *
- * Uses fluent-ffmpeg with a bundled static ffmpeg binary (ffmpeg-static)
- * so no system ffmpeg installation is needed in most environments.
- * (GitHub Actions still installs system ffmpeg as a fallback.)
+ * Uses the system-installed ffmpeg binary (installed via apt in GitHub Actions).
+ * fluent-ffmpeg is an optionalDependency — this module only runs in the
+ * pipeline API routes inside GitHub Actions, not during normal dashboard use.
  */
 
-import ffmpeg from 'fluent-ffmpeg';
-import ffmpegStatic from 'ffmpeg-static';
+export async function renderPngToVideo(inputPath: string, outputPath: string): Promise<void> {
+  // Lazy-load fluent-ffmpeg to avoid crashing environments where it's not installed
+  const ffmpegModule = await import('fluent-ffmpeg');
+  const ffmpeg = ffmpegModule.default;
 
-ffmpeg.setFfmpegPath(ffmpegStatic!);
+  // Use system ffmpeg (installed via apt-get in GitHub Actions).
+  // If FFMPEG_PATH is set, use that; otherwise rely on PATH lookup.
+  if (process.env.FFMPEG_PATH) {
+    ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
+  }
 
-export function renderPngToVideo(inputPath: string, outputPath: string): Promise<void> {
   const fs = require('fs');
   const tempVideo = outputPath.replace('.mp4', '.tmp.mp4');
   const silentRaw = outputPath.replace('.mp4', '.raw');
@@ -28,7 +33,7 @@ export function renderPngToVideo(inputPath: string, outputPath: string): Promise
   fs.writeFileSync(silentRaw, silentBuffer);
 
   // Step 1: Create video without audio
-  return new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     ffmpeg()
       .input(inputPath)
       .inputOptions(['-loop 1'])
@@ -37,22 +42,22 @@ export function renderPngToVideo(inputPath: string, outputPath: string): Promise
       .on('end', () => resolve())
       .on('error', reject)
       .run();
-  }).then(() => {
-    // Step 2: Mux silent audio into the video
-    return new Promise<void>((resolve, reject) => {
-      ffmpeg()
-        .input(tempVideo)
-        .input(silentRaw)
-        .inputOptions(['-f s16le', '-ar 44100', '-ac 2'])
-        .outputOptions(['-c:v copy', '-c:a aac', '-b:a 128k', '-shortest', '-movflags', '+faststart'])
-        .output(outputPath)
-        .on('end', () => {
-          fs.unlinkSync(tempVideo);
-          fs.unlinkSync(silentRaw);
-          resolve();
-        })
-        .on('error', reject)
-        .run();
-    });
+  });
+
+  // Step 2: Mux silent audio into the video
+  await new Promise<void>((resolve, reject) => {
+    ffmpeg()
+      .input(tempVideo)
+      .input(silentRaw)
+      .inputOptions(['-f s16le', '-ar 44100', '-ac 2'])
+      .outputOptions(['-c:v copy', '-c:a aac', '-b:a 128k', '-shortest', '-movflags', '+faststart'])
+      .output(outputPath)
+      .on('end', () => {
+        fs.unlinkSync(tempVideo);
+        fs.unlinkSync(silentRaw);
+        resolve();
+      })
+      .on('error', reject)
+      .run();
   });
 }
