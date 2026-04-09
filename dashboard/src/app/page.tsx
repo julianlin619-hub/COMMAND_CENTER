@@ -23,6 +23,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Skeleton } from "@/components/ui/skeleton";
 import { StaggeredContainer, StaggeredItem } from "@/components/motion/staggered-list";
 import { HoverCard } from "@/components/motion/hover-card";
+import { IgPipelineCard } from "@/components/ig-pipeline-card";
 import {
   ActivityIcon,
   BarChart3Icon,
@@ -291,73 +292,83 @@ export default async function DashboardHome() {
         {/* Platforms tab — health cards for each platform */}
         <TabsContent value="platforms">
           <StaggeredContainer className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {summaries.map((s) => (
-              <StaggeredItem key={s.platform}>
-                <HoverCard>
-                  <Card>
-                    <CardHeader>
-                      <div className="flex items-center gap-2">
-                        <Avatar size="sm">
-                          <AvatarFallback className="text-[10px] font-bold">
-                            {PLATFORM_INITIALS[s.platform]}
-                          </AvatarFallback>
-                        </Avatar>
-                        <CardTitle className="capitalize">{s.platform}</CardTitle>
+            {summaries.map((s) => {
+              const cardContent = (
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center gap-2">
+                      <Avatar size="sm">
+                        <AvatarFallback className="text-[10px] font-bold">
+                          {PLATFORM_INITIALS[s.platform]}
+                        </AvatarFallback>
+                      </Avatar>
+                      <CardTitle className="capitalize">{s.platform}</CardTitle>
+                    </div>
+                    <CardAction>
+                      <Tooltip>
+                        <TooltipTrigger>
+                          {s.cronHealthy ? (
+                            <Badge className="bg-green-500/15 text-green-500 border-green-500/25">
+                              Healthy
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-red-500/15 text-red-500 border-red-500/25">
+                              Failing
+                            </Badge>
+                          )}
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {s.cronHealthy
+                            ? `Last successful cron: ${s.lastCronAt ? new Date(s.lastCronAt).toLocaleString() : "N/A"}`
+                            : "Cron job is failing — check Cron Logs for details"}
+                        </TooltipContent>
+                      </Tooltip>
+                    </CardAction>
+                  </CardHeader>
+                  <CardContent>
+                    <dl className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <dt className="text-muted-foreground">Last post</dt>
+                        <dd>
+                          {s.lastPost
+                            ? new Date(s.lastPost).toLocaleDateString()
+                            : "None"}
+                        </dd>
                       </div>
-                      <CardAction>
-                        <Tooltip>
-                          <TooltipTrigger>
-                            {s.cronHealthy ? (
-                              <Badge className="bg-green-500/15 text-green-500 border-green-500/25">
-                                Healthy
-                              </Badge>
-                            ) : (
-                              <Badge className="bg-red-500/15 text-red-500 border-red-500/25">
-                                Failing
-                              </Badge>
-                            )}
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            {s.cronHealthy
-                              ? `Last successful cron: ${s.lastCronAt ? new Date(s.lastCronAt).toLocaleString() : "N/A"}`
-                              : "Cron job is failing — check Cron Logs for details"}
-                          </TooltipContent>
-                        </Tooltip>
-                      </CardAction>
-                    </CardHeader>
-                    <CardContent>
-                      <dl className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <dt className="text-muted-foreground">Last post</dt>
-                          <dd>
-                            {s.lastPost
-                              ? new Date(s.lastPost).toLocaleDateString()
-                              : "None"}
-                          </dd>
-                        </div>
-                        <div className="flex justify-between">
-                          <dt className="text-muted-foreground">Next scheduled</dt>
-                          <dd>
-                            {s.nextScheduled
-                              ? new Date(s.nextScheduled).toLocaleDateString()
-                              : "None"}
-                          </dd>
-                        </div>
-                        <Separator />
-                        <div className="flex justify-between">
-                          <dt className="text-muted-foreground">Last cron</dt>
-                          <dd className="text-xs">
-                            {s.lastCronAt
-                              ? new Date(s.lastCronAt).toLocaleString()
-                              : "Never"}
-                          </dd>
-                        </div>
-                      </dl>
-                    </CardContent>
-                  </Card>
-                </HoverCard>
-              </StaggeredItem>
-            ))}
+                      <div className="flex justify-between">
+                        <dt className="text-muted-foreground">Next scheduled</dt>
+                        <dd>
+                          {s.nextScheduled
+                            ? new Date(s.nextScheduled).toLocaleDateString()
+                            : "None"}
+                        </dd>
+                      </div>
+                      <Separator />
+                      <div className="flex justify-between">
+                        <dt className="text-muted-foreground">Last cron</dt>
+                        <dd className="text-xs">
+                          {s.lastCronAt
+                            ? new Date(s.lastCronAt).toLocaleString()
+                            : "Never"}
+                        </dd>
+                      </div>
+                    </dl>
+                  </CardContent>
+                </Card>
+              );
+
+              return (
+                <StaggeredItem key={s.platform}>
+                  <HoverCard>
+                    {s.platform === "instagram" ? (
+                      <IgPipelineCard>{cardContent}</IgPipelineCard>
+                    ) : (
+                      cardContent
+                    )}
+                  </HoverCard>
+                </StaggeredItem>
+              );
+            })}
           </StaggeredContainer>
         </TabsContent>
 
