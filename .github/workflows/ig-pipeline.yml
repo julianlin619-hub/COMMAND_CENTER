@@ -1,0 +1,116 @@
+name: Instagram Daily Pipeline
+
+# Runs daily at 4:00 AM Las Vegas time (Pacific, UTC-7 PDT / UTC-8 PST)
+# Using UTC-7 (PDT): 4 AM PT = 11:00 UTC
+on:
+  schedule:
+    - cron: '0 11 * * *'
+  workflow_dispatch: # Allow manual runs from GitHub UI
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  ig-bank-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: dashboard/package-lock.json
+
+      # node-canvas requires native libraries for image rendering,
+      # and ffmpeg is needed for PNG-to-MP4 video conversion.
+      - name: Install system dependencies (canvas + ffmpeg)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential \
+            libcairo2-dev \
+            libpango1.0-dev \
+            libjpeg-dev \
+            libgif-dev \
+            librsvg2-dev \
+            ffmpeg
+
+      - name: Install dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      # Build the .env.local file from GitHub secrets so the Next.js app
+      # can access all required API keys and configuration at runtime.
+      - name: Write .env.local from secrets
+        working-directory: dashboard
+        run: |
+          {
+            echo "ZERNIO_API_KEY=${{ secrets.ZERNIO_API_KEY }}"
+            echo "CRON_SECRET=${{ secrets.CRON_SECRET }}"
+            echo "TWEET_BANK_DATA_DIR=${{ github.workspace }}/data"
+          } > .env.local
+
+      - name: Build Next.js app
+        working-directory: dashboard
+        run: npm run build
+
+      # Start the production server in the background and wait for it to
+      # be ready before making API calls. Polls every 2 seconds for up to
+      # 60 seconds.
+      - name: Start server
+        working-directory: dashboard
+        run: |
+          npm run start &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000 > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            echo "Waiting for server... ($i)"
+            sleep 2
+          done
+
+      # This is the main pipeline step — it triggers the full flow:
+      # pick tweets → generate images → convert to video → schedule on Instagram via Zernio
+      - name: Run Instagram bank pipeline
+        run: |
+          echo "Running Instagram bank auto-pipeline..."
+          RESPONSE=$(curl -s --max-time 600 -X POST http://localhost:3000/api/ig-pipeline \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}")
+          echo "Response: $RESPONSE"
+
+          if echo "$RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
+            echo "ig-pipeline failed: $RESPONSE"
+            exit 1
+          fi
+
+          PROCESSED=$(echo "$RESPONSE" | jq '.processed // 0')
+          REMAINING=$(echo "$RESPONSE" | jq '.remainingUnused // 0')
+          echo "Processed $PROCESSED bank tweets. $REMAINING unused tweets remaining."
+
+      # Commit the updated history file back to the repo so the next run
+      # knows which tweets have already been used. Without this step,
+      # the pipeline would re-pick the same tweets every run.
+      - name: Persist bank usage data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/ig-bank-history.json
+          git diff --staged --quiet || git commit -m "chore: update ig bank usage data [skip ci]"
+          git pull --rebase origin main
+          git push || (sleep 5 && git pull --rebase origin main && git push)
+
+      # Always clean up secrets from disk, even if earlier steps failed.
+      # This prevents credentials from leaking into build artifacts or logs.
+      - name: Clean up secrets from disk
+        if: always()
+        working-directory: dashboard
+        run: rm -f .env.local

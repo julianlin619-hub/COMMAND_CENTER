@@ -18,6 +18,10 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
+      - key: ZERNIO_API_KEY
+        sync: false
+      - key: TWEET_BANK_DATA_DIR
+        sync: false
       - key: NEXT_PUBLIC_CLERK_SIGN_IN_URL
         value: /sign-in
       - key: BUFFER_ACCESS_TOKEN

@@ -29,5 +29,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Generated media (transient — created by ig-pipeline, not committed)
+exports/
+dashboard/exports/
+
 # Supabase local
 supabase/.temp/
