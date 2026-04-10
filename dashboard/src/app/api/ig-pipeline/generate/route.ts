@@ -39,10 +39,29 @@ export async function POST(req: NextRequest) {
     const generated: { hash: string; text: string; pngPath: string; mp4Path: string }[] = [];
 
     for (const tweet of tweets) {
+      // Validate hash is alphanumeric to prevent path traversal via crafted
+      // hash values like "../../etc/passwd" which would escape the exports/ dir
+      if (!/^[a-zA-Z0-9]+$/.test(tweet.hash)) {
+        return NextResponse.json(
+          { error: "Invalid hash format — must be alphanumeric" },
+          { status: 400 }
+        );
+      }
+
       const normalized = normalizeTweetText(tweet.text);
       const buffer = await renderTweetToBuffer(normalized);
       const pngPath = path.join(imagesDir, `tweet-${tweet.hash}.png`);
       const mp4Path = path.join(videosDir, `tweet-${tweet.hash}.mp4`);
+
+      // Verify resolved paths stay within the exports directory (defense in depth)
+      const exportsRoot = path.resolve(process.cwd(), 'exports');
+      if (!path.resolve(pngPath).startsWith(exportsRoot) ||
+          !path.resolve(mp4Path).startsWith(exportsRoot)) {
+        return NextResponse.json(
+          { error: "Path escapes exports directory" },
+          { status: 400 }
+        );
+      }
       await fs.writeFile(pngPath, buffer);
       await renderPngToVideo(pngPath, mp4Path);
       generated.push({ hash: tweet.hash, text: tweet.text, pngPath, mp4Path });
@@ -57,6 +76,7 @@ export async function POST(req: NextRequest) {
       })),
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    console.error("IG pipeline generate error:", e);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

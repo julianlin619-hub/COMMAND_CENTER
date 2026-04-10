@@ -80,9 +80,24 @@ export async function POST(request: Request) {
   );
   const count = parseInt(process.env.CONTENT_BANK_COUNT || "5", 10);
 
-  if (!existsSync(bankPath)) {
+  // Path containment check — ensure the resolved bank path stays within
+  // the project root so a misconfigured CONTENT_BANK_PATH env var can't
+  // read arbitrary files on the filesystem (e.g. /etc/passwd).
+  const projectRoot = resolve(process.cwd(), "..");
+  if (!bankPath.startsWith(projectRoot)) {
+    console.error("Bank path escapes project root:", bankPath);
     return NextResponse.json(
-      { error: "Content bank file not found", path: bankPath },
+      { error: "Invalid content bank path configuration" },
+      { status: 400 }
+    );
+  }
+
+  if (!existsSync(bankPath)) {
+    // Don't expose the full filesystem path to the client — it reveals
+    // the server's directory structure and aids reconnaissance.
+    console.error("Content bank file not found:", bankPath);
+    return NextResponse.json(
+      { error: "Content bank file not found" },
       { status: 400 }
     );
   }
@@ -176,6 +191,7 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     const message = (err as Error).message;
+    console.error("Threads bank error:", err);
     if (runId) {
       await supabase
         .from("cron_runs")
@@ -186,6 +202,6 @@ export async function POST(request: Request) {
         })
         .eq("id", runId);
     }
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

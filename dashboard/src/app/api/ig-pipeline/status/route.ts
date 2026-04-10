@@ -26,6 +26,7 @@ export async function GET(request: Request) {
       remainingUnused,
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    console.error("IG pipeline status error:", e);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 
 from supabase import Client, create_client
 
@@ -89,21 +90,78 @@ def get_posts(
 # has claimed them yet.
 
 
-def get_due_schedules(platform: str) -> list[dict]:
-    """Get schedules that are due and haven't been picked up yet."""
+# If a schedule has been "picked up" for longer than this without completing,
+# it's probably stuck (the cron worker crashed after claiming it). Reset it
+# so the next cron run can retry. 30 minutes is generous — even a slow video
+# upload should finish well within that.
+STALE_PICKUP_MINUTES = 30
+
+
+def _reset_stale_pickups(platform: str) -> int:
+    """Reset schedules that were picked up but never completed.
+
+    When a cron worker crashes after claiming a schedule (setting picked_up_at)
+    but before updating the post status to published/failed, the schedule gets
+    stuck — no other cron run will pick it up because picked_up_at is set.
+
+    This function finds schedules that have been in "picked up" state for too
+    long and resets them by clearing picked_up_at. The associated post is also
+    reset from "publishing" back to "scheduled" so it re-enters the queue.
+
+    Returns the number of schedules reset.
+    """
     client = get_client()
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(minutes=STALE_PICKUP_MINUTES)
+    ).isoformat()
+
+    # Find schedules that were picked up before the cutoff and whose
+    # associated post is still in "publishing" state (never completed)
+    stale = (
+        client.table("schedules")
+        .select("id, post_id, posts!inner(status)")
+        .not_.is_("picked_up_at", "null")
+        .lte("picked_up_at", cutoff)
+        .eq("posts.platform", platform)
+        .eq("posts.status", "publishing")
+        .execute()
+        .data
+    )
+
+    for schedule in stale:
+        client.table("schedules").update(
+            {"picked_up_at": None}
+        ).eq("id", schedule["id"]).execute()
+        client.table("posts").update(
+            {"status": "scheduled", "updated_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("id", schedule["post_id"]).execute()
+        logger.warning(
+            "Reset stale schedule %s (post %s) — picked up >%d min ago without completing",
+            schedule["id"], schedule["post_id"], STALE_PICKUP_MINUTES,
+        )
+
+    return len(stale)
+
+
+def get_due_schedules(platform: str) -> list[dict]:
+    """Get schedules that are due and haven't been picked up yet.
+
+    Also resets any schedules that have been stuck in "picked up" state
+    for more than STALE_PICKUP_MINUTES, so they can be retried.
+    """
+    client = get_client()
+
+    # First, unstick any schedules that a crashed worker left behind
+    reset_count = _reset_stale_pickups(platform)
+    if reset_count:
+        logger.info("Reset %d stale %s schedule(s)", reset_count, platform)
+
     now = datetime.now(timezone.utc).isoformat()
     return (
         client.table("schedules")
-        # "*, posts(*)" is a Supabase join: fetch the schedule row AND the
-        # related post row in one query (PostgREST embedded resources).
         .select("*, posts!inner(*)")
-        # picked_up_at being null means no cron run has claimed this schedule yet.
-        # This prevents two overlapping cron runs from publishing the same post twice.
         .is_("picked_up_at", "null")
-        # Only grab schedules whose time has arrived
         .lte("scheduled_for", now)
-        # Filter to the specific platform this cron job handles
         .eq("posts.platform", platform)
         .execute()
         .data
@@ -175,6 +233,30 @@ def log_cron_start(platform: str, job_type: str) -> str:
     return result.data[0]["id"]
 
 
+def _sanitize_error_message(message: str) -> str:
+    """Strip potential credentials from error messages before storing in the DB.
+
+    Cron jobs catch exceptions and log str(e) — but exception messages can
+    contain tokens, API keys, or URLs with query-string secrets leaked by
+    HTTP libraries. This function redacts anything that looks like a secret
+    so it never lands in the cron_runs table (which the dashboard reads).
+    """
+    # Redact Bearer tokens: "Bearer eyJhb..." → "Bearer [REDACTED]"
+    message = re.sub(r"Bearer\s+\S+", "Bearer [REDACTED]", message)
+    # Redact URL query params that look like tokens/keys:
+    #   ?token=abc123&key=xyz → ?token=[REDACTED]&key=[REDACTED]
+    message = re.sub(
+        r"([?&](token|key|secret|api_key|apikey|access_token|refresh_token)=)[^\s&]+",
+        r"\1[REDACTED]",
+        message,
+        flags=re.IGNORECASE,
+    )
+    # Redact long alphanumeric strings (64+ chars) that look like API keys/tokens.
+    # Preserves UUIDs (36 chars with hyphens) and short identifiers.
+    message = re.sub(r"[A-Za-z0-9_\-]{64,}", "[REDACTED_KEY]", message)
+    return message
+
+
 def log_cron_finish(
     run_id: str,
     status: str,
@@ -189,5 +271,7 @@ def log_cron_finish(
         "posts_processed": posts_processed,
     }
     if error_message:
-        data["error_message"] = error_message
+        # Sanitize before storing — error messages from HTTP libraries can
+        # contain tokens, API keys, or auth headers in the exception text
+        data["error_message"] = _sanitize_error_message(error_message)
     client.table("cron_runs").update(data).eq("id", run_id).execute()

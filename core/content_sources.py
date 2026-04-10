@@ -59,11 +59,16 @@ def fetch_apify_tweets(
         return []
 
     try:
+        # Use Authorization header instead of query params so the API key
+        # doesn't appear in access logs, error messages, or Apify's URL history.
+        apify_headers = {"Authorization": f"Bearer {api_key}"}
+
         # Start the Apify actor and wait for it to finish (up to 5 min).
         # The actor scrapes Twitter's frontend and returns structured data.
         run_resp = httpx.post(
             "https://api.apify.com/v2/acts/apidojo~tweet-scraper/runs",
-            params={"token": api_key, "waitForFinish": 300},
+            params={"waitForFinish": 300},
+            headers=apify_headers,
             json={
                 "twitterHandles": [twitter_handle],
                 "maxItems": max_items,
@@ -77,7 +82,7 @@ def fetch_apify_tweets(
         # Fetch the scraped items from the Apify dataset
         items_resp = httpx.get(
             f"https://api.apify.com/v2/datasets/{dataset_id}/items",
-            params={"token": api_key},
+            headers=apify_headers,
             timeout=60,
         )
         items_resp.raise_for_status()
