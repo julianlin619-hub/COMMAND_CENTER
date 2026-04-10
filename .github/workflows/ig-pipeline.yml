@@ -3,8 +3,8 @@ name: Instagram Daily Pipeline
 # Runs daily at 4:00 AM Las Vegas time (Pacific, UTC-7 PDT / UTC-8 PST)
 # Using UTC-7 (PDT): 4 AM PT = 11:00 UTC
 on:
-  schedule:
-    - cron: '0 11 * * *'
+  # schedule:                        # Paused — waiting for new Instagram account
+  #   - cron: '0 11 * * *'
   workflow_dispatch: # Allow manual runs from GitHub UI
 
 env:

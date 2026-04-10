@@ -35,6 +35,9 @@ const ACTIVE_PLATFORMS: PlatformEntry[] = [
   { key: "instagram-2nd", platform: "instagram_2nd", label: "Instagram (2nd)" },
 ];
 
+// Platforms with paused cron jobs — show "Pending" instead of health status
+const PAUSED_PLATFORMS = new Set(["instagram_2nd"]);
+
 const INACTIVE_PLATFORMS: PlatformEntry[] = [
   { key: "youtube", platform: "youtube", label: "YouTube" },
   { key: "instagram", platform: "instagram", label: "Instagram (main)" },
@@ -106,7 +109,11 @@ export default async function DashboardHome() {
                 <CardAction>
                   <Tooltip>
                     <TooltipTrigger>
-                      {s.cronHealthy ? (
+                      {PAUSED_PLATFORMS.has(s.platform) ? (
+                        <Badge className="bg-yellow-500/15 text-yellow-500 border-yellow-500/25">
+                          Pending
+                        </Badge>
+                      ) : s.cronHealthy ? (
                         <Badge className="bg-green-500/15 text-green-500 border-green-500/25">
                           Healthy
                         </Badge>
@@ -117,9 +124,11 @@ export default async function DashboardHome() {
                       )}
                     </TooltipTrigger>
                     <TooltipContent>
-                      {s.cronHealthy
-                        ? `Last successful cron: ${s.lastCronAt ? new Date(s.lastCronAt).toLocaleString() : "N/A"}`
-                        : "Cron job is failing — check Cron Logs for details"}
+                      {PAUSED_PLATFORMS.has(s.platform)
+                        ? "Paused — waiting for new Instagram account"
+                        : s.cronHealthy
+                          ? `Last successful cron: ${s.lastCronAt ? new Date(s.lastCronAt).toLocaleString() : "N/A"}`
+                          : "Cron job is failing — check Cron Logs for details"}
                     </TooltipContent>
                   </Tooltip>
                 </CardAction>
