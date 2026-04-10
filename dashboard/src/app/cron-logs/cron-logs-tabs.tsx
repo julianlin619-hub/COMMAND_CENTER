@@ -17,7 +17,8 @@ import {
 
 // ── Cron schedule config (mirrors render.yaml) ──────────────────────────
 const CRON_SCHEDULES = [
-  { platform: "threads", schedule: "0 11 * * *", description: "Daily at 4:00 AM PT" },
+  { platform: "threads", schedule: "0 12 * * *", description: "Daily at 4:00 AM PST" },
+  { platform: "tiktok", schedule: "0 12 * * *", description: "Daily at 4:00 AM PST" },
   // instagram_2nd paused — waiting for new Instagram account
 ];
 

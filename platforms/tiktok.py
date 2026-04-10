@@ -1,7 +1,8 @@
-"""TikTok platform implementation. Placeholder — will be filled from existing repo.
+"""TikTok platform adapter — UNUSED.
 
-STUB FILE — This adapter will wrap TikTok's Content Posting API (part of the
-TikTok for Developers platform).
+TikTok publishing goes through Buffer (see core/buffer.py and
+cron/tiktok_pipeline.py). This stub is kept as reference for a future
+direct TikTok API integration if we ever need to bypass Buffer.
 -----------------------------------------------------------------
 Key things to know about TikTok's API:
   - Auth uses OAuth 2.0.  You get an authorization code, exchange it for

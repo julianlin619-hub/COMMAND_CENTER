@@ -37,6 +37,7 @@ def fetch_apify_tweets(
     twitter_handle: str,
     max_items: int = 50,
     hours_lookback: int = 24,
+    min_favorites: int | None = None,
 ) -> list[dict]:
     """Scrape recent tweets from a Twitter account via Apify.
 
@@ -47,11 +48,14 @@ def fetch_apify_tweets(
         twitter_handle: Twitter username without the @ (e.g. "AlexHormozi").
         max_items: Max tweets to request from the scraper.
         hours_lookback: Only return tweets from the past N hours.
+        min_favorites: If set, passed as minimumFavorites to the Apify actor
+            AND used for post-fetch filtering. The TikTok pipeline uses this
+            to only grab high-engagement "outlier" tweets (e.g. 4000+ likes).
 
     Returns:
-        List of dicts with 'id', 'text', 'created_at', 'url' keys,
-        sorted newest-first. Empty list if APIFY_API_KEY is not set or
-        if the request fails.
+        List of dicts with 'id', 'text', 'created_at', 'url', and
+        'like_count' keys, sorted newest-first. Empty list if
+        APIFY_API_KEY is not set or if the request fails.
     """
     api_key = os.environ.get("APIFY_API_KEY", "")
     if not api_key:
@@ -65,15 +69,22 @@ def fetch_apify_tweets(
 
         # Start the Apify actor and wait for it to finish (up to 5 min).
         # The actor scrapes Twitter's frontend and returns structured data.
+        actor_input: dict = {
+            "twitterHandles": [twitter_handle],
+            "maxItems": max_items,
+            "sort": "Latest",
+        }
+        # minimumFavorites tells the Apify actor to only return tweets above
+        # this like threshold. Used by the TikTok pipeline to grab "outlier"
+        # tweets (viral content worth turning into videos).
+        if min_favorites is not None:
+            actor_input["minimumFavorites"] = min_favorites
+
         run_resp = httpx.post(
             "https://api.apify.com/v2/acts/apidojo~tweet-scraper/runs",
             params={"waitForFinish": 300},
             headers=apify_headers,
-            json={
-                "twitterHandles": [twitter_handle],
-                "maxItems": max_items,
-                "sort": "Latest",
-            },
+            json=actor_input,
             timeout=360,
         )
         run_resp.raise_for_status()
@@ -107,11 +118,20 @@ def fetch_apify_tweets(
         except (ValueError, TypeError):
             continue
 
+        like_count = int(item.get("likeCount", 0))
+
+        # Post-fetch like filter — if min_favorites is set, skip tweets
+        # below the threshold. The Apify actor does server-side filtering
+        # too, but we double-check here in case it returns borderline results.
+        if min_favorites is not None and like_count < min_favorites:
+            continue
+
         tweets.append({
             "id": str(item.get("id", "")),
             "text": text,
             "created_at": created_at,
             "url": str(item.get("url", "")),
+            "like_count": like_count,
         })
 
     tweets.sort(key=lambda t: t["created_at"], reverse=True)

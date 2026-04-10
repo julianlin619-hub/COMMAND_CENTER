@@ -36,6 +36,8 @@ services:
         sync: false
       - key: CONTENT_BANK_COUNT
         sync: false
+      - key: BUFFER_ORG_ID
+        sync: false
 
   # ── Cron Jobs (Python) ─────────────────────────────────────────────────
   # IMPORTANT: Update the schedule values to match your actual posting cadence.
@@ -74,19 +76,31 @@ services:
         sync: false
 
   - type: cron
-    name: tiktok-cron
+    name: tiktok-pipeline
     runtime: python
     buildCommand: pip install -e .
-    startCommand: python -m cron.tiktok_cron
-    schedule: "0 */4 * * *"  # TODO: set your real schedule
+    startCommand: python -m cron.tiktok_pipeline
+    schedule: "0 12 * * *"  # Daily at 12 PM UTC = 4 AM PST (same as other cron jobs)
     envVars:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
-      - key: TIKTOK_CLIENT_KEY
+      - key: APIFY_API_KEY
         sync: false
-      - key: TIKTOK_CLIENT_SECRET
+      - key: APIFY_TWITTER_HANDLE
+        sync: false
+      - key: BUFFER_ACCESS_TOKEN
+        sync: false
+      - key: BUFFER_ORG_ID
+        sync: false
+      - key: DASHBOARD_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: TIKTOK_MIN_LIKES  # optional — default 4000
+        sync: false
+      - key: TIKTOK_MAX_ITEMS  # optional — default 30
         sync: false
 
   - type: cron

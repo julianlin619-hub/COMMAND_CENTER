@@ -33,6 +33,7 @@ interface PlatformEntry {
 const ACTIVE_PLATFORMS: PlatformEntry[] = [
   { key: "threads", platform: "threads", label: "Threads" },
   { key: "instagram-2nd", platform: "instagram_2nd", label: "Instagram (2nd)" },
+  { key: "tiktok", platform: "tiktok", label: "TikTok" },
 ];
 
 // Platforms with paused cron jobs — show "Pending" instead of health status
@@ -41,7 +42,6 @@ const PAUSED_PLATFORMS = new Set(["instagram_2nd"]);
 const INACTIVE_PLATFORMS: PlatformEntry[] = [
   { key: "youtube", platform: "youtube", label: "YouTube" },
   { key: "instagram", platform: "instagram", label: "Instagram (main)" },
-  { key: "tiktok", platform: "tiktok", label: "TikTok" },
   { key: "linkedin", platform: "linkedin", label: "LinkedIn" },
   { key: "facebook", platform: "facebook", label: "Facebook" },
 ];
@@ -79,7 +79,8 @@ async function getPlatformSummary(entry: PlatformEntry) {
     ...entry,
     lastPost: lastPostResult.data?.[0]?.published_at ?? null,
     nextScheduled: nextScheduleResult.data?.[0]?.scheduled_for ?? null,
-    cronHealthy: cronResult.data?.[0]?.status === "success",
+    // Healthy if the last cron succeeded OR if no cron has run yet (not a failure)
+    cronHealthy: cronResult.data?.[0]?.status !== "failed",
     lastCronAt: cronResult.data?.[0]?.started_at ?? null,
   };
 }
