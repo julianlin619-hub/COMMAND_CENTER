@@ -1,7 +1,7 @@
 /**
  * Tweet bank — reads tweets from a shared CSV and tracks per-platform usage.
  *
- * Both Instagram and Threads pull from the same CSV file (tweet_bank_1.csv),
+ * Both Instagram and Threads pull from the same CSV file (TweetMasterBank.csv),
  * but each platform maintains its own history of which tweets it has already
  * used. This means the same tweet can appear on Instagram AND Threads, but
  * won't be repeated on the same platform.
@@ -26,7 +26,7 @@ function getDataDir(): string {
 }
 
 function getBankFilePath(): string {
-  return path.join(getDataDir(), 'tweet_bank_1.csv');
+  return path.join(getDataDir(), 'TweetMasterBank.csv');
 }
 
 // Each platform gets its own history file so they track usage independently.
@@ -62,7 +62,8 @@ export function hashTweet(text: string): string {
 
 /**
  * Parse the shared CSV bank file into an array of tweets with hashes.
- * The CSV has one tweet per row (first column), no header row.
+ * Handles TweetMasterBank.csv format (tweet_id, text, favorite_count)
+ * as well as legacy single-column CSVs.
  */
 export function parseBankFile(): BankTweet[] {
   // Lazy-require csv-parse — it's an optionalDependency that may not be
@@ -76,8 +77,25 @@ export function parseBankFile(): BankTweet[] {
     trim: true,
   });
 
+  if (rows.length === 0) return [];
+
+  // Detect header row and text column index
+  const header = rows[0];
+  const headerLower = header.map((h) => h.toLowerCase());
+  let textCol = 0;
+  let startRow = 0;
+
+  if (headerLower.includes('text')) {
+    textCol = headerLower.indexOf('text');
+    startRow = 1; // skip header
+  } else if (header.length > 1) {
+    textCol = 1;
+    startRow = 1;
+  }
+
   return rows
-    .map((row) => row[0]?.trim())
+    .slice(startRow)
+    .map((row) => row[textCol]?.trim())
     .filter((text): text is string => Boolean(text))
     .map((text) => ({ hash: hashTweet(text), text: decodeHtml(text) }));
 }

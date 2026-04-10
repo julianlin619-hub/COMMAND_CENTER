@@ -19,6 +19,7 @@ import {
 const CRON_SCHEDULES = [
   { platform: "threads", schedule: "0 12 * * *", description: "Daily at 4:00 AM PST" },
   { platform: "tiktok", schedule: "0 12 * * *", description: "Daily at 4:00 AM PST" },
+  { platform: "facebook", schedule: "0 13 * * *", description: "Daily at 5:00 AM PST" },
   // instagram_2nd paused — waiting for new Instagram account
 ];
 

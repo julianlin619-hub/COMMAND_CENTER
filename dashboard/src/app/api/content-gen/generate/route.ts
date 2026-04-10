@@ -1,16 +1,17 @@
 /**
  * POST /api/content-gen/generate
  *
- * Step 3 of the Outlier Tweet Reel pipeline: takes selected tweets, renders
- * each as a branded PNG quote card (via canvas-render), converts to a 5-second
- * vertical MP4 video (1080x1920, 9:16 for TikTok), uploads the MP4 to Supabase
- * Storage, then cleans up local temp files.
+ * Multi-platform content generation route. Takes selected tweets and
+ * generates platform-specific media:
  *
- * Body: { tweets: [{ id: string, text: string }] }
+ *   - TikTok (default): 1080x1920 PNG → 5-second MP4 video
+ *   - Facebook: 1080x1080 square PNG quote card (no video conversion)
+ *
+ * Body: { tweets: [{ id, text }], platform?: 'tiktok' | 'facebook' }
  * Returns: { generated: [{ id, text, storagePath }] }
  *
- * Reuses the same canvas-render and video-render libs as the IG pipeline —
- * the rendered images use the same light-theme design (white bg, dark text).
+ * Facebook uses the template from the `templates` table in Supabase,
+ * while TikTok still reads from data/canvas-config.json.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -20,8 +21,11 @@ import os from "os";
 import { normalizeTweetText } from "@/lib/tweet-normalize";
 import { renderTweetToBuffer } from "@/lib/canvas-render";
 import { renderPngToVideo } from "@/lib/video-render";
+import { renderSquareQuoteCard } from "@/lib/square-canvas-render";
 import { getSupabaseClient } from "@/lib/supabase";
 import { verifyApiAuth } from "@/lib/auth";
+import type { TemplateConfig } from "@/lib/template-types";
+import { DEFAULT_TEMPLATE_CONFIG } from "@/lib/template-types";
 
 export async function POST(req: NextRequest) {
   if (!(await verifyApiAuth(req))) {
@@ -29,9 +33,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { tweets } = (await req.json()) as {
+    const body = (await req.json()) as {
       tweets: { id: string; text: string }[];
+      platform?: "tiktok" | "facebook";
     };
+    const { tweets, platform = "tiktok" } = body;
 
     if (!tweets?.length) {
       return NextResponse.json({ error: "No tweets provided" }, { status: 400 });
@@ -40,58 +46,101 @@ export async function POST(req: NextRequest) {
     const supabase = getSupabaseClient();
     const generated: { id: string; text: string; storagePath: string }[] = [];
 
-    // Use os.tmpdir() instead of a local exports/ directory — temp files get
-    // cleaned up after upload to Supabase Storage
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "tiktok-gen-"));
+    // For Facebook: fetch the active template config from the database
+    let fbTemplateConfig: TemplateConfig | null = null;
+    if (platform === "facebook") {
+      const { data: template, error: tmplError } = await supabase
+        .from("templates")
+        .select("config")
+        .eq("platform", "facebook")
+        .eq("is_active", true)
+        .limit(1)
+        .single();
+
+      if (tmplError || !template) {
+        return NextResponse.json(
+          { error: "No active Facebook template found — create one in the template designer" },
+          { status: 400 }
+        );
+      }
+      // Merge with defaults so any missing fields (e.g. paddingLeft vs old
+      // single "padding") fall back to the locked-in values.
+      fbTemplateConfig = { ...DEFAULT_TEMPLATE_CONFIG, ...(template.config as Partial<TemplateConfig>) };
+    }
+
+    // Temp directory for intermediate files (TikTok needs PNG→MP4 conversion,
+    // Facebook just renders directly to a buffer)
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `${platform}-gen-`));
 
     for (const tweet of tweets) {
-      // Validate tweet ID is alphanumeric to prevent path traversal attacks.
-      // A crafted ID like "../../etc/passwd" would escape the temp directory.
-      if (!/^[a-zA-Z0-9_]+$/.test(tweet.id)) {
+      // Validate tweet ID to prevent path traversal attacks.
+      // Allows alphanumeric, underscores, and hyphens (UUIDs from Supabase contain hyphens).
+      if (!/^[a-zA-Z0-9_-]+$/.test(tweet.id)) {
         return NextResponse.json(
-          { error: "Invalid tweet ID format — must be alphanumeric" },
+          { error: "Invalid tweet ID format" },
           { status: 400 }
         );
       }
 
-      // 1. Normalize tweet text (strip URLs, fix spacing)
+      // Normalize tweet text (strip URLs, fix spacing)
       const normalized = normalizeTweetText(tweet.text);
 
-      // 2. Render tweet onto a branded 1080x1920 PNG canvas
-      const pngBuffer = await renderTweetToBuffer(normalized);
-      const pngPath = path.join(tmpDir, `tweet-${tweet.id}.png`);
-      const mp4Path = path.join(tmpDir, `tweet-${tweet.id}.mp4`);
+      if (platform === "facebook") {
+        // Facebook path: render a 1080x1080 square PNG — no video conversion
+        const pngBuffer = await renderSquareQuoteCard(normalized, fbTemplateConfig!);
+        const storagePath = `facebook/tweet-${tweet.id}.png`;
 
-      // 3. Write PNG to temp, convert to 5-second MP4 video
-      await fs.writeFile(pngPath, pngBuffer);
-      await renderPngToVideo(pngPath, mp4Path);
+        const { error: uploadError } = await supabase.storage
+          .from("media")
+          .upload(storagePath, pngBuffer, {
+            contentType: "image/png",
+            upsert: true,
+          });
 
-      // 4. Upload MP4 to Supabase Storage under tiktok/ prefix
-      const mp4Buffer = await fs.readFile(mp4Path);
-      const storagePath = `tiktok/tweet-${tweet.id}.mp4`;
-      const { error: uploadError } = await supabase.storage
-        .from("media")
-        .upload(storagePath, mp4Buffer, {
-          contentType: "video/mp4",
-          upsert: true, // overwrite if re-generating the same tweet
-        });
+        if (uploadError) {
+          console.error(`Upload failed for tweet ${tweet.id}:`, uploadError.message);
+          return NextResponse.json(
+            { error: `Upload failed: ${uploadError.message}` },
+            { status: 500 }
+          );
+        }
 
-      if (uploadError) {
-        console.error(`Upload failed for tweet ${tweet.id}:`, uploadError.message);
-        return NextResponse.json(
-          { error: `Upload failed: ${uploadError.message}` },
-          { status: 500 }
-        );
+        generated.push({ id: tweet.id, text: normalized, storagePath });
+      } else {
+        // TikTok path: render 1080x1920 PNG → convert to 5-second MP4 video
+        const pngBuffer = await renderTweetToBuffer(normalized);
+        const pngPath = path.join(tmpDir, `tweet-${tweet.id}.png`);
+        const mp4Path = path.join(tmpDir, `tweet-${tweet.id}.mp4`);
+
+        await fs.writeFile(pngPath, pngBuffer);
+        await renderPngToVideo(pngPath, mp4Path);
+
+        const mp4Buffer = await fs.readFile(mp4Path);
+        const storagePath = `tiktok/tweet-${tweet.id}.mp4`;
+        const { error: uploadError } = await supabase.storage
+          .from("media")
+          .upload(storagePath, mp4Buffer, {
+            contentType: "video/mp4",
+            upsert: true,
+          });
+
+        if (uploadError) {
+          console.error(`Upload failed for tweet ${tweet.id}:`, uploadError.message);
+          return NextResponse.json(
+            { error: `Upload failed: ${uploadError.message}` },
+            { status: 500 }
+          );
+        }
+
+        // Clean up temp files now that upload succeeded
+        await fs.unlink(pngPath).catch(() => {});
+        await fs.unlink(mp4Path).catch(() => {});
+
+        generated.push({ id: tweet.id, text: normalized, storagePath });
       }
-
-      // 5. Clean up temp files (PNG + MP4) now that the upload succeeded
-      await fs.unlink(pngPath).catch(() => {});
-      await fs.unlink(mp4Path).catch(() => {});
-
-      generated.push({ id: tweet.id, text: normalized, storagePath });
     }
 
-    // Clean up the temp directory itself
+    // Clean up the temp directory
     await fs.rm(tmpDir, { recursive: true }).catch(() => {});
 
     return NextResponse.json({ generated });

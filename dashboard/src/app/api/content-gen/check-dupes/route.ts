@@ -1,12 +1,11 @@
 /**
  * POST /api/content-gen/check-dupes
  *
- * Checks which tweet captions already exist as TikTok posts in Supabase.
- * This replaces TWEEL_REEL's file-based tweet-history.json dedup with a
- * proper database query.
+ * Checks which tweet captions already exist as posts for a given platform.
+ * Used by the manual wizard to mark duplicates before generating content.
  *
- * Body: { captions: string[] }
- * Returns: { existing: string[] } — the subset of captions that already have TikTok posts
+ * Body: { captions: string[], platform?: 'tiktok' | 'facebook' }
+ * Returns: { existing: string[] } — the subset of captions that already have posts
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -19,7 +18,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { captions } = (await req.json()) as { captions: string[] };
+    const { captions, platform = "tiktok" } = (await req.json()) as {
+      captions: string[];
+      platform?: string;
+    };
 
     if (!captions?.length) {
       return NextResponse.json({ existing: [] });
@@ -27,12 +29,12 @@ export async function POST(req: NextRequest) {
 
     const supabase = getSupabaseClient();
 
-    // Query posts table for any TikTok posts whose caption matches one of the
-    // provided captions. Supabase's `.in()` filter maps to SQL `IN (...)`.
+    // Query posts table for any posts on this platform whose caption matches.
+    // Supabase's `.in()` filter maps to SQL `IN (...)`.
     const { data, error } = await supabase
       .from("posts")
       .select("caption")
-      .eq("platform", "tiktok")
+      .eq("platform", platform)
       .in("caption", captions);
 
     if (error) {

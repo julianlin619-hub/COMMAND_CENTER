@@ -120,23 +120,23 @@ services:
         sync: false
 
   - type: cron
-    name: facebook-cron
+    name: facebook-pipeline
     runtime: python
     buildCommand: pip install -e .
-    startCommand: python -m cron.facebook_cron
-    schedule: "0 */4 * * *"  # TODO: set your real schedule
+    startCommand: python -m cron.facebook_pipeline
+    schedule: "0 13 * * *"  # 1 PM UTC = 6 AM PDT — 1hr after TikTok's 12 PM UTC so its posts are in the DB
     envVars:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
-      - key: FACEBOOK_APP_ID
+      - key: BUFFER_ACCESS_TOKEN
         sync: false
-      - key: FACEBOOK_APP_SECRET
+      - key: BUFFER_ORG_ID
         sync: false
-      - key: FACEBOOK_ACCESS_TOKEN
+      - key: DASHBOARD_URL
         sync: false
-      - key: FACEBOOK_PAGE_ID
+      - key: CRON_SECRET
         sync: false
 
   - type: cron

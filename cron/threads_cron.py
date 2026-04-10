@@ -98,7 +98,7 @@ def main():
         bank_sourced = 0
         now = datetime.now(timezone.utc)
 
-        bank_path = os.environ.get("CONTENT_BANK_PATH", "data/threads_bank.csv")
+        bank_path = os.environ.get("CONTENT_BANK_PATH", "data/TweetMasterBank.csv")
         bank_count = int(os.environ.get("CONTENT_BANK_COUNT", "5"))
 
         existing_posts = get_posts(platform="threads", limit=5000)

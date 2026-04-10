@@ -1,16 +1,15 @@
 /**
- * Buffer GraphQL API client for TikTok video posting.
+ * Buffer GraphQL API client for multi-platform posting.
  *
- * Sends generated TikTok videos to Buffer's posting queue. Buffer handles
- * the actual TikTok API interaction (upload, publishing, queue timing).
+ * Sends generated content (videos, images) to Buffer's posting queue.
+ * Buffer handles the actual platform API interaction (upload, publishing,
+ * queue timing).
  *
- * Ported from TWEEL_REEL's lib/buffer.ts with these changes:
- *   - Uses BUFFER_ACCESS_TOKEN (not BUFFER_API — same key, standardized name)
- *   - Uses BUFFER_ORG_ID env var instead of hardcoded organization ID
- *   - Typed response handling with proper error union matching
+ * Supports any platform connected in Buffer — the `service` param selects
+ * which channel to use ('tiktok', 'facebook', etc.).
  *
  * Auth: BUFFER_ACCESS_TOKEN env var as Bearer token
- * Org:  BUFFER_ORG_ID env var to discover the TikTok channel
+ * Org:  BUFFER_ORG_ID env var to discover platform channels
  */
 
 const BUFFER_GRAPHQL_URL = "https://api.buffer.com/graphql";
@@ -39,7 +38,10 @@ async function bufferRequest<T>(
   });
 
   if (!res.ok) {
-    throw new Error(`Buffer API error: ${res.status} ${res.statusText}`);
+    const errorBody = await res.text();
+    throw new Error(
+      `Buffer API error ${res.status}: ${errorBody || res.statusText}`
+    );
   }
 
   const json = await res.json();
@@ -62,11 +64,15 @@ export function truncateCaption(
 }
 
 /**
- * Look up the TikTok channel ID for a Buffer organization.
- * Queries Buffer's channels endpoint and finds the one with service='tiktok'.
+ * Look up a platform's channel ID in a Buffer organization.
+ * Queries Buffer's channels endpoint and finds the one matching `service`.
+ *
+ * @param orgId - Buffer org ID. Defaults to BUFFER_ORG_ID env var.
+ * @param service - Buffer service name: 'tiktok', 'facebook', etc.
  */
-export async function getTikTokChannelId(
-  orgId?: string
+export async function getChannelId(
+  orgId: string | undefined,
+  service: string
 ): Promise<string> {
   const org = orgId || process.env.BUFFER_ORG_ID;
   if (!org) throw new Error("BUFFER_ORG_ID env var not set");
@@ -83,30 +89,52 @@ export async function getTikTokChannelId(
     }
   `);
 
-  const channel = data.channels.find((c) => c.service === "tiktok");
+  const channel = data.channels.find((c) => c.service === service);
   if (!channel) {
     throw new Error(
-      "No TikTok channel connected in Buffer. Connect TikTok at buffer.com first."
+      `No ${service} channel connected in Buffer. Connect ${service} at buffer.com first.`
     );
   }
   return channel.id;
 }
 
 /**
- * Send a video to Buffer's TikTok posting queue.
+ * Send content to Buffer's posting queue.
  *
  * Creates a Buffer post with:
  *   - schedulingType: automatic (Buffer picks the next available time slot)
  *   - mode: addToQueue (appends to queue, doesn't post immediately)
- *   - videos: [{url}] (Buffer downloads the video from our signed URL)
+ *   - assets: videos or images based on mediaType
  *
  * Returns the Buffer post ID on success.
  */
 export async function sendToBuffer(
   channelId: string,
   caption: string,
-  videoUrl: string
+  mediaUrl: string,
+  mediaType: "video" | "image" = "video",
+  facebookPostType?: "post" | "story" | "reel"
 ): Promise<string> {
+  // Build assets payload based on media type.
+  // Buffer's AssetsInput accepts: images, videos, documents, link
+  const assets =
+    mediaType === "image"
+      ? { images: [{ url: mediaUrl }] }
+      : { videos: [{ url: mediaUrl }] };
+
+  const input: Record<string, unknown> = {
+    channelId,
+    schedulingType: "automatic",
+    mode: "addToQueue",
+    text: truncateCaption(caption),
+    assets,
+  };
+  // Facebook requires metadata.facebook.type — Buffer's schema nests
+  // platform-specific fields under metadata, not on the top-level input.
+  if (facebookPostType) {
+    input.metadata = { facebook: { type: facebookPostType } };
+  }
+
   const data = await bufferRequest<{
     createPost: { post?: { id: string }; message?: string };
   }>(
@@ -123,17 +151,7 @@ export async function sendToBuffer(
         ... on InvalidInputError { message }
       }
     }`,
-    {
-      input: {
-        channelId,
-        schedulingType: "automatic",
-        mode: "addToQueue",
-        text: truncateCaption(caption),
-        assets: {
-          videos: [{ url: videoUrl }],
-        },
-      },
-    }
+    { input }
   );
 
   const result = data.createPost;

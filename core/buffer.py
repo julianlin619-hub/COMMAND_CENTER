@@ -1,17 +1,15 @@
-"""Buffer GraphQL API client for TikTok video posting.
+"""Buffer GraphQL API client for multi-platform posting.
 
-Sends generated TikTok videos to Buffer's posting queue. Buffer handles
-the actual TikTok API interaction (upload, publishing, scheduling).
+Sends generated content (videos for TikTok, images for Facebook, etc.) to
+Buffer's posting queue. Buffer handles the actual platform API interaction
+(upload, publishing, scheduling).
 
-Ported from TWEEL_REEL's lib/buffer.ts and adapted for Python:
-  - Uses httpx instead of fetch
-  - Reads BUFFER_ACCESS_TOKEN (not BUFFER_API — same key, we standardized on the longer name)
-  - Reads BUFFER_ORG_ID instead of hardcoding the organization ID
-  - TikTok channel ID is discovered via GraphQL query, not hardcoded
+Supports any platform connected in Buffer — the `service` param selects
+which channel to use ('tiktok', 'facebook', etc.).
 
 Required env vars:
   BUFFER_ACCESS_TOKEN  — OAuth bearer token for Buffer's API
-  BUFFER_ORG_ID        — Buffer organization ID (to find the TikTok channel)
+  BUFFER_ORG_ID        — Buffer organization ID (to find platform channels)
 """
 
 from __future__ import annotations
@@ -29,9 +27,10 @@ BUFFER_GRAPHQL_URL = "https://api.buffer.com/graphql"
 # to signal the text was cut, matching the TS version's behavior.
 TIKTOK_CAPTION_LIMIT = 150
 
-# Cache the TikTok channel ID for the lifetime of a single cron run.
-# The channel doesn't change between API calls, so one lookup per run is enough.
-_cached_tiktok_channel_id: str | None = None
+# Cache channel IDs per service for the lifetime of a single cron run.
+# Channels don't change between API calls, so one lookup per service per run
+# is enough. Keys are service names ('tiktok', 'facebook', etc.).
+_cached_channel_ids: dict[str, str] = {}
 
 
 def _buffer_request(query: str, variables: dict | None = None) -> dict:
@@ -55,7 +54,10 @@ def _buffer_request(query: str, variables: dict | None = None) -> dict:
 
     if resp.status_code == 401:
         raise RuntimeError("Buffer token is invalid or expired (401)")
-    resp.raise_for_status()
+    if not resp.is_success:
+        raise RuntimeError(
+            f"Buffer API error {resp.status_code}: {resp.text or resp.reason_phrase}"
+        )
 
     body = resp.json()
 
@@ -67,28 +69,28 @@ def _buffer_request(query: str, variables: dict | None = None) -> dict:
     return body.get("data", {})
 
 
-def get_tiktok_channel_id(org_id: str | None = None) -> str:
-    """Look up the TikTok channel ID for a Buffer organization.
+def get_channel_id(org_id: str | None = None, service: str = "tiktok") -> str:
+    """Look up a platform's channel ID in a Buffer organization.
 
-    Queries Buffer's channels endpoint, finds the one with service='tiktok',
-    and returns its ID. The result is cached so repeated calls within the
-    same process (cron run) don't make extra API requests.
+    Queries Buffer's channels endpoint, finds the one matching the given
+    service name, and returns its ID. Results are cached per service so
+    repeated calls within the same process don't make extra API requests.
 
     Args:
         org_id: Buffer organization ID. Defaults to BUFFER_ORG_ID env var.
+        service: Buffer service name — 'tiktok', 'facebook', etc.
 
     Raises:
-        RuntimeError: If no TikTok channel is found in Buffer.
+        RuntimeError: If no matching channel is found in Buffer.
     """
-    global _cached_tiktok_channel_id
-    if _cached_tiktok_channel_id:
-        return _cached_tiktok_channel_id
+    if service in _cached_channel_ids:
+        return _cached_channel_ids[service]
 
     org = org_id or os.environ.get("BUFFER_ORG_ID", "")
     if not org:
         raise RuntimeError("BUFFER_ORG_ID env var not set")
 
-    # Query all channels for this org and find the TikTok one
+    # Query all channels for this org and find the one matching `service`
     data = _buffer_request(f"""
         query GetChannels {{
             channels(input: {{ organizationId: "{org}" }}) {{
@@ -100,30 +102,34 @@ def get_tiktok_channel_id(org_id: str | None = None) -> str:
     """)
 
     channels = data.get("channels", [])
-    tiktok = next((c for c in channels if c.get("service") == "tiktok"), None)
+    match = next((c for c in channels if c.get("service") == service), None)
 
-    if not tiktok:
+    if not match:
         raise RuntimeError(
-            "No TikTok channel connected in Buffer. "
-            "Connect TikTok at buffer.com first."
+            f"No {service} channel connected in Buffer. "
+            f"Connect {service} at buffer.com first."
         )
 
-    _cached_tiktok_channel_id = tiktok["id"]
-    logger.info("Found TikTok channel in Buffer: %s (%s)", tiktok["name"], tiktok["id"])
-    return tiktok["id"]
+    _cached_channel_ids[service] = match["id"]
+    logger.info("Found %s channel in Buffer: %s (%s)", service, match["name"], match["id"])
+    return match["id"]
 
 
-def send_to_buffer(channel_id: str, caption: str, video_url: str) -> str:
-    """Send a video to Buffer's TikTok posting queue.
+def send_to_buffer(
+    channel_id: str, caption: str, media_url: str, media_type: str = "video",
+    facebook_post_type: str | None = None,
+) -> str:
+    """Send content to Buffer's posting queue.
 
     Creates a Buffer post with schedulingType=automatic (Buffer picks the
     next available time slot) and mode=addToQueue (appends to the queue
     instead of posting immediately).
 
     Args:
-        channel_id: Buffer TikTok channel ID (from get_tiktok_channel_id).
-        caption: TikTok caption text (will be truncated if over 150 chars).
-        video_url: Public URL of the video file (Supabase signed URL).
+        channel_id: Buffer channel ID (from get_channel_id).
+        caption: Post caption text (will be truncated if over 150 chars).
+        media_url: Public URL of the media file (Supabase signed URL).
+        media_type: 'video' or 'image' — determines Buffer asset format.
 
     Returns:
         The Buffer post ID on success.
@@ -131,8 +137,15 @@ def send_to_buffer(channel_id: str, caption: str, video_url: str) -> str:
     Raises:
         RuntimeError: If Buffer returns an error (auth, rate limit, etc.)
     """
-    # The GraphQL mutation matches TWEEL_REEL's lib/buffer.ts createPost.
-    # videos[{url}] tells Buffer to download the video from our signed URL.
+    # Build the assets payload based on media type.
+    # For videos: Buffer downloads from our signed URL and re-uploads to the platform.
+    # For images: same flow, but Buffer uses the image upload path.
+    # Buffer's AssetsInput accepts: images, videos, documents, link
+    if media_type == "image":
+        assets = {"images": [{"url": media_url}]}
+    else:
+        assets = {"videos": [{"url": media_url}]}
+
     data = _buffer_request(
         """
         mutation CreatePost($input: CreatePostInput!) {
@@ -155,9 +168,10 @@ def send_to_buffer(channel_id: str, caption: str, video_url: str) -> str:
                 "schedulingType": "automatic",
                 "mode": "addToQueue",
                 "text": truncate_caption(caption),
-                "assets": {
-                    "videos": [{"url": video_url}],
-                },
+                "assets": assets,
+                # Facebook requires metadata.facebook.type — Buffer nests
+                # platform-specific fields under metadata.
+                **({"metadata": {"facebook": {"type": facebook_post_type}}} if facebook_post_type else {}),
             },
         },
     )

@@ -8,9 +8,9 @@ original THREADS repo at github.com/julianlin619-hub/THREADS):
      using the apidojo~tweet-scraper actor on Apify. The original repo
      scraped @AlexHormozi tweets and reposted them to Threads.
 
-  2. Content bank — reads pre-written posts from a single-column CSV file,
-     picks random unposted entries, and returns them. The original repo
-     called this the "tweet bank."
+  2. Content bank — reads pre-written posts from a CSV file (currently
+     TweetMasterBank.csv with columns tweet_id, text, favorite_count),
+     picks random unposted entries, and returns them.
 
 These functions return raw text. The caller (cron job) is responsible for
 creating Post and Schedule records in Supabase so the normal publish
@@ -152,9 +152,8 @@ def select_bank_content(
 ) -> list[str]:
     """Select random entries from a content bank CSV file.
 
-    Ported from the THREADS repo's lib/tweet-bank.ts. Reads a single-column
-    CSV (supports quoted multiline entries) and returns random entries that
-    haven't been posted yet.
+    Reads TweetMasterBank.csv (columns: tweet_id, text, favorite_count),
+    picks random unposted entries, and returns them.
 
     Args:
         bank_path: Path to the CSV file.
@@ -170,13 +169,30 @@ def select_bank_content(
         logger.warning("Content bank not found: %s", bank_path)
         return []
 
-    # Read all entries from the CSV (single column, one post per row)
+    # Read all entries from the CSV. TweetMasterBank.csv has columns:
+    # tweet_id, text, favorite_count — we only need the text column.
     entries: list[str] = []
     with open(bank_path, "r", encoding="utf-8") as f:
         reader = csv.reader(f)
+        header = next(reader, None)
+        # Figure out which column has the text. If there's a header with
+        # "text" in it, use that index; otherwise fall back to column 1
+        # for multi-column CSVs or column 0 for single-column files.
+        text_col = 0
+        if header:
+            lowered = [h.strip().lower() for h in header]
+            if "text" in lowered:
+                text_col = lowered.index("text")
+            elif len(header) > 1:
+                text_col = 1
+            else:
+                # Single-column CSV with no "text" header — the header
+                # itself is likely the first entry, so include it.
+                if header[0].strip():
+                    entries.append(header[0].strip())
         for row in reader:
-            if row and row[0].strip():
-                entries.append(row[0].strip())
+            if len(row) > text_col and row[text_col].strip():
+                entries.append(row[text_col].strip())
 
     if not entries:
         logger.info("Content bank is empty: %s", bank_path)

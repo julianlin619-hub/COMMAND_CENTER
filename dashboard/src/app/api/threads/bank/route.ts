@@ -1,9 +1,9 @@
 /**
  * POST /api/threads/bank — Manually trigger content bank sourcing for Threads.
  *
- * Reads a pre-written content bank CSV, deduplicates against existing posts,
- * selects random entries, and creates scheduled posts in Supabase.
- * Ported from the original THREADS repo's lib/tweet-bank.ts.
+ * Reads TweetMasterBank.csv (columns: tweet_id, text, favorite_count),
+ * deduplicates against existing posts, selects random entries, and creates
+ * scheduled posts in Supabase.
  */
 
 import { readFileSync, existsSync } from "fs";
@@ -13,51 +13,40 @@ import { getSupabaseClient } from "@/lib/supabase";
 import { verifyApiAuth } from "@/lib/auth";
 
 /**
- * Parse a single-column CSV that uses quotes for multiline entries.
- * Ported from the original THREADS repo's lib/tweet-bank.ts parseCsv().
- *
- * Format: each entry is either a plain line or a quoted block like:
- *   "Line one
- *   Line two"
- * Escaped quotes inside are doubled: "" → "
+ * Parse the content bank CSV and extract just the text column.
+ * Handles TweetMasterBank.csv format (tweet_id, text, favorite_count)
+ * as well as legacy single-column CSVs.
  */
 function parseCsv(raw: string): string[] {
-  const entries: string[] = [];
-  let i = 0;
+  // Lazy-require csv-parse — handles quoted multiline fields correctly.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { parse } = require("csv-parse/sync");
+  const rows: string[][] = parse(raw, {
+    relax_column_count: true,
+    skip_empty_lines: true,
+    trim: true,
+  });
 
-  while (i < raw.length) {
-    if (raw[i] === '"') {
-      // Quoted entry — scan for the closing quote
-      let end = i + 1;
-      while (end < raw.length) {
-        if (raw[end] === '"' && raw[end + 1] === '"') {
-          end += 2; // escaped quote
-          continue;
-        }
-        if (
-          raw[end] === '"' &&
-          (end + 1 >= raw.length || raw[end + 1] === "\n" || raw[end + 1] === "\r")
-        ) {
-          break;
-        }
-        end++;
-      }
-      const text = raw.substring(i + 1, end).replace(/""/g, '"');
-      if (text.trim()) entries.push(text.trim());
-      i = end + 1;
-      if (raw[i] === "\r") i++;
-      if (raw[i] === "\n") i++;
-    } else {
-      // Unquoted single-line entry
-      let end = raw.indexOf("\n", i);
-      if (end === -1) end = raw.length;
-      const line = raw.substring(i, end).replace(/\r$/, "");
-      if (line.trim()) entries.push(line.trim());
-      i = end + 1;
-    }
+  if (rows.length === 0) return [];
+
+  // Detect header row and text column index
+  const header = rows[0];
+  const headerLower = header.map((h) => h.toLowerCase());
+  let textCol = 0;
+  let startRow = 0;
+
+  if (headerLower.includes("text")) {
+    textCol = headerLower.indexOf("text");
+    startRow = 1; // skip header
+  } else if (header.length > 1) {
+    textCol = 1;
+    startRow = 1;
   }
 
-  return entries;
+  return rows
+    .slice(startRow)
+    .map((row) => row[textCol]?.trim())
+    .filter((text): text is string => Boolean(text));
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -76,7 +65,7 @@ export async function POST(request: Request) {
 
   const bankPath = resolve(
     process.cwd(),
-    process.env.CONTENT_BANK_PATH || "../data/threads_bank.csv"
+    process.env.CONTENT_BANK_PATH || "../data/TweetMasterBank.csv"
   );
   const count = parseInt(process.env.CONTENT_BANK_COUNT || "5", 10);
 

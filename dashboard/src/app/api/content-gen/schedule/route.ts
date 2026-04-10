@@ -1,24 +1,21 @@
 /**
  * POST /api/content-gen/schedule
  *
- * Final step of the Outlier Tweet Reel pipeline: sends generated TikTok
- * videos to Buffer's posting queue and records the result in Supabase.
+ * Final step of the content pipeline: sends generated media to Buffer's
+ * posting queue and records the result in Supabase.
  *
- * Buffer handles timing — it queues videos and publishes them at the next
- * available time slot. We don't create `schedules` rows because Buffer
- * replaces our cron-based scheduling for TikTok.
+ * Supports multiple platforms:
+ *   - TikTok: sends videos (media_type='video')
+ *   - Facebook: sends square PNG images (media_type='image')
  *
- * Body: { items: [{ text: string, storagePath: string }] }
- *   - text:        normalized tweet text (becomes the TikTok caption)
- *   - storagePath: Supabase Storage path (e.g. "tiktok/tweet-123.mp4")
- *
+ * Body: { platform?: 'tiktok' | 'facebook', items: [{ text, storagePath }] }
  * Returns: { sent: [{ postId: string, bufferId: string }] }
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/supabase";
 import { verifyApiAuth } from "@/lib/auth";
-import { getTikTokChannelId, sendToBuffer } from "@/lib/buffer";
+import { getChannelId, sendToBuffer } from "@/lib/buffer";
 
 export async function POST(req: NextRequest) {
   if (!(await verifyApiAuth(req))) {
@@ -26,9 +23,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { items } = (await req.json()) as {
+    const body = (await req.json()) as {
+      platform?: "tiktok" | "facebook";
       items: { text: string; storagePath: string }[];
     };
+    const { platform = "tiktok", items } = body;
 
     if (!items?.length) {
       return NextResponse.json({ error: "No items provided" }, { status: 400 });
@@ -36,15 +35,17 @@ export async function POST(req: NextRequest) {
 
     const supabase = getSupabaseClient();
 
-    // Look up the TikTok channel ID in Buffer (cached per request)
-    const channelId = await getTikTokChannelId();
+    // Determine media type based on platform
+    const mediaType = platform === "facebook" ? "image" : "video";
+
+    // Look up the correct Buffer channel for this platform
+    const channelId = await getChannelId(undefined, platform);
 
     const sent: { postId: string; bufferId: string }[] = [];
 
     for (const item of items) {
-      // 1. Get a signed URL for the video with 7-day expiry.
-      //    Buffer queues videos and may not download them for hours or days,
-      //    so a short expiry risks the URL dying before Buffer fetches it.
+      // 1. Get a signed URL with 7-day expiry.
+      //    Buffer queues content and may not download it for hours or days.
       const { data: signedData, error: signError } = await supabase.storage
         .from("media")
         .createSignedUrl(item.storagePath, 604800); // 7 days in seconds
@@ -57,25 +58,24 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // 2. Send to Buffer's TikTok queue. Buffer will download the video
-      //    from the signed URL and publish it at the next available slot.
-      // Hardcoded TikTok caption — short engagement hook for quote-card videos
-      const tiktokCaption = "Agree?";
-
+      // 2. Send to Buffer's queue with the correct media type.
+      //    Caption is "Agree?" for both platforms — short engagement hook.
+      const caption = "Agree?";
       const bufferId = await sendToBuffer(
         channelId,
-        tiktokCaption,
-        signedData.signedUrl
+        caption,
+        signedData.signedUrl,
+        mediaType,
+        platform === "facebook" ? "post" : undefined
       );
 
       // 3. Record the post in Supabase with sent_to_buffer status.
-      //    This tracks the handoff — Buffer handles actual TikTok publishing.
       const { data: post, error: postError } = await supabase
         .from("posts")
         .insert({
-          platform: "tiktok",
+          platform,
           status: "sent_to_buffer",
-          media_type: "video",
+          media_type: mediaType,
           media_urls: [item.storagePath],
           caption: item.text,
           platform_post_id: bufferId,

@@ -26,7 +26,7 @@ import sys
 
 import httpx
 
-from core.buffer import get_tiktok_channel_id, send_to_buffer, truncate_caption
+from core.buffer import get_channel_id, send_to_buffer, truncate_caption
 from core.content_sources import fetch_apify_tweets
 from core.database import (
     insert_post,
@@ -156,7 +156,7 @@ def main():
     error_count = 0
 
     try:
-        channel_id = get_tiktok_channel_id()
+        channel_id = get_channel_id(service='tiktok')
     except Exception as e:
         logger.error("Phase 4 failed — could not get TikTok channel ID: %s", e)
         log_cron_finish(run_id, status="failed", error_message=str(e))
@@ -175,7 +175,7 @@ def main():
             video_url = get_signed_url(storage_path, expires_in=604800)
 
             # Send to Buffer's TikTok queue
-            buffer_post_id = send_to_buffer(channel_id, tiktok_caption, video_url)
+            buffer_post_id = send_to_buffer(channel_id, tiktok_caption, video_url, media_type='video')
 
             # Record the post in Supabase with sent_to_buffer status.
             # This is a successful handoff — Buffer will handle actual TikTok

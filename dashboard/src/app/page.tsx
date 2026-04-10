@@ -34,6 +34,7 @@ const ACTIVE_PLATFORMS: PlatformEntry[] = [
   { key: "threads", platform: "threads", label: "Threads" },
   { key: "instagram-2nd", platform: "instagram_2nd", label: "Instagram (2nd)" },
   { key: "tiktok", platform: "tiktok", label: "TikTok" },
+  { key: "facebook", platform: "facebook", label: "Facebook" },
 ];
 
 // Platforms with paused cron jobs — show "Pending" instead of health status
@@ -43,7 +44,6 @@ const INACTIVE_PLATFORMS: PlatformEntry[] = [
   { key: "youtube", platform: "youtube", label: "YouTube" },
   { key: "instagram", platform: "instagram", label: "Instagram (main)" },
   { key: "linkedin", platform: "linkedin", label: "LinkedIn" },
-  { key: "facebook", platform: "facebook", label: "Facebook" },
 ];
 
 const ALL_PLATFORMS = [...ACTIVE_PLATFORMS, ...INACTIVE_PLATFORMS];
