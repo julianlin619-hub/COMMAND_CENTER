@@ -47,11 +47,18 @@ export async function POST(request: Request) {
 
   try {
     // Step 1: Call Apify to scrape tweets
+    // Use Authorization header instead of query params so the API key
+    // doesn't appear in access logs or error messages.
+    const apifyHeaders = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    };
+
     const runRes = await fetch(
-      `https://api.apify.com/v2/acts/apidojo~tweet-scraper/runs?token=${apiKey}&waitForFinish=300`,
+      "https://api.apify.com/v2/acts/apidojo~tweet-scraper/runs?waitForFinish=300",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: apifyHeaders,
         body: JSON.stringify({
           twitterHandles: [handle],
           maxItems: 50,
@@ -68,7 +75,8 @@ export async function POST(request: Request) {
     const datasetId = runData.data.defaultDatasetId;
 
     const itemsRes = await fetch(
-      `https://api.apify.com/v2/datasets/${datasetId}/items?token=${apiKey}`
+      `https://api.apify.com/v2/datasets/${datasetId}/items`,
+      { headers: { Authorization: `Bearer ${apiKey}` } }
     );
     const items = (await itemsRes.json()) as Record<string, unknown>[];
 
@@ -138,6 +146,7 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     const message = (err as Error).message;
+    console.error("Threads source error:", err);
     if (runId) {
       await supabase
         .from("cron_runs")
@@ -148,6 +157,6 @@ export async function POST(request: Request) {
         })
         .eq("id", runId);
     }
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

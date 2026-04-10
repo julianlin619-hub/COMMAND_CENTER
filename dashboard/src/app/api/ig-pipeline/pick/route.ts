@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
       remainingUnused,
     });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    console.error("IG pipeline pick error:", e);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

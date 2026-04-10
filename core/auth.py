@@ -62,8 +62,22 @@ def refresh_oauth_token(
     # That signals the platform adapter to re-authenticate from scratch.
     response.raise_for_status()
     token_data = response.json()
-    # The response contains the new short-lived access token (and sometimes
-    # a new refresh token too, though we don't handle rotation here yet).
     access_token = token_data["access_token"]
+
+    # Some platforms rotate the refresh token on each exchange (e.g. TikTok).
+    # If a new refresh_token is in the response, we can't auto-update the env
+    # var on Render — but we need to warn loudly so the operator rotates it
+    # manually. If the old refresh token gets invalidated and we haven't saved
+    # the new one, the next refresh will fail and the cron job will break.
+    new_refresh = token_data.get("refresh_token")
+    if new_refresh and new_refresh != os.environ.get(refresh_token_env):
+        logger.warning(
+            "REFRESH TOKEN ROTATED for %s — update the %s env var on Render "
+            "immediately. The new token will NOT be persisted automatically. "
+            "If the platform invalidated the old token, the next refresh will fail.",
+            token_url,
+            refresh_token_env,
+        )
+
     logger.info("Refreshed OAuth token via %s", token_url)
     return access_token

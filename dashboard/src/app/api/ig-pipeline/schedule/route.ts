@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ scheduled });
   } catch (e) {
-    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    console.error("IG pipeline schedule error:", e);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

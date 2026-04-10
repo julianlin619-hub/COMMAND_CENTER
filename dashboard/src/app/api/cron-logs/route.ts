@@ -35,7 +35,10 @@ export async function GET(request: Request) {
   if (platform) query = query.eq("platform", platform);
 
   const { data, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("Cron logs GET error:", error.message);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 
   return NextResponse.json(data);
 }
@@ -56,7 +59,10 @@ export async function POST(request: Request) {
   const supabase = getSupabaseClient();
 
   const { data, error } = await supabase.from("cron_runs").insert(body).select().single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error("Cron logs POST error:", error.message);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
 
   return NextResponse.json(data, { status: 201 });
 }

@@ -22,6 +22,9 @@ Quick glossary for learners:
 
 from __future__ import annotations
 
+import os
+import re
+
 # `ABC` gives us the abstract base class machinery.
 # `abstractmethod` is the decorator that enforces "you must implement this."
 from abc import ABC, abstractmethod
@@ -43,6 +46,66 @@ class PlatformBase(ABC):
     # This string matches the platform_enum values in the database, so we can
     # look up the right adapter class by name at runtime.
     name: str  # e.g. "youtube", "instagram" — matches platform_enum
+
+    # ── Configuration Validation ───────────────────────────────
+    # Each adapter declares which env vars it needs. validate_config()
+    # checks they're all present at startup so we fail fast with a clear
+    # error instead of crashing mid-publish when a token is missing.
+
+    @abstractmethod
+    def validate_config(self) -> None:
+        """Verify all required env vars are present and non-empty.
+
+        Called at adapter construction time. Should raise a clear error
+        listing any missing env vars, e.g.:
+            raise ValueError("Instagram missing env vars: IG_ACCESS_TOKEN, IG_USER_ID")
+
+        This ensures we fail fast at startup — not halfway through a cron
+        run when we first try to use a missing token.
+        """
+        ...
+
+    def _check_env_vars(self, *env_var_names: str) -> None:
+        """Helper to validate that required env vars are set and non-empty.
+
+        Call this from your validate_config() implementation:
+            def validate_config(self):
+                self._check_env_vars("IG_ACCESS_TOKEN", "IG_USER_ID")
+        """
+        missing = [name for name in env_var_names if not os.environ.get(name)]
+        if missing:
+            raise ValueError(
+                f"{self.name} missing required env vars: {', '.join(missing)}"
+            )
+
+    # ── Error Sanitization ─────────────────────────────────────
+
+    def sanitize_error(self, error: Exception) -> str:
+        """Strip credentials from an error message before logging or storing.
+
+        Platform API errors sometimes include the request URL (with tokens
+        in query params) or auth headers in the exception text. This method
+        redacts anything that looks like a secret so it's safe to log or
+        write to the database.
+
+        All adapters should use this in their error handling:
+            except Exception as e:
+                safe_msg = self.sanitize_error(e)
+                logger.error("Failed: %s", safe_msg)
+        """
+        msg = str(error)
+        # Redact Bearer tokens
+        msg = re.sub(r"Bearer\s+\S+", "Bearer [REDACTED]", msg)
+        # Redact URL query params that look like tokens/keys
+        msg = re.sub(
+            r"([?&](token|key|secret|api_key|apikey|access_token|refresh_token)=)[^\s&]+",
+            r"\1[REDACTED]",
+            msg,
+            flags=re.IGNORECASE,
+        )
+        # Redact long alphanumeric strings (64+ chars) that look like API keys
+        msg = re.sub(r"[A-Za-z0-9_\-]{64,}", "[REDACTED_KEY]", msg)
+        return msg
 
     # ── Authentication ──────────────────────────────────────────
     # Each platform has its own auth scheme (OAuth2, API keys, etc.).

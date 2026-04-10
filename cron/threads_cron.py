@@ -128,28 +128,20 @@ def main():
     # of when this job ran and whether it succeeded or failed.
     run_id = log_cron_start(platform="threads", job_type="post")
     try:
-        # Refresh credentials before making API calls. For Buffer tokens this
-        # is a no-op (they're long-lived), but the Threads metrics token may
-        # need refreshing.
-        client.refresh_credentials()
+        try:
+            client.refresh_credentials()
+        except Exception as e:
+            logger.error("Credential refresh failed — aborting run: %s", e)
+            log_cron_finish(run_id, status="failed", error_message=f"Credential refresh failed: {e}")
+            sys.exit(1)
 
-        # process_due_posts queries the database for Threads posts whose
-        # scheduled_time has passed and status is still "scheduled", then
-        # publishes each one via Buffer. Returns the count of posts processed.
-        # This picks up both dashboard-scheduled posts AND the auto-sourced
-        # posts created in Phase 0 above.
         processed = process_due_posts(client, "threads")
 
-        # Record this cron run as successful in the database
         log_cron_finish(run_id, status="success", posts_processed=processed)
         logger.info("Posting complete: %d posts processed", processed)
     except Exception as e:
         logger.error("Posting failed: %s", e)
         log_cron_finish(run_id, status="failed", error_message=str(e))
-        # sys.exit(1) terminates the script with exit code 1 (non-zero = failure).
-        # This is important because Render monitors exit codes -- a non-zero exit
-        # tells Render the job failed, which can trigger alerts and shows as a
-        # failure in the Render dashboard. Exit code 0 means success.
         sys.exit(1)
 
 
