@@ -24,6 +24,9 @@ from core.models import MediaUploadResult, Post
 class YouTube(PlatformBase):
     name = "youtube"
 
+    def validate_config(self) -> None:
+        raise NotImplementedError("TODO: port from existing repo")
+
     def refresh_credentials(self) -> None:
         # Will use Google's OAuth 2.0 token refresh flow.
         # Google access tokens expire every ~3600 seconds, so the cron job

@@ -21,11 +21,13 @@ A failure in Phase 3 for one item does NOT abort other items.
 import logging
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
 from core.buffer import get_channel_id, send_to_buffer
 from core.database import (
+    get_client,
     insert_post,
     log_cron_finish,
     log_cron_start,
@@ -57,15 +59,16 @@ def main():
     # that passed TikTok's like-threshold filter is automatically a candidate.
     run_id = log_cron_start(platform="facebook", job_type="content_fetch")
     try:
-        from core.database import get_supabase
-
-        supabase = get_supabase()
-        result = supabase.table("posts").select("id, caption").eq(
+        client = get_client()
+        # Compute the 48-hour cutoff in Python — Supabase's PostgREST filters
+        # don't evaluate SQL expressions, so we must pass an ISO timestamp.
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        result = client.table("posts").select("id, caption").eq(
             "platform", "tiktok"
         ).eq(
             "status", "sent_to_buffer"
         ).gte(
-            "created_at", "now() - interval '48 hours'"
+            "created_at", cutoff
         ).execute()
 
         tiktok_posts = result.data or []
