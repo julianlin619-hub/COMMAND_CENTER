@@ -26,6 +26,9 @@ from core.models import MediaUploadResult, Post
 class Instagram(PlatformBase):
     name = "instagram"
 
+    def validate_config(self) -> None:
+        raise NotImplementedError("TODO: port from existing repo")
+
     def refresh_credentials(self) -> None:
         # Will exchange the current long-lived token for a new one via
         # GET /oauth/access_token?grant_type=ig_exchange_token.

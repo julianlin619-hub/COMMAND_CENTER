@@ -28,6 +28,9 @@ from core.models import MediaUploadResult, Post
 class TikTok(PlatformBase):
     name = "tiktok"
 
+    def validate_config(self) -> None:
+        raise NotImplementedError("TODO: port from existing repo")
+
     def refresh_credentials(self) -> None:
         # Will call POST /v2/oauth/token/ with grant_type=refresh_token
         # to get a new access token.  TikTok access tokens are short-lived

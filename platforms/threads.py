@@ -62,6 +62,10 @@ class Threads(PlatformBase):
         self.buffer_token = os.environ.get("BUFFER_ACCESS_TOKEN", "")
         self.channel_id = os.environ.get("BUFFER_THREADS_CHANNEL_ID", "")
 
+    def validate_config(self) -> None:
+        """Check that required Buffer env vars are present."""
+        self._check_env_vars("BUFFER_ACCESS_TOKEN", "BUFFER_THREADS_CHANNEL_ID")
+
     # ── Authentication ──────────────────────────────────────────
 
     def refresh_credentials(self) -> None:

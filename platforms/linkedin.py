@@ -25,6 +25,9 @@ from core.models import MediaUploadResult, Post
 class LinkedIn(PlatformBase):
     name = "linkedin"
 
+    def validate_config(self) -> None:
+        raise NotImplementedError("TODO: port from existing repo")
+
     def refresh_credentials(self) -> None:
         # Will call POST /oauth/v2/accessToken with grant_type=refresh_token.
         # LinkedIn tokens are long-lived (60 days), but we still refresh
