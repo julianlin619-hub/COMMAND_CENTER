@@ -19,21 +19,48 @@ import { NextResponse } from "next/server";
 import { verifyApiAuth } from "@/lib/auth";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { existsSync } from "fs";
 import path from "path";
 
 const execAsync = promisify(exec);
 
-// Build the env for Python subprocesses. Third-party deps (httpx, supabase, etc.)
-// are installed to python_deps/ during the Render build phase via
-// `pip install --target=./python_deps`. Local packages (core/, platforms/, cron/)
-// live at the project root. PYTHONPATH makes both importable at runtime without
-// needing pip on the Node runtime container.
+// python_deps/ holds third-party packages (httpx, supabase, pydantic, etc.).
+// On Render it's created during the build phase; locally it's created on
+// first cron invocation (pip IS available locally).
+const depsDir = path.join(process.cwd(), "python_deps");
+
+let depsReady: Promise<void> | null = null;
+
+function ensurePythonDeps(): Promise<void> {
+  if (!depsReady) {
+    depsReady = (async () => {
+      if (existsSync(depsDir)) return; // already exists (Render build or prior local run)
+
+      // Locally, pip is available — install on first use
+      const reqFile = path.resolve(process.cwd(), "..", "requirements.txt");
+      try {
+        await execAsync(
+          `python3 -m pip install --target=${depsDir} -r ${reqFile}`,
+          { timeout: 120_000 },
+        );
+      } catch {
+        // pip unavailable (Render Node runtime) — if python_deps/ wasn't
+        // created by the build phase, the cron will fail with a clear
+        // ModuleNotFoundError rather than a cryptic pip error.
+        depsReady = null;
+      }
+    })();
+  }
+  return depsReady;
+}
+
+// Build the env for Python subprocesses.
 function pythonEnv(projectRoot: string) {
   return {
     ...process.env,
     PYTHONPATH: [
-      path.join(process.cwd(), "python_deps"), // third-party deps (inside dashboard/)
-      projectRoot,                              // local packages (core/, platforms/, cron/)
+      depsDir,       // third-party deps (inside dashboard/)
+      projectRoot,   // local packages (core/, platforms/, cron/)
       process.env.PYTHONPATH,
     ]
       .filter(Boolean)
@@ -72,6 +99,9 @@ export async function POST(request: Request) {
   const modulePath = CRON_MODULES[jobName];
   // Cron scripts live at the project root, one level above the dashboard/ dir.
   const projectRoot = path.resolve(process.cwd(), "..");
+
+  // Create python_deps/ if it doesn't exist (locally, pip is available)
+  await ensurePythonDeps();
 
   const startTime = Date.now();
 
