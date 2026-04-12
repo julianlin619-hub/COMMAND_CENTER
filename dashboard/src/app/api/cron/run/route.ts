@@ -32,8 +32,8 @@ function pythonEnv(projectRoot: string) {
   return {
     ...process.env,
     PYTHONPATH: [
-      path.join(projectRoot, "python_deps"), // third-party deps from build phase
-      projectRoot,                            // local packages (core/, platforms/, cron/)
+      path.join(process.cwd(), "python_deps"), // third-party deps (inside dashboard/)
+      projectRoot,                              // local packages (core/, platforms/, cron/)
       process.env.PYTHONPATH,
     ]
       .filter(Boolean)
