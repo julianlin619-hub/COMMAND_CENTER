@@ -46,7 +46,7 @@ services:
   - type: cron
     name: youtube-cron
     runtime: python
-    buildCommand: pip install -e .
+    buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.youtube_cron
     schedule: "0 */4 * * *"  # TODO: set your real schedule
     envVars:
@@ -64,7 +64,7 @@ services:
   - type: cron
     name: instagram-cron
     runtime: python
-    buildCommand: pip install -e .
+    buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.instagram_cron
     schedule: "0 */4 * * *"  # TODO: set your real schedule
     envVars:
@@ -78,7 +78,7 @@ services:
   - type: cron
     name: tiktok-pipeline
     runtime: python
-    buildCommand: pip install -e .
+    buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.tiktok_pipeline
     schedule: "0 12 * * *"  # Daily at 12 PM UTC = 4 AM PST (same as other cron jobs)
     envVars:
@@ -106,7 +106,7 @@ services:
   - type: cron
     name: linkedin-cron
     runtime: python
-    buildCommand: pip install -e .
+    buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.linkedin_cron
     schedule: "0 */4 * * *"  # TODO: set your real schedule
     envVars:
@@ -122,7 +122,7 @@ services:
   - type: cron
     name: facebook-pipeline
     runtime: python
-    buildCommand: pip install -e .
+    buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.facebook_pipeline
     schedule: "0 13 * * *"  # 1 PM UTC = 6 AM PDT — 1hr after TikTok's 12 PM UTC so its posts are in the DB
     envVars:
@@ -142,7 +142,7 @@ services:
   - type: cron
     name: threads-cron
     runtime: python
-    buildCommand: pip install -e .
+    buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.threads_cron
     schedule: "0 11 * * *"  # Daily at 4am Las Vegas time (PDT = UTC-7)
     envVars:

@@ -34,4 +34,4 @@ exports/
 dashboard/exports/
 
 # Supabase local
-supabase/.temp/
+db/.temp/
