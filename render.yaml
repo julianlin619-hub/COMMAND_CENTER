@@ -38,6 +38,8 @@ services:
         sync: false
       - key: BUFFER_ORG_ID
         sync: false
+      - key: DASHBOARD_URL
+        value: https://command-center-drnj.onrender.com
 
   # ── Cron Jobs (Python) ─────────────────────────────────────────────────
   # IMPORTANT: Update the schedule values to match your actual posting cadence.
