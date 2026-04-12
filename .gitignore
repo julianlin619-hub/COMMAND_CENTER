@@ -8,6 +8,7 @@ build/
 *.egg
 .venv/
 venv/
+python_deps/
 
 # Node / Next.js
 node_modules/

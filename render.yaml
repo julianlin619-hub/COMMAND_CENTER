@@ -4,7 +4,7 @@ services:
     name: command-center-dashboard
     runtime: node
     rootDir: dashboard
-    buildCommand: cd .. && pip install -r requirements.txt && pip install -e . && cd dashboard && npm install && npm run build
+    buildCommand: cd .. && pip install --target=./python_deps -r requirements.txt && cd dashboard && npm install && npm run build
     startCommand: npm start
     plan: starter
     envVars:

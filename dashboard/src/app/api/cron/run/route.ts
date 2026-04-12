@@ -23,62 +23,22 @@ import path from "path";
 
 const execAsync = promisify(exec);
 
-// One-time bootstrap: ensure Python deps are available so `python3 -m cron.*`
-// can import httpx, supabase, pydantic, etc. On Render, the build phase
-// (render.yaml) already runs `pip install -r requirements.txt && pip install -e .`
-// so this is normally a fast no-op verification. Runs once per process lifetime.
-let depsInstalled: Promise<void> | null = null;
-
+// Build the env for Python subprocesses. Third-party deps (httpx, supabase, etc.)
+// are installed to python_deps/ during the Render build phase via
+// `pip install --target=./python_deps`. Local packages (core/, platforms/, cron/)
+// live at the project root. PYTHONPATH makes both importable at runtime without
+// needing pip on the Node runtime container.
 function pythonEnv(projectRoot: string) {
   return {
     ...process.env,
-    // Ensure local packages (core/, platforms/, cron/) are importable even if
-    // pip install -e . didn't create an egg-link visible to this subprocess.
-    PYTHONPATH: process.env.PYTHONPATH
-      ? `${projectRoot}:${process.env.PYTHONPATH}`
-      : projectRoot,
+    PYTHONPATH: [
+      path.join(projectRoot, "python_deps"), // third-party deps from build phase
+      projectRoot,                            // local packages (core/, platforms/, cron/)
+      process.env.PYTHONPATH,
+    ]
+      .filter(Boolean)
+      .join(":"),
   };
-}
-
-function ensurePythonDeps(projectRoot: string): Promise<void> {
-  if (!depsInstalled) {
-    depsInstalled = (async () => {
-      const env = pythonEnv(projectRoot);
-
-      // Fast path: check if deps are already importable (build phase installed them)
-      try {
-        await execAsync(
-          'python3 -c "import httpx; import supabase; import pydantic"',
-          { cwd: projectRoot, timeout: 10_000, env },
-        );
-        return; // All deps available — skip pip
-      } catch {
-        // Deps missing — fall through to install
-      }
-
-      // Slow path: install via python3 -m pip (more portable than bare pip3).
-      // Try system install first, then --user as fallback for permission issues.
-      const cmds = [
-        "python3 -m pip install -q -r requirements.txt && python3 -m pip install -q -e .",
-        "python3 -m pip install --user -q -r requirements.txt && python3 -m pip install --user -q -e .",
-      ];
-
-      let lastError: string = "unknown error";
-      for (const cmd of cmds) {
-        try {
-          await execAsync(cmd, { cwd: projectRoot, timeout: 120_000, env });
-          return; // Installed successfully
-        } catch (err) {
-          lastError = (err as { message?: string }).message ?? "unknown error";
-        }
-      }
-
-      // Reset so next invocation retries
-      depsInstalled = null;
-      throw new Error(`Failed to install Python dependencies: ${lastError}`);
-    })();
-  }
-  return depsInstalled;
 }
 
 // Maps cron job names (from render.yaml) to their Python module paths.
@@ -112,16 +72,6 @@ export async function POST(request: Request) {
   const modulePath = CRON_MODULES[jobName];
   // Cron scripts live at the project root, one level above the dashboard/ dir.
   const projectRoot = path.resolve(process.cwd(), "..");
-
-  // Ensure Python deps are installed (runs once per process lifetime)
-  try {
-    await ensurePythonDeps(projectRoot);
-  } catch {
-    return NextResponse.json(
-      { error: "Failed to install Python dependencies. Check server logs." },
-      { status: 500 },
-    );
-  }
 
   const startTime = Date.now();
 
