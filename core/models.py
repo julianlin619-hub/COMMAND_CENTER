@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -29,7 +31,7 @@ class Post(BaseModel):
     # None until the post is actually published.
     platform_post_id: str | None = None
     # Tracks where the post is in its lifecycle (see status flow above)
-    status: str = "draft"
+    status: Literal["draft", "scheduled", "publishing", "published", "failed", "sent_to_buffer", "buffer_error"] = "draft"
     # Title is used by platforms that support it (YouTube, LinkedIn articles);
     # other platforms ignore it.
     title: str | None = None
@@ -83,7 +85,7 @@ class CronRun(BaseModel):
     # What the cron job did: 'post' (publish scheduled posts) or
     # 'content' (source new content from external sources)
     job_type: str
-    # Starts as "running", ends as "success" or "error"
-    status: str = "running"
+    # Starts as "running", ends as "success" or "failed"
+    status: Literal["running", "success", "failed"] = "running"
     posts_processed: int = 0
     error_message: str | None = None

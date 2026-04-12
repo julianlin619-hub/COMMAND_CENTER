@@ -55,7 +55,11 @@ def process_due_posts(platform_client, platform: str) -> int:
 
         # IMPORTANT: Claim the schedule BEFORE publishing. This is the
         # "pick up" step that prevents double-processing (see module docstring).
-        mark_schedule_picked_up(schedule_id)
+        # mark_schedule_picked_up is atomic — if another worker already claimed
+        # this schedule, it returns False and we skip it.
+        if not mark_schedule_picked_up(schedule_id):
+            logger.info("Schedule %s already claimed by another worker, skipping", schedule_id)
+            continue
         # Set status to "publishing" so the dashboard shows it's in progress
         update_post(post.id, status="publishing")
 

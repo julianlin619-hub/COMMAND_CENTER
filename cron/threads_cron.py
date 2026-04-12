@@ -32,7 +32,6 @@ from datetime import datetime, timezone
 from core.content_sources import fetch_apify_tweets, select_bank_content
 # Database helpers for tracking cron runs and storing data
 from core.database import (
-    get_posts,
     insert_post,
     insert_schedule,
     log_cron_finish,
@@ -101,15 +100,12 @@ def main():
         bank_path = os.environ.get("CONTENT_BANK_PATH", "data/TweetMasterBank.csv")
         bank_count = int(os.environ.get("CONTENT_BANK_COUNT", "5"))
 
-        existing_posts = get_posts(platform="threads", limit=5000)
-        existing_captions = {
-            p["caption"] for p in existing_posts if p.get("caption")
-        }
-
-        bank_items = select_bank_content(
-            bank_path, count=bank_count, already_used=existing_captions,
-        )
+        bank_items = select_bank_content(bank_path, count=bank_count)
         for text in bank_items:
+            # Per-item dedup check — consistent with TikTok/Facebook pipelines
+            # and avoids loading thousands of posts into memory.
+            if post_caption_exists("threads", text):
+                continue
             post = Post(platform="threads", caption=text, status="scheduled")
             post_id = insert_post(post)
             insert_schedule(post_id, now)

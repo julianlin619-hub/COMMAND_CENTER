@@ -177,6 +177,12 @@ def main():
             # Send to Buffer's TikTok queue
             buffer_post_id = send_to_buffer(channel_id, tiktok_caption, video_url, media_type='video')
 
+            # Recheck dedup right before insert — another concurrent run
+            # may have inserted this caption between Phase 2 and now.
+            if post_caption_exists("tiktok", caption):
+                logger.info("Skipping duplicate (late check): %s...", caption[:50])
+                continue
+
             # Record the post in Supabase with sent_to_buffer status.
             # This is a successful handoff — Buffer will handle actual TikTok
             # publishing at the next available queue slot.

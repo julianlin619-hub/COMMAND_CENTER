@@ -172,6 +172,12 @@ def main():
                 media_type="image", facebook_post_type="post",
             )
 
+            # Recheck dedup right before insert — another concurrent run
+            # may have inserted this caption between Phase 1 and now.
+            if post_caption_exists("facebook", caption):
+                logger.info("Skipping duplicate (late check): %s...", caption[:50])
+                continue
+
             # Record the post in Supabase with sent_to_buffer status.
             post = Post(
                 platform="facebook",

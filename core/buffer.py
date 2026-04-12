@@ -90,16 +90,20 @@ def get_channel_id(org_id: str | None = None, service: str = "tiktok") -> str:
     if not org:
         raise RuntimeError("BUFFER_ORG_ID env var not set")
 
-    # Query all channels for this org and find the one matching `service`
-    data = _buffer_request(f"""
-        query GetChannels {{
-            channels(input: {{ organizationId: "{org}" }}) {{
+    # Query all channels for this org and find the one matching `service`.
+    # Uses GraphQL variables (not string interpolation) to prevent injection.
+    data = _buffer_request(
+        """
+        query GetChannels($orgId: String!) {
+            channels(input: { organizationId: $orgId }) {
                 id
                 service
                 name
-            }}
-        }}
-    """)
+            }
+        }
+        """,
+        {"orgId": org},
+    )
 
     channels = data.get("channels", [])
     match = next((c for c in channels if c.get("service") == service), None)

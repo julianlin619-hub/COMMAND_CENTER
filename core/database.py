@@ -62,6 +62,10 @@ def update_post(post_id: str, **fields) -> None:
     client = get_client()
     # Always stamp updated_at so the dashboard can sort by "last modified"
     fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+    # Sanitize error messages before storing — exception text from HTTP
+    # libraries can contain tokens, API keys, or auth headers.
+    if fields.get("error_message"):
+        fields["error_message"] = sanitize_error_message(fields["error_message"])
     client.table("posts").update(fields).eq("id", post_id).execute()
 
 
@@ -186,15 +190,22 @@ def insert_schedule(post_id: str, scheduled_for: datetime) -> str:
     return result.data[0]["id"]
 
 
-def mark_schedule_picked_up(schedule_id: str) -> None:
-    """Mark a schedule as picked up to prevent double-processing."""
-    # Setting picked_up_at to "now" is like a simple lock: any other cron
-    # run that queries for due schedules will skip this one because
-    # picked_up_at is no longer null.
+def mark_schedule_picked_up(schedule_id: str) -> bool:
+    """Atomically claim a schedule. Returns True if this call won the claim.
+
+    Only updates if picked_up_at is still null — this means two concurrent
+    cron runs calling this on the same schedule will have exactly one winner.
+    The loser gets an empty result and should skip the schedule.
+    """
     client = get_client()
-    client.table("schedules").update(
-        {"picked_up_at": datetime.now(timezone.utc).isoformat()}
-    ).eq("id", schedule_id).execute()
+    result = (
+        client.table("schedules")
+        .update({"picked_up_at": datetime.now(timezone.utc).isoformat()})
+        .eq("id", schedule_id)
+        .is_("picked_up_at", "null")
+        .execute()
+    )
+    return len(result.data) > 0
 
 
 def post_caption_exists(platform: str, caption: str) -> bool:
@@ -233,7 +244,7 @@ def log_cron_start(platform: str, job_type: str) -> str:
     return result.data[0]["id"]
 
 
-def _sanitize_error_message(message: str) -> str:
+def sanitize_error_message(message: str) -> str:
     """Strip potential credentials from error messages before storing in the DB.
 
     Cron jobs catch exceptions and log str(e) — but exception messages can
@@ -273,5 +284,5 @@ def log_cron_finish(
     if error_message:
         # Sanitize before storing — error messages from HTTP libraries can
         # contain tokens, API keys, or auth headers in the exception text
-        data["error_message"] = _sanitize_error_message(error_message)
+        data["error_message"] = sanitize_error_message(error_message)
     client.table("cron_runs").update(data).eq("id", run_id).execute()

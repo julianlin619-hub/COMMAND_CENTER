@@ -25,7 +25,7 @@ import { renderSquareQuoteCard } from "@/lib/square-canvas-render";
 import { getSupabaseClient } from "@/lib/supabase";
 import { verifyApiAuth } from "@/lib/auth";
 import type { TemplateConfig } from "@/lib/template-types";
-import { DEFAULT_TEMPLATE_CONFIG } from "@/lib/template-types";
+import { DEFAULT_TEMPLATE_CONFIG, validateTemplateConfig } from "@/lib/template-types";
 
 export async function POST(req: NextRequest) {
   if (!(await verifyApiAuth(req))) {
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
       }
       // Merge with defaults so any missing fields (e.g. paddingLeft vs old
       // single "padding") fall back to the locked-in values.
-      fbTemplateConfig = { ...DEFAULT_TEMPLATE_CONFIG, ...(template.config as Partial<TemplateConfig>) };
+      fbTemplateConfig = { ...DEFAULT_TEMPLATE_CONFIG, ...validateTemplateConfig(template.config as Record<string, unknown>) };
     }
 
     // Temp directory for intermediate files (TikTok needs PNG→MP4 conversion,
@@ -133,15 +133,15 @@ export async function POST(req: NextRequest) {
         }
 
         // Clean up temp files now that upload succeeded
-        await fs.unlink(pngPath).catch(() => {});
-        await fs.unlink(mp4Path).catch(() => {});
+        await fs.unlink(pngPath).catch((e) => console.warn(`Cleanup failed: ${pngPath}`, e.message));
+        await fs.unlink(mp4Path).catch((e) => console.warn(`Cleanup failed: ${mp4Path}`, e.message));
 
         generated.push({ id: tweet.id, text: normalized, storagePath });
       }
     }
 
     // Clean up the temp directory
-    await fs.rm(tmpDir, { recursive: true }).catch(() => {});
+    await fs.rm(tmpDir, { recursive: true }).catch((e) => console.warn(`Cleanup failed: ${tmpDir}`, e.message));
 
     return NextResponse.json({ generated });
   } catch (e) {

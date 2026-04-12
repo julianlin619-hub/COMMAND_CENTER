@@ -77,17 +77,19 @@ export async function getChannelId(
   const org = orgId || process.env.BUFFER_ORG_ID;
   if (!org) throw new Error("BUFFER_ORG_ID env var not set");
 
+  // Uses GraphQL variables (not string interpolation) to prevent injection.
   const data = await bufferRequest<{
     channels: { id: string; service: string; name: string }[];
-  }>(`
-    query GetChannels {
-      channels(input: { organizationId: "${org}" }) {
+  }>(
+    `query GetChannels($orgId: String!) {
+      channels(input: { organizationId: $orgId }) {
         id
         service
         name
       }
-    }
-  `);
+    }`,
+    { orgId: org }
+  );
 
   const channel = data.channels.find((c) => c.service === service);
   if (!channel) {

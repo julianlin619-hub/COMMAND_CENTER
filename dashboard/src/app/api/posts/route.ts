@@ -37,6 +37,22 @@ export async function GET(request: Request) {
   const status = searchParams.get("status");
   const limit = parseInt(searchParams.get("limit") || "50", 10);
 
+  // Whitelist validation — only allow known platform and status values
+  const VALID_PLATFORMS = new Set([
+    "youtube", "instagram", "instagram_2nd", "tiktok",
+    "linkedin", "facebook", "threads",
+  ]);
+  const VALID_STATUSES = new Set([
+    "draft", "scheduled", "publishing", "published",
+    "failed", "sent_to_buffer", "buffer_error",
+  ]);
+  if (platform && !VALID_PLATFORMS.has(platform)) {
+    return NextResponse.json({ error: `Invalid platform: ${platform}` }, { status: 400 });
+  }
+  if (status && !VALID_STATUSES.has(status)) {
+    return NextResponse.json({ error: `Invalid status: ${status}` }, { status: 400 });
+  }
+
   const supabase = getSupabaseClient();
 
   // Build the query with optional filters (same pattern as the posts page)
