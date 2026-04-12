@@ -5,7 +5,7 @@
 #   2. Serialization — .model_dump() converts them to dicts for Supabase inserts.
 #   3. Documentation — field names and types are the source of truth for the schema.
 #
-# Each model maps roughly to a Supabase table (see supabase/migrations/).
+# Each model maps roughly to a Supabase table (see db/migrations/).
 
 from __future__ import annotations
 
