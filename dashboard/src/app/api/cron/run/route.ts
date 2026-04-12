@@ -23,6 +23,30 @@ import path from "path";
 
 const execAsync = promisify(exec);
 
+// One-time bootstrap: install Python deps so `python3 -m cron.*` can import
+// httpx, supabase, pydantic, etc. Runs once per process lifetime (i.e. once
+// per container/dyno start on Render, or once per `next dev` locally).
+let depsInstalled: Promise<void> | null = null;
+
+function ensurePythonDeps(projectRoot: string): Promise<void> {
+  if (!depsInstalled) {
+    depsInstalled = (async () => {
+      try {
+        // Install third-party deps + the local packages (core/, platforms/, cron/)
+        await execAsync("pip3 install -r requirements.txt && pip3 install -e .", {
+          cwd: projectRoot,
+          timeout: 120_000,
+        });
+      } catch {
+        // Reset so next invocation retries
+        depsInstalled = null;
+        throw new Error("Failed to install Python dependencies");
+      }
+    })();
+  }
+  return depsInstalled;
+}
+
 // Maps cron job names (from render.yaml) to their Python module paths.
 // The startCommand in render.yaml is `python -m cron.<module>`.
 const CRON_MODULES: Record<string, string> = {
@@ -54,6 +78,17 @@ export async function POST(request: Request) {
   const modulePath = CRON_MODULES[jobName];
   // Cron scripts live at the project root, one level above the dashboard/ dir.
   const projectRoot = path.resolve(process.cwd(), "..");
+
+  // Ensure Python deps are installed (runs once per process lifetime)
+  try {
+    await ensurePythonDeps(projectRoot);
+  } catch {
+    return NextResponse.json(
+      { error: "Failed to install Python dependencies. Check server logs." },
+      { status: 500 },
+    );
+  }
+
   const startTime = Date.now();
 
   try {
