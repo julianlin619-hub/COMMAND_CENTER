@@ -19,6 +19,7 @@ import { PlatformIcon } from "@/components/platform-icon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { StaggeredContainer, StaggeredItem } from "@/components/motion/staggered-list";
 import { HoverCard } from "@/components/motion/hover-card";
+import { CronTestRunButton } from "@/components/cron-test-run-button";
 
 export const dynamic = "force-dynamic";
 
@@ -97,6 +98,13 @@ export default async function DashboardHome() {
 
   return (
     <AppShell>
+      {/* Toolbar — sits above the platform cards. Lets the user preview what
+          every cron would do right now without actually triggering them. */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-medium text-muted-foreground">Platforms</h2>
+        <CronTestRunButton />
+      </div>
+
       {/* Active platform cards */}
       <StaggeredContainer className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {activeSummaries.map((s) => {
