@@ -23,25 +23,59 @@ import path from "path";
 
 const execAsync = promisify(exec);
 
-// One-time bootstrap: install Python deps so `python3 -m cron.*` can import
-// httpx, supabase, pydantic, etc. Runs once per process lifetime (i.e. once
-// per container/dyno start on Render, or once per `next dev` locally).
+// One-time bootstrap: ensure Python deps are available so `python3 -m cron.*`
+// can import httpx, supabase, pydantic, etc. On Render, the build phase
+// (render.yaml) already runs `pip install -r requirements.txt && pip install -e .`
+// so this is normally a fast no-op verification. Runs once per process lifetime.
 let depsInstalled: Promise<void> | null = null;
+
+function pythonEnv(projectRoot: string) {
+  return {
+    ...process.env,
+    // Ensure local packages (core/, platforms/, cron/) are importable even if
+    // pip install -e . didn't create an egg-link visible to this subprocess.
+    PYTHONPATH: process.env.PYTHONPATH
+      ? `${projectRoot}:${process.env.PYTHONPATH}`
+      : projectRoot,
+  };
+}
 
 function ensurePythonDeps(projectRoot: string): Promise<void> {
   if (!depsInstalled) {
     depsInstalled = (async () => {
+      const env = pythonEnv(projectRoot);
+
+      // Fast path: check if deps are already importable (build phase installed them)
       try {
-        // Install third-party deps + the local packages (core/, platforms/, cron/)
-        await execAsync("pip3 install -r requirements.txt && pip3 install -e .", {
-          cwd: projectRoot,
-          timeout: 120_000,
-        });
+        await execAsync(
+          'python3 -c "import httpx; import supabase; import pydantic"',
+          { cwd: projectRoot, timeout: 10_000, env },
+        );
+        return; // All deps available — skip pip
       } catch {
-        // Reset so next invocation retries
-        depsInstalled = null;
-        throw new Error("Failed to install Python dependencies");
+        // Deps missing — fall through to install
       }
+
+      // Slow path: install via python3 -m pip (more portable than bare pip3).
+      // Try system install first, then --user as fallback for permission issues.
+      const cmds = [
+        "python3 -m pip install -q -r requirements.txt && python3 -m pip install -q -e .",
+        "python3 -m pip install --user -q -r requirements.txt && python3 -m pip install --user -q -e .",
+      ];
+
+      let lastError: string = "unknown error";
+      for (const cmd of cmds) {
+        try {
+          await execAsync(cmd, { cwd: projectRoot, timeout: 120_000, env });
+          return; // Installed successfully
+        } catch (err) {
+          lastError = (err as { message?: string }).message ?? "unknown error";
+        }
+      }
+
+      // Reset so next invocation retries
+      depsInstalled = null;
+      throw new Error(`Failed to install Python dependencies: ${lastError}`);
     })();
   }
   return depsInstalled;
@@ -100,6 +134,7 @@ export async function POST(request: Request) {
         timeout: 300_000,
         // 5 MB buffer — cron output is usually small but be safe
         maxBuffer: 5 * 1024 * 1024,
+        env: pythonEnv(projectRoot),
       },
     );
 
