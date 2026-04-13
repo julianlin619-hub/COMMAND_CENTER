@@ -17,12 +17,19 @@
  */
 import { NextResponse } from "next/server";
 import { verifyApiAuth } from "@/lib/auth";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync } from "fs";
 import path from "path";
 
-const execAsync = promisify(exec);
+// execFile runs a binary with an explicit argv array instead of a shell string.
+// This is safer than exec() — which would spawn a shell and interpolate our
+// path variables into the command line — because there's no shell to parse
+// metacharacters, so paths with spaces or special characters can't be
+// re-interpreted as shell syntax. Even though our paths come from trusted
+// sources today (process.cwd + path.resolve), this eliminates a whole class
+// of landmines for future edits.
+const execFileAsync = promisify(execFile);
 
 // python_deps/ holds third-party packages (httpx, supabase, pydantic, etc.).
 // On Render it's created during the build phase; locally it's created on
@@ -39,8 +46,9 @@ function ensurePythonDeps(): Promise<void> {
       // Locally, pip is available — install on first use
       const reqFile = path.resolve(process.cwd(), "..", "requirements.txt");
       try {
-        await execAsync(
-          `python3 -m pip install --target=${depsDir} -r ${reqFile}`,
+        await execFileAsync(
+          "python3",
+          ["-m", "pip", "install", `--target=${depsDir}`, "-r", reqFile],
           { timeout: 120_000 },
         );
       } catch {
@@ -106,8 +114,12 @@ export async function POST(request: Request) {
   const startTime = Date.now();
 
   try {
-    const { stdout, stderr } = await execAsync(
-      `python3 -m ${modulePath}`,
+    // modulePath comes from the hard-coded CRON_MODULES map above, so it
+    // can never be user-controlled — but we still use execFile so the
+    // shell can't misinterpret anything future edits introduce.
+    const { stdout, stderr } = await execFileAsync(
+      "python3",
+      ["-m", modulePath],
       {
         cwd: projectRoot,
         // 5-minute timeout — pipelines with Apify + video generation can be slow

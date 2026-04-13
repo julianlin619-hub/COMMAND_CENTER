@@ -25,8 +25,19 @@ from pydantic import BaseModel
 class Post(BaseModel):
     # None until Supabase assigns an ID on insert
     id: str | None = None
-    # Which platform this post targets: 'youtube', 'instagram', 'tiktok', etc.
-    platform: str
+    # Which platform this post targets. Pinned to the same set as the SQL
+    # enum (`platform_enum` in db/migrations/001_initial_schema.sql) so a
+    # typo surfaces at Pydantic validation time instead of later as a
+    # cryptic Postgres constraint-violation error.
+    platform: Literal[
+        "youtube",
+        "instagram",
+        "instagram_2nd",
+        "tiktok",
+        "linkedin",
+        "facebook",
+        "threads",
+    ]
     # The ID the platform gives back after publishing (e.g. a YouTube video ID).
     # None until the post is actually published.
     platform_post_id: str | None = None

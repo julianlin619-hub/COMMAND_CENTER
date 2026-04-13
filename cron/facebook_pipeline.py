@@ -32,9 +32,22 @@ from core.database import (
     log_cron_finish,
     log_cron_start,
     post_caption_exists,
+    update_post,
 )
 from core.media import get_signed_url
 from core.models import Post
+
+
+# Postgres unique-constraint violation code. Raised by postgrest as APIError.code
+# when the dedup index from migration 004_rls_and_dedup.sql fires.
+_PG_UNIQUE_VIOLATION = "23505"
+
+
+def _is_unique_violation(exc: Exception) -> bool:
+    """Check if an exception from Supabase is a unique-constraint violation."""
+    code = getattr(exc, "code", "") or ""
+    message = str(exc).lower()
+    return _PG_UNIQUE_VIOLATION in code or _PG_UNIQUE_VIOLATION in message or "duplicate key" in message
 
 logging.basicConfig(
     level=logging.INFO,
@@ -160,6 +173,37 @@ def main():
         # Same engagement hook as TikTok — short caption that drives comments
         facebook_caption = "Agree?"
 
+        # Guard: skip empty/whitespace captions. Buffer rejects them and we
+        # don't want to flip status to sent_to_buffer when the send will fail.
+        if not caption or not caption.strip():
+            logger.warning("Skipping post with empty caption (storage: %s)", storage_path)
+            error_count += 1
+            continue
+
+        # ─── INSERT FIRST, THEN SEND TO BUFFER ───────────────────────────
+        # See tiktok_pipeline.py for the rationale — this pattern closes the
+        # race window where two concurrent runs could both queue the same
+        # caption in Buffer. The partial unique index from migration
+        # 004_rls_and_dedup.sql arbitrates: only one insert wins, the loser
+        # skips. On Buffer failure we flip to buffer_error (which drops the
+        # row from the dedup index, allowing future retries).
+        post = Post(
+            platform="facebook",
+            status="sent_to_buffer",
+            media_type="image",
+            media_urls=[storage_path],
+            caption=caption,
+        )
+        try:
+            post_id = insert_post(post)
+        except Exception as e:
+            if _is_unique_violation(e):
+                logger.info("Skipping duplicate (DB constraint): %s...", caption[:50])
+                continue
+            logger.error("Insert failed for %s: %s", storage_path, e)
+            error_count += 1
+            continue
+
         try:
             # Get a signed URL with 7-day expiry. Buffer queues content and may
             # not download it for hours or days, so a short expiry risks the
@@ -172,37 +216,16 @@ def main():
                 media_type="image", facebook_post_type="post",
             )
 
-            # Recheck dedup right before insert — another concurrent run
-            # may have inserted this caption between Phase 1 and now.
-            if post_caption_exists("facebook", caption):
-                logger.info("Skipping duplicate (late check): %s...", caption[:50])
-                continue
-
-            # Record the post in Supabase with sent_to_buffer status.
-            post = Post(
-                platform="facebook",
-                status="sent_to_buffer",
-                media_type="image",
-                media_urls=[storage_path],
-                caption=caption,
-                platform_post_id=buffer_post_id,
-            )
-            insert_post(post)
+            # Stamp the Buffer post ID onto the row we already inserted
+            update_post(post_id, platform_post_id=buffer_post_id)
             sent_count += 1
             logger.info("Sent to Buffer: %s (Buffer post %s)", storage_path, buffer_post_id)
 
         except Exception as e:
-            # Record the failure but continue with the next item.
+            # Flip to buffer_error so the row drops out of the dedup index
+            # and a future run can retry this caption.
             logger.error("Buffer send failed for %s: %s", storage_path, e)
-            error_post = Post(
-                platform="facebook",
-                status="buffer_error",
-                media_type="image",
-                media_urls=[storage_path],
-                caption=caption,
-                error_message=str(e)[:500],
-            )
-            insert_post(error_post)
+            update_post(post_id, status="buffer_error", error_message=str(e)[:500])
             error_count += 1
 
     # Log final status — success if at least one was sent, failed if all errored

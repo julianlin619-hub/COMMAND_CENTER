@@ -75,36 +75,53 @@ export async function POST(req: NextRequest) {
       generated.push({ hash: tweet.hash, text: tweet.text, pngPath, mp4Path });
     }
 
-    // 3. Schedule each video to Instagram via Zernio.
-    //    Zernio handles the actual Instagram API interaction — we upload
-    //    the video directly to Zernio's storage and provide the caption text.
+    // 3. Schedule each video to Instagram via Zernio and mark used incrementally.
+    //    Zernio handles the actual Instagram API interaction. We mark each
+    //    tweet as "used" immediately after its schedule call succeeds — NOT
+    //    at the end of the loop. Previous code only marked used after ALL
+    //    tweets succeeded, so if Zernio failed on tweet #7 of 10 the first
+    //    6 stayed in the unused pool. Next run would regenerate and re-post
+    //    them to Instagram as duplicates.
     const { accountId, profileId } = await getInstagramAccount();
     const scheduled: { hash: string; postId: string }[] = [];
+    const failedHashes: { hash: string; error: string }[] = [];
     for (const g of generated) {
-      const post = await scheduleVideoToInstagram(accountId, profileId, g.text, g.mp4Path);
-      scheduled.push({ hash: g.hash, postId: post.id });
+      try {
+        const post = await scheduleVideoToInstagram(accountId, profileId, g.text, g.mp4Path);
+        scheduled.push({ hash: g.hash, postId: post.id });
+        // Commit this one tweet to the used pool right away so a later
+        // failure in this batch can't cause it to be regenerated.
+        markUsed('instagram', [g.hash]);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Zernio scheduling failed for ${g.hash}:`, message);
+        failedHashes.push({ hash: g.hash, error: message });
+      }
     }
 
-    // 4. Mark tweets as used ONLY after everything succeeded.
-    //    This is intentionally the last step — if any earlier step fails,
-    //    the tweets remain in the unused pool and will be retried next run.
-    markUsed('instagram', picked.map((t) => t.hash));
-
-    // 5. Log successful cron run to Supabase so the dashboard shows "Healthy"
+    // 5. Log cron run to Supabase. Status reflects partial success: success
+    //    if any tweet scheduled, failed only if every tweet errored. The
+    //    error_message records the count + first error so the dashboard
+    //    surfaces partial-failure batches without burying the success.
+    const cronStatus = scheduled.length > 0 ? 'success' : 'failed';
+    const errorSummary = failedHashes.length > 0
+      ? `${failedHashes.length}/${generated.length} failed: ${failedHashes[0].error}`
+      : null;
     await supabase.from('cron_runs').insert({
       platform: 'instagram_2nd',
       job_type: 'post',
-      status: 'success',
+      status: cronStatus,
       started_at: startedAt,
       finished_at: new Date().toISOString(),
-      posts_processed: picked.length,
-      error_message: null,
+      posts_processed: scheduled.length,
+      error_message: errorSummary,
     });
 
     return NextResponse.json({
-      processed: picked.length,
+      processed: scheduled.length,
       remainingUnused,
       scheduled,
+      failed: failedHashes,
     });
   } catch (err) {
     // Log failed cron run so the dashboard accurately reflects the failure

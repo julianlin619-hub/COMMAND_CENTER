@@ -50,7 +50,19 @@ def process_due_posts(platform_client, platform: str) -> int:
             logger.warning("Schedule %s has no associated post, skipping", schedule_id)
             continue
 
-        # Hydrate the raw dict into a typed Pydantic model for validation
+        # Hydrate the raw dict into a typed Pydantic model for validation.
+        # The Pydantic model declares `id: str | None` (since new posts are
+        # built without an id before insert), so we grab the id from the raw
+        # DB row — it's guaranteed to be set there. Losing it to None would
+        # make update_post() silently no-op and leave the post stuck in
+        # "publishing" forever.
+        post_id = post_data.get("id")
+        if not post_id:
+            logger.error(
+                "Schedule %s has a posts row with no id — DB integrity issue, skipping",
+                schedule_id,
+            )
+            continue
         post = Post(**post_data)
 
         # IMPORTANT: Claim the schedule BEFORE publishing. This is the
@@ -61,7 +73,7 @@ def process_due_posts(platform_client, platform: str) -> int:
             logger.info("Schedule %s already claimed by another worker, skipping", schedule_id)
             continue
         # Set status to "publishing" so the dashboard shows it's in progress
-        update_post(post.id, status="publishing")
+        update_post(post_id, status="publishing")
 
         # Each post is wrapped in its own try/except so one failure doesn't
         # stop the rest of the batch from being processed. If post #2 of 5
@@ -69,17 +81,17 @@ def process_due_posts(platform_client, platform: str) -> int:
         try:
             platform_post_id = platform_client.create_post(post)
             update_post(
-                post.id,
+                post_id,
                 status="published",
                 platform_post_id=platform_post_id,
                 published_at=datetime.now(timezone.utc).isoformat(),
             )
             processed += 1
-            logger.info("Published post %s -> %s", post.id, platform_post_id)
+            logger.info("Published post %s -> %s", post_id, platform_post_id)
         except Exception as e:
             # Mark as failed and store the error message so it's visible
             # in the dashboard. The post can be retried manually later.
-            logger.error("Failed to publish post %s: %s", post.id, e)
-            update_post(post.id, status="failed", error_message=str(e))
+            logger.error("Failed to publish post %s: %s", post_id, e)
+            update_post(post_id, status="failed", error_message=str(e))
 
     return processed
