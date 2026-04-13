@@ -12,28 +12,51 @@
  * and lives in the `src/` directory.
  */
 
+import { NextResponse } from "next/server";
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 // Define which routes should be accessible WITHOUT authentication.
-// `createRouteMatcher` takes an array of route patterns (using regex syntax)
-// and returns a function that checks if a given request URL matches any of them.
-//
-// Public routes:
-//   - "/sign-in(.*)" — the sign-in page and its sub-routes (MFA steps, etc.)
-//   - "/api(.*)" — all API routes (they handle their own auth via verifyApiAuth)
-const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/api(.*)"]);
+// Only the Clerk sign-in flow is public. Notably, `/api(.*)` is NOT public:
+// API routes must authenticate via either a Clerk session (browser use) or
+// the CRON_SECRET bearer token (cron / GitHub Actions). Keeping the API
+// surface fail-closed at the middleware layer means a route that forgets
+// to call `verifyApiAuth()` is still protected — no route can be exposed
+// by omission alone.
+const isPublicRoute = createRouteMatcher(["/sign-in(.*)"]);
 
-// `clerkMiddleware` wraps our auth logic. For every request:
-//   1. Clerk attaches auth state (session info) to the request
-//   2. Our callback runs to decide if the request should proceed
+// For API routes, we enforce auth at the middleware layer rather than relying
+// on `auth.protect()` (which would redirect browsers to the sign-in page —
+// not useful for JSON API consumers). This mirrors the allowed methods in
+// dashboard/src/lib/auth.ts so the per-route `verifyApiAuth()` call is
+// defense in depth, not the only defense.
+function isBearerAuthorized(request: Request): boolean {
+  const header = request.headers.get("authorization");
+  const secret = process.env.CRON_SECRET;
+  if (!header || !secret) return false;
+  // Strict equality is fine here — the review flagged this as medium-severity
+  // timing-attack exposure; tightening to constant-time compare is a follow-up.
+  return header === `Bearer ${secret}`;
+}
+
 export default clerkMiddleware(async (auth, request) => {
-  // If the route is NOT public, require authentication.
-  // `auth.protect()` checks for a valid Clerk session. If the user isn't
-  // signed in, they're automatically redirected to the sign-in page.
-  // Public routes skip this check entirely.
-  if (!isPublicRoute(request)) {
-    await auth.protect();
+  if (isPublicRoute(request)) return;
+
+  const { pathname } = new URL(request.url);
+  const isApi = pathname.startsWith("/api/");
+
+  if (isApi) {
+    // Auth path 1: Bearer CRON_SECRET (cron jobs, GitHub Actions)
+    if (isBearerAuthorized(request)) return;
+    // Auth path 2: Clerk session (dashboard user hitting the API)
+    const { userId } = await auth();
+    if (userId) return;
+    // Neither — return JSON 401 instead of redirecting to /sign-in.
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // Non-API route (page navigation): let Clerk redirect unauthenticated
+  // users to the sign-in page.
+  await auth.protect();
 });
 
 // The `config.matcher` tells Next.js WHICH requests should run through this

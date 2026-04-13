@@ -54,6 +54,13 @@ def insert_post(post: Post) -> str:
     # exclude={"id"}: the DB auto-generates the UUID; we never set it ourselves.
     data = post.model_dump(exclude_none=True, exclude={"id"})
     result = client.table("posts").insert(data).execute()
+    # Guard against empty result.data — happens when RLS rejects the insert
+    # or a unique constraint (e.g. dedup index from migration 004) fires.
+    # Without this guard, callers would see a bare IndexError with no context.
+    if not result.data:
+        raise RuntimeError(
+            "insert_post returned no rows — check RLS policies and dedup constraint"
+        )
     return result.data[0]["id"]
 
 
@@ -187,6 +194,10 @@ def insert_schedule(post_id: str, scheduled_for: datetime) -> str:
         .insert({"post_id": post_id, "scheduled_for": scheduled_for.isoformat()})
         .execute()
     )
+    if not result.data:
+        raise RuntimeError(
+            f"insert_schedule for post {post_id} returned no rows — check RLS / FK constraint"
+        )
     return result.data[0]["id"]
 
 
@@ -240,6 +251,10 @@ def log_cron_start(platform: str, job_type: str) -> str:
         .insert({"platform": platform, "job_type": job_type, "status": "running"})
         .execute()
     )
+    if not result.data:
+        raise RuntimeError(
+            f"log_cron_start for {platform}/{job_type} returned no rows — check RLS / schema"
+        )
     # Return the auto-generated ID so the caller can update this row later
     return result.data[0]["id"]
 

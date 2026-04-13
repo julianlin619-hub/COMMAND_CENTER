@@ -29,14 +29,34 @@ import httpx
 from core.buffer import get_channel_id, send_to_buffer, truncate_caption
 from core.content_sources import fetch_apify_tweets
 from core.database import (
+    get_client,
     insert_post,
     log_cron_finish,
     log_cron_start,
     post_caption_exists,
+    update_post,
 )
 from core.media import get_signed_url
 from core.models import Post
 from core.text_utils import normalize_tweet_text
+
+
+# Postgres unique-constraint violation code. Raised by postgrest as APIError.code
+# when the dedup index from migration 004_rls_and_dedup.sql fires.
+_PG_UNIQUE_VIOLATION = "23505"
+
+
+def _is_unique_violation(exc: Exception) -> bool:
+    """Check if an exception from Supabase is a unique-constraint violation.
+
+    We compare the dedup index partial-unique constraint as the source of
+    truth for "already sent" — that's more reliable than an app-level check
+    which can race against concurrent runs. Works across supabase-py versions
+    by inspecting both the exception's .code attr and its string form.
+    """
+    code = getattr(exc, "code", "") or ""
+    message = str(exc).lower()
+    return _PG_UNIQUE_VIOLATION in code or _PG_UNIQUE_VIOLATION in message or "duplicate key" in message
 
 logging.basicConfig(
     level=logging.INFO,
@@ -168,6 +188,42 @@ def main():
         # Hardcoded TikTok caption — short engagement hook for quote-card videos
         tiktok_caption = "Agree?"
 
+        # Guard: skip empty or whitespace-only captions. Buffer's GraphQL
+        # mutation will reject them, and we don't want to flip status to
+        # sent_to_buffer when we know the send will fail.
+        if not caption or not caption.strip():
+            logger.warning("Skipping tweet with empty caption (storage: %s)", storage_path)
+            error_count += 1
+            continue
+
+        # ─── INSERT FIRST, THEN SEND TO BUFFER ───────────────────────────
+        # The previous implementation called send_to_buffer() first and did a
+        # late-dedup check before insert. That window let two concurrent runs
+        # both queue the same caption in Buffer (the DB showed one row, but
+        # Buffer published twice). The partial unique index from migration
+        # 004_rls_and_dedup.sql on (platform, md5(caption)) WHERE status NOT
+        # IN ('failed', 'buffer_error') is our source of truth — attempt the
+        # insert first, and if the DB rejects it with a unique-violation,
+        # another run already claimed this caption. If Buffer later fails,
+        # we flip status to buffer_error, which releases the row from the
+        # dedup index so a subsequent run can retry.
+        post = Post(
+            platform="tiktok",
+            status="sent_to_buffer",
+            media_type="video",
+            media_urls=[storage_path],
+            caption=caption,
+        )
+        try:
+            post_id = insert_post(post)
+        except Exception as e:
+            if _is_unique_violation(e):
+                logger.info("Skipping duplicate (DB constraint): %s...", caption[:50])
+                continue
+            logger.error("Insert failed for %s: %s", storage_path, e)
+            error_count += 1
+            continue
+
         try:
             # Get a signed URL with 7-day expiry. Buffer queues videos and may
             # not download them for hours or days, so a short expiry risks the
@@ -177,40 +233,16 @@ def main():
             # Send to Buffer's TikTok queue
             buffer_post_id = send_to_buffer(channel_id, tiktok_caption, video_url, media_type='video')
 
-            # Recheck dedup right before insert — another concurrent run
-            # may have inserted this caption between Phase 2 and now.
-            if post_caption_exists("tiktok", caption):
-                logger.info("Skipping duplicate (late check): %s...", caption[:50])
-                continue
-
-            # Record the post in Supabase with sent_to_buffer status.
-            # This is a successful handoff — Buffer will handle actual TikTok
-            # publishing at the next available queue slot.
-            post = Post(
-                platform="tiktok",
-                status="sent_to_buffer",
-                media_type="video",
-                media_urls=[storage_path],
-                caption=caption,
-                platform_post_id=buffer_post_id,
-            )
-            insert_post(post)
+            # Stamp the Buffer post ID onto the row we already inserted
+            update_post(post_id, platform_post_id=buffer_post_id)
             sent_count += 1
             logger.info("Sent to Buffer: %s (Buffer post %s)", storage_path, buffer_post_id)
 
         except Exception as e:
-            # Record the failure but continue with the next item.
-            # One bad video shouldn't block the rest of the batch.
+            # Flip to buffer_error so the row drops out of the dedup index
+            # and a future run can retry this caption.
             logger.error("Buffer send failed for %s: %s", storage_path, e)
-            error_post = Post(
-                platform="tiktok",
-                status="buffer_error",
-                media_type="video",
-                media_urls=[storage_path],
-                caption=caption,
-                error_message=str(e)[:500],
-            )
-            insert_post(error_post)
+            update_post(post_id, status="buffer_error", error_message=str(e)[:500])
             error_count += 1
 
     # Log final status — success even if some items failed, as long as

@@ -200,7 +200,16 @@ def truncate_caption(text: str, limit: int = TIKTOK_CAPTION_LIMIT) -> str:
     TikTok's caption limit is 150 characters. If the text exceeds this,
     we cut it and append a Unicode ellipsis (…) so the user sees it was
     truncated rather than abruptly cut off mid-word.
+
+    Short-circuits when the text already fits (no gratuitous ellipsis),
+    and trims additional trailing whitespace after slicing so we don't
+    end up with "word …" style ugly breaks.
     """
-    if len(text) <= limit:
+    if limit <= 0 or len(text) <= limit:
         return text
-    return text[: limit - 1].rstrip() + "\u2026"
+    ellipsis = "\u2026"
+    # Slice so there's room for the ellipsis, trim any trailing whitespace
+    # that ended up at the cut boundary, then append. Resulting length is
+    # at most `limit` characters (the ellipsis counts as one).
+    truncated = text[: limit - 1].rstrip()
+    return truncated + ellipsis

@@ -178,8 +178,18 @@ export async function renderSquareQuoteCard(
     return h;
   }
 
+  // Seed the fallback with minFontSize's wrapped lines BEFORE the shrink
+  // loop. This matters for two edge cases:
+  //   1. maxFontSize < minFontSize (misconfigured template) — loop doesn't run
+  //   2. minFontSize parity mismatch with `-= 2` step (e.g. max=120, min=25)
+  //      — the loop skips right past minFontSize without setting bestLines,
+  //      and we'd render a blank card.
+  // Seeding guarantees we always have non-empty lines, even if the text
+  // never fits cleanly. Overflow at the absolute minimum size is acceptable;
+  // a blank card silently published to Facebook is not.
   let bestFontSize = config.minFontSize;
-  let bestLines: string[] = [];
+  ctx.font = `400 ${config.minFontSize}px "Libre Franklin"`;
+  let bestLines = wrapText(ctx, text, maxTextWidth, config.letterSpacing);
 
   for (
     let fontSize = config.maxFontSize;
@@ -193,7 +203,7 @@ export async function renderSquareQuoteCard(
     const { h: scaledH } = scaledHeaderForFont(fontSize);
     const totalBlockHeight = scaledH + (headerImg ? config.headerGap : 0) + textHeight;
 
-    if (totalBlockHeight <= maxContentHeight || fontSize === config.minFontSize) {
+    if (totalBlockHeight <= maxContentHeight) {
       bestFontSize = fontSize;
       bestLines = lines;
       break;
