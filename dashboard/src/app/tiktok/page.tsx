@@ -26,6 +26,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { OutlierTweetReel } from "./outlier-tweet-reel";
+import { BankReel } from "./bank-reel";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,9 @@ const PHASE_META: Record<string, { label: string; icon: typeof SearchIcon }> = {
   content_fetch: { label: "Fetch Tweets", icon: SearchIcon },
   content_generate: { label: "Generate Videos", icon: ImageIcon },
   buffer_send: { label: "Send to Buffer", icon: SendIcon },
+  bank_pick: { label: "Bank Pick", icon: SearchIcon },
+  bank_generate: { label: "Bank Generate", icon: ImageIcon },
+  bank_send: { label: "Bank Send", icon: SendIcon },
 };
 
 export default async function TikTokPage() {
@@ -149,6 +153,15 @@ export default async function TikTokPage() {
         </span>
       </h3>
       <OutlierTweetReel defaultHandle={defaultHandle} />
+
+      {/* ── Section 3: Bank Reel Manual Pipeline ────────────────────── */}
+      <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">
+        Bank Reel Pipeline
+        <span className="ml-2 font-normal">
+          — 1 extra reel/day from TweetMasterBank
+        </span>
+      </h3>
+      <BankReel />
     </AppShell>
   );
 }

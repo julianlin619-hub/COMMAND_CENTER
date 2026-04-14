@@ -81,6 +81,7 @@ function pythonEnv(projectRoot: string) {
 const CRON_MODULES: Record<string, string> = {
   "threads-cron": "cron.threads_cron",
   "tiktok-pipeline": "cron.tiktok_pipeline",
+  "tiktok-bank-pipeline": "cron.tiktok_bank_pipeline",
   "facebook-pipeline": "cron.facebook_pipeline",
   "instagram-cron": "cron.instagram_cron",
   "youtube-cron": "cron.youtube_cron",

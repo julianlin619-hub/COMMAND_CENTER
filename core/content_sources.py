@@ -216,6 +216,88 @@ def select_bank_content(
     return selected
 
 
+# ── Content Bank (with likes filter) ─────────────────────────────
+
+
+def select_bank_content_with_likes(
+    bank_path: str,
+    count: int = 1,
+    min_likes: int = 6500,
+    already_used: set[str] | None = None,
+) -> list[dict]:
+    """Select random entries from the bank with a minimum likes threshold.
+
+    Like select_bank_content(), but reads all three columns (tweet_id, text,
+    favorite_count) and filters by like count. Used by the TikTok bank
+    pipeline to only pick high-performing tweets for video conversion.
+
+    Args:
+        bank_path: Path to the CSV file (tweet_id, text, favorite_count).
+        count: Number of entries to select.
+        min_likes: Minimum favorite_count to include.
+        already_used: Set of caption strings already posted. Entries matching
+            these are excluded before selection, preventing reposts.
+
+    Returns:
+        List of dicts with 'tweet_id', 'text', 'favorite_count' keys.
+        Empty if the file doesn't exist or no entries meet the criteria.
+    """
+    if not os.path.exists(bank_path):
+        logger.warning("Content bank not found: %s", bank_path)
+        return []
+
+    entries: list[dict] = []
+    with open(bank_path, "r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if not header:
+            return []
+
+        # Locate columns by header name (case-insensitive)
+        lowered = [h.strip().lower() for h in header]
+        text_col = lowered.index("text") if "text" in lowered else 1
+        id_col = lowered.index("tweet_id") if "tweet_id" in lowered else 0
+        likes_col = lowered.index("favorite_count") if "favorite_count" in lowered else 2
+
+        for row in reader:
+            if len(row) <= max(text_col, id_col, likes_col):
+                continue
+            text = row[text_col].strip()
+            if not text:
+                continue
+            try:
+                likes = int(row[likes_col].strip())
+            except (ValueError, IndexError):
+                continue
+            if likes < min_likes:
+                continue
+            entries.append({
+                "tweet_id": row[id_col].strip().rstrip("'"),
+                "text": text,
+                "favorite_count": likes,
+            })
+
+    if not entries:
+        logger.info("No bank entries with >= %d likes in %s", min_likes, bank_path)
+        return []
+
+    # Filter out entries that have already been posted
+    if already_used:
+        entries = [e for e in entries if e["text"] not in already_used]
+
+    if not entries:
+        logger.info("Content bank exhausted — all high-like entries have been posted")
+        return []
+
+    random.shuffle(entries)
+    selected = entries[:count]
+    logger.info(
+        "Selected %d from bank (>= %d likes, %d remaining unposted)",
+        len(selected), min_likes, len(entries) - len(selected),
+    )
+    return selected
+
+
 # ── Helpers ───────────────────────────────────────────────────────────
 
 

@@ -41,6 +41,7 @@ interface CronJobDef {
 const CRON_JOBS: CronJobDef[] = [
   { name: "threads-cron", label: "Threads", schedule: "0 11 * * *" },
   { name: "tiktok-pipeline", label: "TikTok Pipeline", schedule: "0 12 * * *" },
+  { name: "tiktok-bank-pipeline", label: "TikTok Bank", schedule: "0 14 * * *" },
   { name: "facebook-pipeline", label: "Facebook Pipeline", schedule: "0 13 * * *" },
   { name: "instagram-cron", label: "Instagram", schedule: "0 */4 * * *" },
   { name: "youtube-cron", label: "YouTube", schedule: "0 */4 * * *" },
