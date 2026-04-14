@@ -94,7 +94,7 @@ def get_channel_id(org_id: str | None = None, service: str = "tiktok") -> str:
     # Uses GraphQL variables (not string interpolation) to prevent injection.
     data = _buffer_request(
         """
-        query GetChannels($orgId: String!) {
+        query GetChannels($orgId: OrganizationId!) {
             channels(input: { organizationId: $orgId }) {
                 id
                 service

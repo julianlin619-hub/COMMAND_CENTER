@@ -31,9 +31,13 @@ function getBankFilePath(): string {
 
 // Each platform gets its own history file so they track usage independently.
 // Instagram uses "ig-bank-history.json", Threads uses "threads-bank-history.json".
-function getHistoryPath(platform: 'instagram' | 'threads'): string {
-  const prefix = platform === 'instagram' ? 'ig' : 'threads';
-  return path.join(getDataDir(), `${prefix}-bank-history.json`);
+function getHistoryPath(platform: 'instagram' | 'threads' | 'tiktok' | 'tiktok'): string {
+  const prefixMap: Record<string, string> = {
+    instagram: 'ig',
+    threads: 'threads',
+    tiktok: 'tiktok',
+  };
+  return path.join(getDataDir(), `${prefixMap[platform]}-bank-history.json`);
 }
 
 function decodeHtml(str: string): string {
@@ -100,7 +104,7 @@ export function parseBankFile(): BankTweet[] {
     .map((text) => ({ hash: hashTweet(text), text: decodeHtml(text) }));
 }
 
-function getBankHistory(platform: 'instagram' | 'threads'): BankHistory {
+function getBankHistory(platform: 'instagram' | 'threads' | 'tiktok'): BankHistory {
   const historyPath = getHistoryPath(platform);
   try {
     const raw = fs.readFileSync(historyPath, 'utf-8');
@@ -114,7 +118,7 @@ function getBankHistory(platform: 'instagram' | 'threads'): BankHistory {
   }
 }
 
-function writeBankHistory(platform: 'instagram' | 'threads', history: BankHistory): void {
+function writeBankHistory(platform: 'instagram' | 'threads' | 'tiktok', history: BankHistory): void {
   const historyPath = getHistoryPath(platform);
   fs.mkdirSync(path.dirname(historyPath), { recursive: true });
   fs.writeFileSync(historyPath, JSON.stringify(history, null, 2));
@@ -126,7 +130,7 @@ function writeBankHistory(platform: 'instagram' | 'threads', history: BankHistor
  * Uses Fisher-Yates shuffle for unbiased random selection.
  */
 export function pickRandomUnused(
-  platform: 'instagram' | 'threads',
+  platform: 'instagram' | 'threads' | 'tiktok',
   count: number
 ): { picked: BankTweet[]; remainingUnused: number } {
   const all = parseBankFile();
@@ -150,7 +154,7 @@ export function pickRandomUnused(
  * Called after successful scheduling — never before, so a failed run
  * doesn't consume tweets from the pool.
  */
-export function markUsed(platform: 'instagram' | 'threads', hashes: string[]): void {
+export function markUsed(platform: 'instagram' | 'threads' | 'tiktok', hashes: string[]): void {
   const history = getBankHistory(platform);
   const merged = Array.from(new Set([...history.usedHashes, ...hashes]));
   writeBankHistory(platform, { ...history, usedHashes: merged });
@@ -160,7 +164,7 @@ export function markUsed(platform: 'instagram' | 'threads', hashes: string[]): v
  * Increment and return the next batch number for a platform.
  * Used to name Google Drive folders (e.g., "IG Bank Batch #6").
  */
-export function getNextBankBatchNumber(platform: 'instagram' | 'threads'): number {
+export function getNextBankBatchNumber(platform: 'instagram' | 'threads' | 'tiktok'): number {
   const history = getBankHistory(platform);
   const next = history.bankBatchCount + 1;
   writeBankHistory(platform, { ...history, bankBatchCount: next });
@@ -171,6 +175,6 @@ export function getNextBankBatchNumber(platform: 'instagram' | 'threads'): numbe
  * Reset a platform's usage history. Useful if you want to re-use
  * tweets that were previously scheduled (e.g., after refreshing the CSV).
  */
-export function resetBankHistory(platform: 'instagram' | 'threads'): void {
+export function resetBankHistory(platform: 'instagram' | 'threads' | 'tiktok'): void {
   writeBankHistory(platform, { usedHashes: [], bankBatchCount: 0 });
 }

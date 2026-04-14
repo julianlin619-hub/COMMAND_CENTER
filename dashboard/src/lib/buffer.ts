@@ -81,7 +81,7 @@ export async function getChannelId(
   const data = await bufferRequest<{
     channels: { id: string; service: string; name: string }[];
   }>(
-    `query GetChannels($orgId: String!) {
+    `query GetChannels($orgId: OrganizationId!) {
       channels(input: { organizationId: $orgId }) {
         id
         service

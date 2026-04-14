@@ -52,6 +52,14 @@ const CRON_JOBS: CronJob[] = [
     kind: "pipeline",
   },
   {
+    platform: "tiktok",
+    dbPlatform: "tiktok",
+    label: "TikTok Bank",
+    cronName: "tiktok-bank-pipeline",
+    schedule: "0 14 * * *",
+    kind: "pipeline",
+  },
+  {
     platform: "facebook",
     dbPlatform: "facebook",
     label: "Facebook Pipeline",

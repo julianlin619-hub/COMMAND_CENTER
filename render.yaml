@@ -106,6 +106,30 @@ services:
         sync: false
 
   - type: cron
+    name: tiktok-bank-pipeline
+    runtime: python
+    buildCommand: pip install -r requirements.txt && pip install -e .
+    startCommand: python -m cron.tiktok_bank_pipeline
+    schedule: "0 14 * * *"  # 2 PM UTC = 7 AM PDT — 2hrs after main TikTok pipeline
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: BUFFER_ACCESS_TOKEN
+        sync: false
+      - key: BUFFER_ORG_ID
+        sync: false
+      - key: DASHBOARD_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: CONTENT_BANK_PATH  # optional — default data/TweetMasterBank.csv
+        sync: false
+      - key: TIKTOK_BANK_MIN_LIKES  # optional — default 6500
+        sync: false
+
+  - type: cron
     name: linkedin-cron
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
