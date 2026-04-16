@@ -100,7 +100,7 @@ def main():
         logger.info("Phase 1: picked bank tweet (id=%s, %d likes): %s...",
                      picked["tweet_id"], picked["favorite_count"], picked["normalized"][:60])
     except Exception as e:
-        logger.error("Phase 1 failed (bank pick): %s", e)
+        logger.error("Phase 1 failed (bank pick): %s", e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
 
@@ -131,14 +131,24 @@ def main():
         if data.get("error"):
             raise RuntimeError(data["error"])
 
+        # Log per-item errors from the API so we can see exactly why
+        # individual items failed (e.g. ffmpeg crash, storage upload error).
+        api_errors = data.get("errors", [])
+        if api_errors:
+            logger.warning("Generate API returned %d error(s):", len(api_errors))
+            for i, err in enumerate(api_errors):
+                logger.warning("  error[%d]: %s", i, err)
+
         generated = data.get("generated", [])
         if not generated:
-            raise RuntimeError("Generate API returned empty results")
+            raise RuntimeError(
+                f"Generate API returned empty results. API errors: {api_errors}"
+            )
 
         log_cron_finish(run_id, status="success", posts_processed=len(generated))
         logger.info("Phase 2: generated %d video(s)", len(generated))
     except Exception as e:
-        logger.error("Phase 2 failed (generate): %s", e)
+        logger.error("Phase 2 failed (generate): %s", e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
 
@@ -150,7 +160,7 @@ def main():
     try:
         channel_id = get_channel_id(service="tiktok")
     except Exception as e:
-        logger.error("Phase 3 failed — could not get TikTok channel ID: %s", e)
+        logger.error("Phase 3 failed — could not get TikTok channel ID: %s", e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
 
@@ -184,7 +194,7 @@ def main():
             logger.info("Skipping duplicate (DB constraint): %s...", caption[:50])
             log_cron_finish(run_id, status="success", posts_processed=0)
             return
-        logger.error("Insert failed for %s: %s", storage_path, e)
+        logger.error("Insert failed for %s: %s", storage_path, e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
 
@@ -202,7 +212,7 @@ def main():
     except Exception as e:
         # Flip to buffer_error so the row drops out of the dedup index
         # and a future run can retry this caption.
-        logger.error("Buffer send failed for %s: %s", storage_path, e)
+        logger.error("Buffer send failed for %s: %s", storage_path, e, exc_info=True)
         update_post(post_id, status="buffer_error", error_message=str(e)[:500])
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)

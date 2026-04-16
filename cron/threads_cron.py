@@ -84,7 +84,7 @@ def main():
         log_cron_finish(run_id, status="success", posts_processed=apify_sourced)
         logger.info("Apify sourcing complete: %d new posts", apify_sourced)
     except Exception as e:
-        logger.error("Apify sourcing failed: %s", e)
+        logger.error("Apify sourcing failed: %s", e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
 
     # -------------------------------------------------------------------------
@@ -114,7 +114,7 @@ def main():
         log_cron_finish(run_id, status="success", posts_processed=bank_sourced)
         logger.info("Bank sourcing complete: %d new posts", bank_sourced)
     except Exception as e:
-        logger.error("Bank sourcing failed: %s", e)
+        logger.error("Bank sourcing failed: %s", e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
 
     # -------------------------------------------------------------------------
@@ -127,7 +127,7 @@ def main():
         try:
             client.refresh_credentials()
         except Exception as e:
-            logger.error("Credential refresh failed — aborting run: %s", e)
+            logger.error("Credential refresh failed — aborting run: %s", e, exc_info=True)
             log_cron_finish(run_id, status="failed", error_message=f"Credential refresh failed: {e}")
             sys.exit(1)
 
@@ -136,7 +136,7 @@ def main():
         log_cron_finish(run_id, status="success", posts_processed=processed)
         logger.info("Posting complete: %d posts processed", processed)
     except Exception as e:
-        logger.error("Posting failed: %s", e)
+        logger.error("Posting failed: %s", e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
 
