@@ -224,6 +224,10 @@ def post_caption_exists(platform: str, caption: str) -> bool:
 
     Used by content sourcing to avoid creating duplicate posts. For example,
     if an Apify tweet was already sourced in a previous cron run, we skip it.
+
+    Mirrors the partial unique index from migration 004: rows with status
+    'failed' or 'buffer_error' don't count as existing, so the next cron run
+    can retry a caption whose previous send failed.
     """
     client = get_client()
     result = (
@@ -231,6 +235,7 @@ def post_caption_exists(platform: str, caption: str) -> bool:
         .select("id")
         .eq("platform", platform)
         .eq("caption", caption)
+        .not_.in_("status", ["failed", "buffer_error"])
         .limit(1)
         .execute()
     )
