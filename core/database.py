@@ -65,7 +65,14 @@ def insert_post(post: Post) -> str:
 
 
 def update_post(post_id: str, **fields) -> None:
-    """Update specific fields on a post."""
+    """Update specific fields on a post.
+
+    Raises RuntimeError if the update touches zero rows — the row is missing,
+    was deleted, or RLS blocked the write. Silently no-oping here would leave
+    posts stuck in transitional states (e.g. "publishing" forever when the
+    scheduler can't flip them to "published"/"failed") and hide real DB/RLS
+    misconfiguration behind a healthy-looking cron run.
+    """
     client = get_client()
     # Always stamp updated_at so the dashboard can sort by "last modified"
     fields["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -73,7 +80,16 @@ def update_post(post_id: str, **fields) -> None:
     # libraries can contain tokens, API keys, or auth headers.
     if fields.get("error_message"):
         fields["error_message"] = sanitize_error_message(fields["error_message"])
-    client.table("posts").update(fields).eq("id", post_id).execute()
+    result = client.table("posts").update(fields).eq("id", post_id).execute()
+    # Empty data means the UPDATE matched no row. Callers inside `except`
+    # blocks that use update_post to stamp a failure state should wrap this
+    # call in their own try/except so a DB outage there doesn't shadow the
+    # original platform error — see scheduler.process_due_posts and the
+    # Buffer-send pipelines for the pattern.
+    if not result.data:
+        raise RuntimeError(
+            f"update_post({post_id}) returned no rows — row missing or RLS blocked"
+        )
 
 
 def get_posts(

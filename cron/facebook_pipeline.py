@@ -238,7 +238,14 @@ def main():
             # Flip to buffer_error so the row drops out of the dedup index
             # and a future run can retry this caption.
             logger.error("Buffer send failed for %s: %s", storage_path, e, exc_info=True)
-            update_post(post_id, status="buffer_error", error_message=str(e)[:500])
+            # Nested try: update_post now raises on no-match. A DB failure
+            # here would shadow the real Buffer error and kill the whole
+            # batch — catch it so the loop continues and the original
+            # exception stays in the log.
+            try:
+                update_post(post_id, status="buffer_error", error_message=str(e)[:500])
+            except Exception as db_err:
+                logger.error("Also failed to mark post %s as buffer_error: %s", post_id, db_err)
             error_count += 1
 
     # Log final status — success if at least one was sent, failed if all errored
