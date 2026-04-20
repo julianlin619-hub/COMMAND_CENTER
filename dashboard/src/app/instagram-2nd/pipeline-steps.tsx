@@ -229,13 +229,22 @@ export function PipelineSteps() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ count: 10 }),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await res.json().catch(() => null);
+      // Validate the response before advancing state. Checking !res.ok catches
+      // 500s where the body lacks an `error` key (e.g. proxy/HTML error pages);
+      // the old `if (data.error)` check could silently treat these as success
+      // and mutate state with undefined fields.
+      if (!res.ok) {
+        throw new Error(data?.error || `Request failed (${res.status})`);
+      }
+      if (!Array.isArray(data?.picked)) {
+        throw new Error("Malformed response from /api/ig-pipeline/pick");
+      }
       picked = data.picked;
       setPickedTweets(picked);
       updateStep("pick", {
         status: "success",
-        message: `Picked ${data.picked.length} tweets (${data.remainingUnused} remaining)`,
+        message: `Picked ${picked.length} tweets (${data.remainingUnused} remaining)`,
       });
     } catch (e) {
       updateStep("pick", { status: "error", message: `Failed: ${(e as Error).message}` });
@@ -256,8 +265,13 @@ export function PipelineSteps() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tweets: picked }),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error || `Request failed (${res.status})`);
+      }
+      if (!Array.isArray(data?.generated)) {
+        throw new Error("Malformed response from /api/ig-pipeline/generate");
+      }
       generated = data.generated;
       setGeneratedItems(generated);
       updateStep("generate", { status: "success", message: `Generated ${generated.length} PNG + MP4 files` });
@@ -274,8 +288,19 @@ export function PipelineSteps() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ generated }),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        // The schedule route returns `{ scheduled, error, failedHash }` on a
+        // mid-batch failure so earlier items don't appear dropped. Include the
+        // partial count in the error message so the user knows not to blindly
+        // retry — retrying would hit already-scheduled items.
+        const partial = Array.isArray(data?.scheduled) ? data.scheduled.length : 0;
+        const base = data?.error || `Request failed (${res.status})`;
+        throw new Error(partial > 0 ? `${base} (${partial} already scheduled)` : base);
+      }
+      if (!Array.isArray(data?.scheduled)) {
+        throw new Error("Malformed response from /api/ig-pipeline/schedule");
+      }
       updateStep("schedule", { status: "success", message: `Scheduled ${data.scheduled.length} posts to Instagram` });
       fetch("/api/ig-pipeline/status")
         .then((r) => r.json())
