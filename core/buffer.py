@@ -122,6 +122,7 @@ def get_channel_id(org_id: str | None = None, service: str = "tiktok") -> str:
 def send_to_buffer(
     channel_id: str, caption: str, media_url: str, media_type: str = "video",
     facebook_post_type: str | None = None,
+    instagram_post_type: str | None = None,
 ) -> str:
     """Send content to Buffer's posting queue.
 
@@ -173,9 +174,16 @@ def send_to_buffer(
                 "mode": "addToQueue",
                 "text": truncate_caption(caption),
                 "assets": assets,
-                # Facebook requires metadata.facebook.type — Buffer nests
-                # platform-specific fields under metadata.
-                **({"metadata": {"facebook": {"type": facebook_post_type}}} if facebook_post_type else {}),
+                # Buffer nests platform-specific fields under metadata.
+                # Facebook requires metadata.facebook.type (post/reel/story);
+                # Instagram requires metadata.instagram.type (post/reel/story).
+                **(
+                    {"metadata": {
+                        **({"facebook": {"type": facebook_post_type}} if facebook_post_type else {}),
+                        **({"instagram": {"type": instagram_post_type}} if instagram_post_type else {}),
+                    }}
+                    if facebook_post_type or instagram_post_type else {}
+                ),
             },
         },
     )
