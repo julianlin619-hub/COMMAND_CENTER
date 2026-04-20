@@ -33,6 +33,7 @@ function truncateCaption(text: string): string {
 export async function getInstagramAccount(): Promise<{ accountId: string; profileId: string }> {
   const res = await fetch(`${ZERNIO_API_URL}/accounts`, {
     headers: { Authorization: `Bearer ${getApiKey()}` },
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!res.ok) {
@@ -59,6 +60,7 @@ async function uploadVideoToZernio(videoPath: string): Promise<string> {
       Authorization: `Bearer ${getApiKey()}`,
     },
     body: JSON.stringify({ filename: 'reel.mp4', contentType: 'video/mp4' }),
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!presignRes.ok) {
@@ -77,6 +79,7 @@ async function uploadVideoToZernio(videoPath: string): Promise<string> {
     method: 'PUT',
     headers: { 'Content-Type': 'video/mp4' },
     body: videoBuffer,
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!uploadRes.ok) {
@@ -107,6 +110,7 @@ export async function scheduleVideoToInstagram(
       platforms: [{ platform: 'instagram', accountId }],
       mediaItems: [{ url: zernioMediaUrl, type: 'video' }],
     }),
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!res.ok) {

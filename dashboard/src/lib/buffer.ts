@@ -35,6 +35,9 @@ async function bufferRequest<T>(
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ query, variables }),
+    // Abort after 10s — without this a hung Buffer endpoint stalls the
+    // serverless invocation until Next.js's much higher default kills it.
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!res.ok) {

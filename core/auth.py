@@ -56,8 +56,10 @@ def refresh_oauth_token(
     if extra_params:
         data.update(extra_params)
 
-    # Send the token exchange request to the platform's OAuth endpoint
-    response = httpx.post(token_url, data=data)
+    # Send the token exchange request to the platform's OAuth endpoint.
+    # `timeout=10` bounds the total request — without it, a hung OAuth
+    # endpoint would hang the entire cron run and block the next 4h slot.
+    response = httpx.post(token_url, data=data, timeout=10)
     # If the refresh token is invalid/expired, this raises an HTTPStatusError.
     # That signals the platform adapter to re-authenticate from scratch.
     response.raise_for_status()

@@ -64,6 +64,7 @@ export async function POST(request: Request) {
           maxItems: 50,
           sort: "Latest",
         }),
+        signal: AbortSignal.timeout(10_000),
       }
     );
 
@@ -76,7 +77,10 @@ export async function POST(request: Request) {
 
     const itemsRes = await fetch(
       `https://api.apify.com/v2/datasets/${datasetId}/items`,
-      { headers: { Authorization: `Bearer ${apiKey}` } }
+      {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(10_000),
+      }
     );
     const items = (await itemsRes.json()) as Record<string, unknown>[];
 

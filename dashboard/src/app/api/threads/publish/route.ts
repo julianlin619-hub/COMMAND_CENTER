@@ -109,6 +109,10 @@ export async function POST(request: Request) {
           query: CREATE_POST_MUTATION,
           variables: { channelId, text },
         }),
+        // 10s timeout so a slow Buffer GraphQL call can't leave the row
+        // stuck in "publishing" between the earlier publishing/published
+        // state writes — on abort, the catch below flips it to "failed".
+        signal: AbortSignal.timeout(10_000),
       });
 
       if (!res.ok) {
