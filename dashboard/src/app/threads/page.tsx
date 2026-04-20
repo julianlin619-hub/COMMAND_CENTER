@@ -43,6 +43,7 @@ export const dynamic = "force-dynamic";
 
 async function getThreadsData() {
   const supabase = getSupabaseClient();
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
   const [
     publishedResult,
@@ -76,12 +77,13 @@ async function getThreadsData() {
       .select("id", { count: "exact", head: true })
       .eq("platform", "threads")
       .eq("status", "failed"),
-    // Last cron run per job type (Apify and bank tracked separately)
+    // Last cron run per job type in the last 24h (Apify and bank tracked separately)
     supabase
       .from("cron_runs")
       .select("*")
       .eq("platform", "threads")
       .eq("job_type", "content_apify")
+      .gte("started_at", since)
       .order("started_at", { ascending: false })
       .limit(1),
     supabase
@@ -89,6 +91,7 @@ async function getThreadsData() {
       .select("*")
       .eq("platform", "threads")
       .eq("job_type", "content_bank")
+      .gte("started_at", since)
       .order("started_at", { ascending: false })
       .limit(1),
     supabase
@@ -96,9 +99,10 @@ async function getThreadsData() {
       .select("*")
       .eq("platform", "threads")
       .eq("job_type", "post")
+      .gte("started_at", since)
       .order("started_at", { ascending: false })
       .limit(1),
-    // Recent posts and cron runs
+    // Recent posts and cron runs (last 24h)
     supabase
       .from("posts")
       .select("*")
@@ -109,8 +113,8 @@ async function getThreadsData() {
       .from("cron_runs")
       .select("*")
       .eq("platform", "threads")
-      .order("started_at", { ascending: false })
-      .limit(20),
+      .gte("started_at", since)
+      .order("started_at", { ascending: false }),
   ]);
 
   return {
@@ -357,13 +361,13 @@ export default async function ThreadsPage() {
             <CardHeader>
               <CardTitle>Cron Run History</CardTitle>
               <CardDescription>
-                Last 20 cron executions for Threads
+                Cron executions for Threads in the last 24 hours
               </CardDescription>
             </CardHeader>
             <CardContent>
               {data.recentCrons.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">
-                  No cron runs recorded yet.
+                  No cron runs in the last 24 hours.
                 </p>
               ) : (
                 <Table>
