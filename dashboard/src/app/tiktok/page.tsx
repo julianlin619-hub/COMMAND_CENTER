@@ -43,15 +43,15 @@ const PHASE_META: Record<string, { label: string; icon: typeof SearchIcon }> = {
 export default async function TikTokPage() {
   const supabase = getSupabaseClient();
   const defaultHandle = process.env.APIFY_TWITTER_HANDLE || "AlexHormozi";
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-  // Fetch the most recent cron run for each TikTok job type.
-  // We query all recent tiktok runs and pick the latest per job_type.
+  // Fetch the most recent cron run per job type, scoped to the last 24h.
   const { data: cronRuns } = await supabase
     .from("cron_runs")
     .select("*")
     .eq("platform", "tiktok")
-    .order("started_at", { ascending: false })
-    .limit(20);
+    .gte("started_at", since)
+    .order("started_at", { ascending: false });
 
   // Group by job_type and take the most recent run of each
   const latestByPhase: Record<string, typeof cronRuns extends (infer T)[] | null ? T : never> = {};

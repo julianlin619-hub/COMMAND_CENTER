@@ -31,7 +31,7 @@ function getBankFilePath(): string {
 
 // Each platform gets its own history file so they track usage independently.
 // Instagram uses "ig-bank-history.json", Threads uses "threads-bank-history.json".
-function getHistoryPath(platform: 'instagram' | 'threads' | 'tiktok' | 'tiktok'): string {
+function getHistoryPath(platform: 'instagram' | 'threads' | 'tiktok'): string {
   const prefixMap: Record<string, string> = {
     instagram: 'ig',
     threads: 'threads',

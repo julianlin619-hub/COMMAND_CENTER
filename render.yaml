@@ -64,25 +64,11 @@ services:
         sync: false
 
   - type: cron
-    name: instagram-cron
-    runtime: python
-    buildCommand: pip install -r requirements.txt && pip install -e .
-    startCommand: python -m cron.instagram_cron
-    schedule: "0 */4 * * *"  # TODO: set your real schedule
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_KEY
-        sync: false
-      - key: INSTAGRAM_ACCESS_TOKEN
-        sync: false
-
-  - type: cron
     name: tiktok-pipeline
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.tiktok_pipeline
-    schedule: "0 12 * * *"  # Daily at 12 PM UTC = 4 AM PST (same as other cron jobs)
+    schedule: "0 11 * * *"  # Daily at 11 AM UTC = 4 AM PDT
     envVars:
       - key: SUPABASE_URL
         sync: false
@@ -110,7 +96,7 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.tiktok_bank_pipeline
-    schedule: "0 14 * * *"  # 2 PM UTC = 7 AM PDT — 2hrs after main TikTok pipeline
+    schedule: "0 11 * * *"  # Daily at 11 AM UTC = 4 AM PDT — same slot as main TikTok pipeline
     envVars:
       - key: SUPABASE_URL
         sync: false
@@ -150,7 +136,27 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.facebook_pipeline
-    schedule: "0 13 * * *"  # 1 PM UTC = 6 AM PDT — 1hr after TikTok's 12 PM UTC so its posts are in the DB
+    schedule: "30 11 * * *"  # Daily at 11:30 AM UTC = 4:30 AM PDT — 30 min after TikTok runs so its posts are in the DB
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: BUFFER_ACCESS_TOKEN
+        sync: false
+      - key: BUFFER_ORG_ID
+        sync: false
+      - key: DASHBOARD_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+
+  - type: cron
+    name: instagram-pipeline
+    runtime: python
+    buildCommand: pip install -r requirements.txt && pip install -e .
+    startCommand: python -m cron.instagram_pipeline
+    schedule: "30 13 * * *"  # 1:30 PM UTC = 6:30 AM PDT — well after TikTok + Facebook so their posts are in the DB
     envVars:
       - key: SUPABASE_URL
         sync: false
