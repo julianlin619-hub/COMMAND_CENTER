@@ -182,6 +182,14 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      - key: BUFFER_ACCESS_TOKEN
+        sync: false
+      - key: BUFFER_ORG_ID
+        sync: false
+      - key: DASHBOARD_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
 
   - type: cron
     name: threads-cron
