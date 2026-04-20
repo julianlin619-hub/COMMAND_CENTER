@@ -40,7 +40,7 @@ const PLATFORM_INITIALS: Record<string, string> = {
 function StatusBadge({ status }: { status: string }) {
   if (status === "published") {
     return (
-      <Badge className="bg-green-500/15 text-green-500 border-green-500/25">
+      <Badge className="bg-[#8ca082]/15 text-[#8ca082] border-[#8ca082]/25">
         published
       </Badge>
     );
@@ -154,7 +154,7 @@ export default async function PostsPage({
       <div className="flex items-center gap-3 mb-4">
         <Badge variant="outline">{posts.length} total</Badge>
         <Separator orientation="vertical" className="h-4" />
-        <Badge className="bg-green-500/15 text-green-500 border-green-500/25">
+        <Badge className="bg-[#8ca082]/15 text-[#8ca082] border-[#8ca082]/25">
           {published.length} published
         </Badge>
         <Badge variant="secondary">{drafts.length} draft</Badge>

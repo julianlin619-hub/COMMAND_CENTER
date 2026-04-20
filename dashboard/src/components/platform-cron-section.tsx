@@ -24,7 +24,7 @@ export interface CronRun {
 function CronStatusBadge({ status }: { status: string }) {
   if (status === "success") {
     return (
-      <Badge className="bg-green-500/15 text-green-500 border-green-500/25">
+      <Badge className="bg-[#8ca082]/15 text-[#8ca082] border-[#8ca082]/25">
         success
       </Badge>
     );
@@ -33,7 +33,7 @@ function CronStatusBadge({ status }: { status: string }) {
     return <Badge variant="destructive">failed</Badge>;
   }
   return (
-    <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/25">
+    <Badge className="bg-[#ae5630]/15 text-[#ae5630] border-[#ae5630]/25">
       {status}
     </Badge>
   );

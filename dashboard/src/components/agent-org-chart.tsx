@@ -87,7 +87,7 @@ const INACTIVE_PLATFORM_AGENTS: PlatformAgents[] = [
   {
     platform: "Instagram",
     initials: "IG",
-    color: "text-pink-500",
+    color: "text-[#ae5630]",
     agents: [
       { id: "ig-publish", name: "Publisher", description: "Posts images/reels via Instagram Graph API", status: "planned", icon: ImageIcon },
       { id: "ig-metrics", name: "Metrics Collector", description: "Pulls likes, comments, reach, impressions", status: "planned", icon: TrendingUpIcon },
@@ -97,7 +97,7 @@ const INACTIVE_PLATFORM_AGENTS: PlatformAgents[] = [
   {
     platform: "TikTok",
     initials: "TK",
-    color: "text-cyan-400",
+    color: "text-[#c4683f]",
     agents: [
       { id: "tk-publish", name: "Publisher", description: "Uploads videos via TikTok Content Posting API", status: "planned", icon: UploadIcon },
       { id: "tk-metrics", name: "Metrics Collector", description: "Pulls views, likes, shares, comments", status: "planned", icon: TrendingUpIcon },
@@ -107,7 +107,7 @@ const INACTIVE_PLATFORM_AGENTS: PlatformAgents[] = [
   {
     platform: "LinkedIn",
     initials: "LI",
-    color: "text-blue-400",
+    color: "text-[#c4683f]",
     agents: [
       { id: "li-publish", name: "Publisher", description: "Creates posts and articles via LinkedIn API", status: "planned", icon: SendIcon },
       { id: "li-metrics", name: "Metrics Collector", description: "Pulls impressions, clicks, engagement rate", status: "planned", icon: TrendingUpIcon },
@@ -117,7 +117,7 @@ const INACTIVE_PLATFORM_AGENTS: PlatformAgents[] = [
   {
     platform: "X",
     initials: "X",
-    color: "text-zinc-300",
+    color: "text-[var(--overview-fg)]/85",
     agents: [
       { id: "x-publish", name: "Publisher", description: "Posts tweets and threads via X API v2", status: "planned", icon: SendIcon },
       { id: "x-metrics", name: "Metrics Collector", description: "Pulls impressions, retweets, likes, bookmarks", status: "planned", icon: TrendingUpIcon },
@@ -155,9 +155,9 @@ function StatusDot({ status }: { status: AgentStatus }) {
       <TooltipTrigger>
         <span
           className={cn("inline-block size-2 rounded-full", {
-            "bg-green-500": status === "active",
-            "bg-blue-500": status === "planned",
-            "bg-zinc-600": status === "placeholder",
+            "bg-[#8ca082]": status === "active",
+            "bg-[#ae5630]": status === "planned",
+            "bg-white/[0.15]": status === "placeholder",
           })}
         />
       </TooltipTrigger>
@@ -174,7 +174,7 @@ function StatusDot({ status }: { status: AgentStatus }) {
 
 function ConnectorLine({ className }: { className?: string }) {
   return (
-    <div className={cn("mx-auto w-px h-6 bg-zinc-700", className)} />
+    <div className={cn("mx-auto w-px h-6 bg-white/[0.10]", className)} />
   );
 }
 
@@ -193,7 +193,7 @@ function PlatformColumn({ data }: { data: PlatformAgents }) {
         whileTap={{ scale: 0.98 }}
         className="w-full"
       >
-        <Card className="cursor-pointer hover:ring-blue-500/40 transition-shadow">
+        <Card className="cursor-pointer hover:ring-[#ae5630]/40 transition-shadow">
           <CardHeader className="pb-0">
             <div className="flex items-center gap-2">
               <Avatar size="sm">
@@ -211,7 +211,7 @@ function PlatformColumn({ data }: { data: PlatformAgents }) {
               </span>
               <div className="flex items-center gap-1.5">
                 {activeCount > 0 && (
-                  <Badge className="bg-green-500/15 text-green-500 border-green-500/25 text-[10px] px-1.5">
+                  <Badge className="bg-[#8ca082]/15 text-[#8ca082] border-[#8ca082]/25 text-[10px] px-1.5">
                     {activeCount} live
                   </Badge>
                 )}
@@ -248,7 +248,7 @@ function PlatformColumn({ data }: { data: PlatformAgents }) {
                 >
                   <Tooltip>
                     <TooltipTrigger className="w-full text-left">
-                      <Card size="sm" className="bg-zinc-900/60">
+                      <Card size="sm" className="bg-black/30">
                         <CardContent className="py-2 px-3">
                           <div className="flex items-center gap-2">
                             <agent.icon className="size-3.5 text-muted-foreground shrink-0" />
@@ -283,15 +283,15 @@ export function AgentOrgChart() {
       <div className="flex items-center gap-4 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">Status:</span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block size-2 rounded-full bg-green-500" />
+          <span className="inline-block size-2 rounded-full bg-[#8ca082]" />
           Active
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block size-2 rounded-full bg-blue-500" />
+          <span className="inline-block size-2 rounded-full bg-[#ae5630]" />
           Planned
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block size-2 rounded-full bg-zinc-600" />
+          <span className="inline-block size-2 rounded-full bg-white/[0.15]" />
           Placeholder
         </span>
       </div>
@@ -304,11 +304,11 @@ export function AgentOrgChart() {
           transition={{ duration: 0.4 }}
           className="w-full max-w-md"
         >
-          <Card className="ring-blue-500/30">
+          <Card className="ring-[#ae5630]/30">
             <CardHeader>
               <div className="flex items-center gap-3">
-                <div className="flex items-center justify-center size-10 rounded-lg bg-blue-500/15">
-                  <BotIcon className="size-5 text-blue-500" />
+                <div className="flex items-center justify-center size-10 rounded-lg bg-[#ae5630]/15">
+                  <BotIcon className="size-5 text-[#ae5630]" />
                 </div>
                 <div>
                   <CardTitle>Command Center Orchestrator</CardTitle>
@@ -322,11 +322,11 @@ export function AgentOrgChart() {
         </motion.div>
 
         {/* Vertical connector */}
-        <div className="w-px h-8 bg-zinc-700" />
+        <div className="w-px h-8 bg-white/[0.10]" />
 
         {/* Horizontal connector bar to platforms */}
-        <div className="w-full h-px bg-zinc-700" />
-        <div className="w-px h-4 bg-zinc-700" />
+        <div className="w-full h-px bg-white/[0.10]" />
+        <div className="w-px h-4 bg-white/[0.10]" />
       </div>
 
       {/* ── Platform agents ─────────────────────────────────────── */}
@@ -382,7 +382,7 @@ export function AgentOrgChart() {
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {WORKFLOW_PATTERNS.map((wf) => (
-            <Card key={wf.name} size="sm" className="bg-zinc-900/60">
+            <Card key={wf.name} size="sm" className="bg-black/30">
               <CardContent className="py-3">
                 <div className="flex items-start gap-2">
                   <wf.icon className="size-4 text-muted-foreground shrink-0 mt-0.5" />
