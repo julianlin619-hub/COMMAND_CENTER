@@ -43,7 +43,7 @@ const CRON_JOBS: CronJobDef[] = [
   { name: "tiktok-pipeline", label: "TikTok Pipeline", schedule: "0 12 * * *" },
   { name: "tiktok-bank-pipeline", label: "TikTok Bank", schedule: "0 14 * * *" },
   { name: "facebook-pipeline", label: "Facebook Pipeline", schedule: "0 13 * * *" },
-  { name: "instagram-pipeline", label: "Instagram Pipeline", schedule: "30 13 * * *" },
+  { name: "instagram-pipeline", label: "Instagram Pipeline", schedule: "30 11 * * *" },
   { name: "youtube-cron", label: "YouTube", schedule: "0 */4 * * *" },
   { name: "linkedin-cron", label: "LinkedIn", schedule: "0 */4 * * *" },
 ];
