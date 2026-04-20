@@ -172,26 +172,6 @@ services:
         sync: false
 
   - type: cron
-    name: instagram-cron
-    runtime: python
-    buildCommand: pip install -r requirements.txt && pip install -e .
-    startCommand: python -m cron.instagram_cron
-    schedule: "30 11 * * *"  # Daily at 11:30 AM UTC = 4:30 AM PDT — same as facebook-pipeline
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_KEY
-        sync: false
-      - key: BUFFER_ACCESS_TOKEN
-        sync: false
-      - key: BUFFER_ORG_ID
-        sync: false
-      - key: DASHBOARD_URL
-        sync: false
-      - key: CRON_SECRET
-        sync: false
-
-  - type: cron
     name: threads-cron
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
