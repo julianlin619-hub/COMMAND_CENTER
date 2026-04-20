@@ -156,7 +156,7 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.instagram_pipeline
-    schedule: "30 13 * * *"  # 1:30 PM UTC = 6:30 AM PDT — well after TikTok + Facebook so their posts are in the DB
+    schedule: "30 11 * * *"  # Daily at 11:30 AM UTC = 4:30 AM PDT — same slot as facebook-pipeline (30 min after TikTok)
     envVars:
       - key: SUPABASE_URL
         sync: false

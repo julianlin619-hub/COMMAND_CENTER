@@ -13,9 +13,10 @@ export interface CronScheduleInfo {
 
 // Mirrors render.yaml. Platforms without a cron (e.g. instagram_2nd) are absent.
 export const CRON_SCHEDULES: Record<string, CronScheduleInfo> = {
-  threads:  { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
-  tiktok:   { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
-  facebook: { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
+  threads:   { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
+  tiktok:    { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
+  facebook:  { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
+  instagram: { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
 };
 
 /** Compute the next UTC run time from a simple cron pattern. */
