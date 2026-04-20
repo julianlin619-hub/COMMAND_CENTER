@@ -9,6 +9,7 @@ import { AppShell } from "@/components/app-shell";
 import {
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
   CardAction,
@@ -29,22 +30,58 @@ interface PlatformEntry {
   key: string;          // unique identifier (used as React key & route slug)
   platform: string;     // DB column value for queries
   label: string;        // what the user sees
+  summary: string;      // one-line description of what this card/cron does
 }
 
 const ACTIVE_PLATFORMS: PlatformEntry[] = [
-  { key: "threads", platform: "threads", label: "Threads" },
-  { key: "instagram-2nd", platform: "instagram_2nd", label: "Instagram (2nd)" },
-  { key: "tiktok", platform: "tiktok", label: "TikTok" },
-  { key: "facebook", platform: "facebook", label: "Facebook" },
+  {
+    key: "threads",
+    platform: "threads",
+    label: "Threads",
+    summary: "Posts once daily at 4am PDT — scraped tweets + CSV content bank, queued via Buffer.",
+  },
+  {
+    key: "instagram-2nd",
+    platform: "instagram_2nd",
+    label: "Instagram (2nd)",
+    summary: "Paused — waiting on a new Instagram account before posting resumes.",
+  },
+  {
+    key: "tiktok",
+    platform: "tiktok",
+    label: "TikTok",
+    summary: "Posts twice daily — 4am PDT from scraped tweets (>4k likes), 7am PDT from the CSV bank.",
+  },
+  {
+    key: "facebook",
+    platform: "facebook",
+    label: "Facebook",
+    summary: "Posts once daily at 6am PDT — reuses TikTok tweets as 1080×1080 quote cards via Buffer.",
+  },
 ];
 
 // Platforms with paused cron jobs — show "Pending" instead of health status
 const PAUSED_PLATFORMS = new Set(["instagram_2nd"]);
 
 const INACTIVE_PLATFORMS: PlatformEntry[] = [
-  { key: "youtube", platform: "youtube", label: "YouTube" },
-  { key: "instagram", platform: "instagram", label: "Instagram (main)" },
-  { key: "linkedin", platform: "linkedin", label: "LinkedIn" },
+  {
+    key: "youtube",
+    platform: "youtube",
+    label: "YouTube",
+    summary: "Not yet implemented — adapter stub only.",
+  },
+  {
+    key: "instagram",
+    platform: "instagram",
+    label: "Instagram (main)",
+    summary: "Not yet implemented — adapter stub only.",
+  },
+  {
+    key: "linkedin",
+    platform: "linkedin",
+    label: "LinkedIn",
+    summary: "Not yet implemented — adapter stub only.",
+  },
 ];
 
 const ALL_PLATFORMS = [...ACTIVE_PLATFORMS, ...INACTIVE_PLATFORMS];
@@ -115,6 +152,9 @@ export default async function DashboardHome() {
                   <PlatformIcon platform={s.platform} className="size-5" />
                   <CardTitle>{s.label}</CardTitle>
                 </div>
+                <CardDescription className="text-xs leading-relaxed">
+                  {s.summary}
+                </CardDescription>
                 <CardAction>
                   <Tooltip>
                     <TooltipTrigger>
