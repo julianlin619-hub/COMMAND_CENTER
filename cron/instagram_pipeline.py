@@ -162,10 +162,12 @@ def main():
             # URL dying before Buffer fetches the video.
             video_url = get_signed_url(storage_path, expires_in=604800)
 
-            # Send to Buffer's Instagram queue with media_type='video'
+            # Send to Buffer's Instagram queue as a Reel — Buffer rejects
+            # Instagram posts without metadata.instagram.type, and 1080x1920
+            # vertical MP4s belong in the Reels tab.
             buffer_post_id = send_to_buffer(
                 channel_id, instagram_caption, video_url,
-                media_type="video",
+                media_type="video", instagram_post_type="reel",
             )
 
             # Stamp the Buffer post ID onto the row we already inserted
