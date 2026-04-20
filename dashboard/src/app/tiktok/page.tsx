@@ -1,69 +1,45 @@
 /**
  * TikTok Platform Detail Page
  *
- * Two sections:
- *   1. Cron Pipeline Status — shows the last run of each cron phase
- *   2. Manual Pipeline — the interactive 4-step wizard for manual runs
+ * Two pathways:
+ *   1. Outlier reel — fetch viral tweets via Apify, turn into TikTok videos
+ *   2. Bank reel   — pick from the CSV bank and produce one extra reel per day
  */
 
 import Link from "next/link";
 import { getSupabaseClient } from "@/lib/supabase";
 import { AppShell } from "@/components/app-shell";
 import { PlatformIcon } from "@/components/platform-icon";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import {
-  ArrowLeftIcon,
-  SearchIcon,
-  ImageIcon,
-  SendIcon,
-  ZapIcon,
-} from "lucide-react";
-import { OutlierTweetReel } from "./outlier-tweet-reel";
-import { BankReel } from "./bank-reel";
+import { PathwayCard, type PathwayLastRun } from "@/components/pathway-card";
+import { ArrowLeftIcon } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-/** Map cron job_type to a human-readable label + icon. */
-const PHASE_META: Record<string, { label: string; icon: typeof SearchIcon }> = {
-  content_fetch: { label: "Fetch Tweets", icon: SearchIcon },
-  content_generate: { label: "Generate Videos", icon: ImageIcon },
-  buffer_send: { label: "Send to Buffer", icon: SendIcon },
-  bank_pick: { label: "Bank Pick", icon: SearchIcon },
-  bank_generate: { label: "Bank Generate", icon: ImageIcon },
-  bank_send: { label: "Bank Send", icon: SendIcon },
-};
+async function getLastRun(jobTypes: string[]): Promise<PathwayLastRun | null> {
+  const supabase = getSupabaseClient();
+  const { data } = await supabase
+    .from("cron_runs")
+    .select("status, started_at")
+    .eq("platform", "tiktok")
+    .in("job_type", jobTypes)
+    .order("started_at", { ascending: false })
+    .limit(1);
+  const row = data?.[0];
+  if (!row) return null;
+  return {
+    status: row.status as PathwayLastRun["status"],
+    startedAt: row.started_at as string,
+  };
+}
 
 export default async function TikTokPage() {
-  const supabase = getSupabaseClient();
-  const defaultHandle = process.env.APIFY_TWITTER_HANDLE || "AlexHormozi";
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-
-  // Fetch the most recent cron run per job type, scoped to the last 24h.
-  const { data: cronRuns } = await supabase
-    .from("cron_runs")
-    .select("*")
-    .eq("platform", "tiktok")
-    .gte("started_at", since)
-    .order("started_at", { ascending: false });
-
-  // Group by job_type and take the most recent run of each
-  const latestByPhase: Record<string, typeof cronRuns extends (infer T)[] | null ? T : never> = {};
-  for (const run of cronRuns || []) {
-    if (!latestByPhase[run.job_type]) {
-      latestByPhase[run.job_type] = run;
-    }
-  }
+  const [outlierLast, bankLast] = await Promise.all([
+    getLastRun(["content_fetch", "content_generate", "buffer_send"]),
+    getLastRun(["bank_pick", "bank_generate", "bank_send"]),
+  ]);
 
   return (
     <AppShell>
-      {/* Header */}
       <div className="mb-6">
         <Link
           href="/"
@@ -77,91 +53,36 @@ export default async function TikTokPage() {
           <div>
             <h1 className="text-xl font-semibold">TikTok</h1>
             <p className="text-sm text-muted-foreground">
-              Outlier Tweet Reel &mdash; turn viral tweets into TikTok videos
+              Turn viral tweets into TikTok videos
             </p>
           </div>
         </div>
       </div>
 
-      {/* ── Section 1: Cron Pipeline Status ──────────────────────────── */}
-      <Card className="mb-4">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <ZapIcon className="size-4 text-blue-500" />
-              Cron Pipeline Status
-            </CardTitle>
-            <Badge className="bg-green-500/15 text-green-500 border-green-500/25 text-[10px]">
-              Active — daily 4:00 AM PST
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-0">
-            {Object.entries(PHASE_META).map(([jobType, meta], i) => {
-              const run = latestByPhase[jobType];
-              const PhaseIcon = meta.icon;
-              return (
-                <div key={jobType}>
-                  <div className="flex items-center gap-3 py-2">
-                    <PhaseIcon className="size-3.5 text-zinc-500 shrink-0" />
-                    <span className="text-sm font-medium flex-1">{meta.label}</span>
+      <PathwayCard
+        number={1}
+        title="Outlier reel"
+        steps={[
+          "Fetch recent tweets via Apify",
+          "Select outlier candidates",
+          "Generate video",
+          "Send to Buffer",
+        ]}
+        actions={[{ url: "/api/cron/run", body: { job: "tiktok-pipeline" } }]}
+        lastRun={outlierLast}
+      />
 
-                    {run ? (
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="text-zinc-500">
-                          {new Date(run.started_at).toLocaleString()}
-                        </span>
-                        {run.posts_processed > 0 && (
-                          <span className="text-zinc-400">
-                            {run.posts_processed} processed
-                          </span>
-                        )}
-                        {run.status === "success" ? (
-                          <Badge className="bg-green-500/15 text-green-500 border-green-500/25 text-[10px]">
-                            Success
-                          </Badge>
-                        ) : run.status === "failed" ? (
-                          <Badge className="bg-red-500/15 text-red-500 border-red-500/25 text-[10px]">
-                            Failed
-                          </Badge>
-                        ) : (
-                          <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/25 text-[10px]">
-                            Running
-                          </Badge>
-                        )}
-                      </div>
-                    ) : (
-                      <Badge className="bg-zinc-500/15 text-zinc-500 border-zinc-500/25 text-[10px]">
-                        Never run
-                      </Badge>
-                    )}
-                  </div>
-                  {i < Object.keys(PHASE_META).length - 1 && <Separator />}
-                </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Section 2: Manual Pipeline ───────────────────────────────── */}
-      <h3 className="text-sm font-medium text-muted-foreground mb-3">
-        Manual Pipeline
-        <span className="ml-2 font-normal">
-          — run each step manually for testing
-        </span>
-      </h3>
-      <OutlierTweetReel defaultHandle={defaultHandle} />
-
-      {/* ── Section 3: Bank Reel Manual Pipeline ────────────────────── */}
-      <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">
-        Bank Reel Pipeline
-        <span className="ml-2 font-normal">
-          — 1 extra reel/day from TweetMasterBank
-        </span>
-      </h3>
-      <BankReel />
+      <PathwayCard
+        number={2}
+        title="Bank reel"
+        steps={[
+          "Pick tweet from the CSV bank",
+          "Generate video",
+          "Send to Buffer",
+        ]}
+        actions={[{ url: "/api/cron/run", body: { job: "tiktok-bank-pipeline" } }]}
+        lastRun={bankLast}
+      />
     </AppShell>
   );
 }

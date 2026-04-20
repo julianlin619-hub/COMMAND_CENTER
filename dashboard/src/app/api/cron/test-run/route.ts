@@ -70,10 +70,10 @@ const CRON_JOBS: CronJob[] = [
   {
     platform: "instagram",
     dbPlatform: "instagram",
-    label: "Instagram",
-    cronName: "instagram-cron",
-    schedule: "0 */4 * * *",
-    kind: "publish",
+    label: "Instagram Pipeline",
+    cronName: "instagram-pipeline",
+    schedule: "30 13 * * *",
+    kind: "pipeline",
   },
   {
     platform: "youtube",

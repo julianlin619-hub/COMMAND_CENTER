@@ -53,7 +53,7 @@ export function CronCountdown({ platform }: { platform: string }) {
       <span
         className={cn(
           "font-medium tabular-nums",
-          urgent ? "text-blue-500" : "text-foreground"
+          urgent ? "text-[#ae5630]" : "text-foreground"
         )}
       >
         {h}h {m}m

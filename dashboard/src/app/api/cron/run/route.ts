@@ -83,7 +83,7 @@ const CRON_MODULES: Record<string, string> = {
   "tiktok-pipeline": "cron.tiktok_pipeline",
   "tiktok-bank-pipeline": "cron.tiktok_bank_pipeline",
   "facebook-pipeline": "cron.facebook_pipeline",
-  "instagram-cron": "cron.instagram_cron",
+  "instagram-pipeline": "cron.instagram_pipeline",
   "youtube-cron": "cron.youtube_cron",
   "linkedin-cron": "cron.linkedin_cron",
 };

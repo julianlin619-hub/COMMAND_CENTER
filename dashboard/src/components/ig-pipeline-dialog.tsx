@@ -51,13 +51,13 @@ interface BankStatus {
 function StatusIcon({ status }: { status: StepStatus }) {
   switch (status) {
     case "running":
-      return <LoaderIcon className="size-4 animate-spin text-blue-500" />;
+      return <LoaderIcon className="size-4 animate-spin text-[#ae5630]" />;
     case "success":
-      return <CheckCircle2Icon className="size-4 text-green-500" />;
+      return <CheckCircle2Icon className="size-4 text-[#8ca082]" />;
     case "error":
       return <XCircleIcon className="size-4 text-red-500" />;
     default:
-      return <CircleDotIcon className="size-4 text-zinc-600" />;
+      return <CircleDotIcon className="size-4 text-[var(--overview-fg)]/40" />;
   }
 }
 
@@ -65,13 +65,13 @@ function StatusBadge({ status }: { status: StepStatus }) {
   switch (status) {
     case "running":
       return (
-        <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/25">
+        <Badge className="bg-[#ae5630]/15 text-[#ae5630] border-[#ae5630]/25">
           Running
         </Badge>
       );
     case "success":
       return (
-        <Badge className="bg-green-500/15 text-green-500 border-green-500/25">
+        <Badge className="bg-[#8ca082]/15 text-[#8ca082] border-[#8ca082]/25">
           Done
         </Badge>
       );
@@ -79,7 +79,7 @@ function StatusBadge({ status }: { status: StepStatus }) {
       return <Badge variant="destructive">Failed</Badge>;
     default:
       return (
-        <Badge className="bg-zinc-500/15 text-zinc-400 border-zinc-500/25">
+        <Badge className="bg-white/[0.06] text-[var(--overview-fg)]/70 border-white/10">
           Idle
         </Badge>
       );
@@ -323,7 +323,7 @@ export function IgPipelineDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <ZapIcon className="size-4 text-blue-500" />
+            <ZapIcon className="size-4 text-[#ae5630]" />
             Instagram Pipeline
           </DialogTitle>
           <DialogDescription>
@@ -333,13 +333,13 @@ export function IgPipelineDialog({
 
         {/* Bank status summary */}
         {bankStatus && (
-          <div className="flex items-center gap-3 rounded-lg bg-zinc-900 px-3 py-2 text-xs">
-            <DatabaseIcon className="size-3.5 text-zinc-400" />
-            <span className="text-zinc-400">Tweet Bank:</span>
-            <span className="text-zinc-200 font-medium">
+          <div className="flex items-center gap-3 rounded-lg bg-black/25 px-3 py-2 text-xs">
+            <DatabaseIcon className="size-3.5 text-[var(--overview-fg)]/70" />
+            <span className="text-[var(--overview-fg)]/70">Tweet Bank:</span>
+            <span className="text-[var(--overview-fg)] font-medium">
               {bankStatus.remainingUnused}
             </span>
-            <span className="text-zinc-500">
+            <span className="text-[var(--overview-fg)]/55">
               unused / {bankStatus.totalTweets} total
             </span>
           </div>
@@ -354,17 +354,17 @@ export function IgPipelineDialog({
               <div key={step.key}>
                 <div className="flex items-center gap-3 py-3">
                   {/* Step number + status icon */}
-                  <div className="flex items-center justify-center size-7 rounded-full bg-zinc-800 text-xs font-medium text-zinc-400 shrink-0">
+                  <div className="flex items-center justify-center size-7 rounded-full bg-white/[0.06] text-xs font-medium text-[var(--overview-fg)]/70 shrink-0">
                     {state.status === "idle" ? i + 1 : <StatusIcon status={state.status} />}
                   </div>
 
                   {/* Step info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <StepIcon className="size-3.5 text-zinc-500" />
+                      <StepIcon className="size-3.5 text-[var(--overview-fg)]/55" />
                       <span className="text-sm font-medium">{step.label}</span>
                     </div>
-                    <p className="text-xs text-zinc-500 mt-0.5 truncate">
+                    <p className="text-xs text-[var(--overview-fg)]/55 mt-0.5 truncate">
                       {state.message}
                     </p>
                   </div>
@@ -385,10 +385,10 @@ export function IgPipelineDialog({
 
                 {/* Show picked tweets preview */}
                 {step.key === "pick" && state.status === "success" && pickedTweets.length > 0 ? (
-                  <div className="ml-10 mb-2 max-h-24 overflow-y-auto rounded-lg bg-zinc-900 p-2 text-xs text-zinc-400 space-y-1">
+                  <div className="ml-10 mb-2 max-h-24 overflow-y-auto rounded-lg bg-black/25 p-2 text-xs text-[var(--overview-fg)]/70 space-y-1">
                     {pickedTweets.map((t) => (
                       <div key={t.hash} className="truncate">
-                        <span className="text-zinc-600 font-mono">{t.hash}</span>{" "}
+                        <span className="text-[var(--overview-fg)]/40 font-mono">{t.hash}</span>{" "}
                         {t.text.slice(0, 80)}
                         {t.text.length > 80 ? "..." : ""}
                       </div>
@@ -398,11 +398,11 @@ export function IgPipelineDialog({
 
                 {/* Show scheduled post IDs */}
                 {step.key === "schedule" && state.status === "success" && state.data ? (
-                  <div className="ml-10 mb-2 max-h-24 overflow-y-auto rounded-lg bg-zinc-900 p-2 text-xs text-zinc-400 space-y-1">
+                  <div className="ml-10 mb-2 max-h-24 overflow-y-auto rounded-lg bg-black/25 p-2 text-xs text-[var(--overview-fg)]/70 space-y-1">
                     {(state.data as { hash: string; postId: string }[]).map((s) => (
                       <div key={s.hash} className="truncate">
-                        <span className="text-green-500">&#10003;</span>{" "}
-                        <span className="text-zinc-600 font-mono">{s.hash}</span>{" "}
+                        <span className="text-[#8ca082]">&#10003;</span>{" "}
+                        <span className="text-[var(--overview-fg)]/40 font-mono">{s.hash}</span>{" "}
                         &rarr; {s.postId}
                       </div>
                     ))}
