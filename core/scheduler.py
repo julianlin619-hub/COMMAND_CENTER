@@ -92,6 +92,18 @@ def process_due_posts(platform_client, platform: str) -> int:
             # Mark as failed and store the error message so it's visible
             # in the dashboard. The post can be retried manually later.
             logger.error("Failed to publish post %s: %s", post_id, e)
-            update_post(post_id, status="failed", error_message=str(e))
+            # Nested try: update_post now raises when the UPDATE matches no
+            # rows. If that happens inside this except block, the RuntimeError
+            # would shadow the real platform error above — log the double-
+            # fault instead and let the loop continue to the next post. The
+            # post stays in "publishing" and will be reset by
+            # _reset_stale_pickups after STALE_PICKUP_MINUTES.
+            try:
+                update_post(post_id, status="failed", error_message=str(e))
+            except Exception as db_err:
+                logger.error(
+                    "Also failed to mark post %s as failed: %s — will be retried after stale-pickup reset",
+                    post_id, db_err,
+                )
 
     return processed

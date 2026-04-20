@@ -213,7 +213,13 @@ def main():
         # Flip to buffer_error so the row drops out of the dedup index
         # and a future run can retry this caption.
         logger.error("Buffer send failed for %s: %s", storage_path, e, exc_info=True)
-        update_post(post_id, status="buffer_error", error_message=str(e)[:500])
+        # Nested try: update_post now raises on no-match. If the DB write
+        # fails here we still need to run log_cron_finish below so the
+        # cron_runs row doesn't stay "running" forever — catch and log.
+        try:
+            update_post(post_id, status="buffer_error", error_message=str(e)[:500])
+        except Exception as db_err:
+            logger.error("Also failed to mark post %s as buffer_error: %s", post_id, db_err)
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
 
