@@ -87,7 +87,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
+  // Guard against malformed bodies — a bad client shouldn't crash the
+  // handler with a 500. Return 400 with a clear error instead.
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
   const supabase = getSupabaseClient();
 
   // `.insert(body)` creates a new row, `.select()` returns the created row,

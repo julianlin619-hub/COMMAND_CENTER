@@ -14,6 +14,7 @@
 
 import { NextResponse } from "next/server";
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { timingSafeEqual } from "@/lib/timing-safe";
 
 // Define which routes should be accessible WITHOUT authentication.
 // Only the Clerk sign-in flow is public. Notably, `/api(.*)` is NOT public:
@@ -33,9 +34,9 @@ function isBearerAuthorized(request: Request): boolean {
   const header = request.headers.get("authorization");
   const secret = process.env.CRON_SECRET;
   if (!header || !secret) return false;
-  // Strict equality is fine here — the review flagged this as medium-severity
-  // timing-attack exposure; tightening to constant-time compare is a follow-up.
-  return header === `Bearer ${secret}`;
+  // Constant-time compare — prevents an attacker from brute-forcing the
+  // secret byte-by-byte via response-timing differences.
+  return timingSafeEqual(header, `Bearer ${secret}`);
 }
 
 export default clerkMiddleware(async (auth, request) => {

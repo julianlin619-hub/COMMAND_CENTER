@@ -89,7 +89,12 @@ def download_file(url: str, dest_dir: str = "/tmp") -> str:
     # Use streaming download so we never load the entire file into memory.
     # This matters for large videos (hundreds of MB) — without streaming,
     # we'd need enough RAM to hold the whole file at once.
-    with httpx.stream("GET", url, follow_redirects=True) as response:
+    # Timeout breakdown: 10s to establish the connection, then up to 60s of
+    # silence on reads before we bail. Without this, a hung upstream
+    # (Supabase Storage or a platform CDN) would block the whole cron run
+    # until Render's 5-minute overall timeout kills the process.
+    timeout = httpx.Timeout(60.0, connect=10.0)
+    with httpx.stream("GET", url, follow_redirects=True, timeout=timeout) as response:
         response.raise_for_status()
 
         # Pre-check Content-Length if the server provides it
