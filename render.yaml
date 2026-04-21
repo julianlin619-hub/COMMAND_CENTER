@@ -96,7 +96,9 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.tiktok_bank_pipeline
-    schedule: "0 11 * * *"  # Daily at 11 AM UTC = 4 AM PDT — same slot as main TikTok pipeline
+    # Offset from tiktok-pipeline's 11:00 slot so the two don't drive concurrent
+    # ffmpeg jobs on the starter-plan dashboard (which OOMs → 502 on the cron side).
+    schedule: "15 11 * * *"  # Daily at 11:15 AM UTC = 4:15 AM PDT
     envVars:
       - key: SUPABASE_URL
         sync: false

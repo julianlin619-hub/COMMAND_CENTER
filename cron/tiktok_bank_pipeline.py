@@ -19,9 +19,8 @@ import logging
 import os
 import sys
 
-import httpx
-
 from core.buffer import get_channel_id, send_to_buffer
+from core.content_gen_client import generate_content
 from core.content_sources import select_bank_content_with_likes
 from core.database import (
     insert_post,
@@ -109,24 +108,15 @@ def main():
     # ─────────────────────────────────────────────────────────────────────
     # The dashboard's /api/content-gen/generate route handles canvas
     # rendering, ffmpeg conversion, Supabase Storage upload, and cleanup.
+    # Retries on 5xx / network errors are handled inside generate_content.
     run_id = log_cron_start(platform="tiktok", job_type="bank_generate")
     try:
-        generate_url = f"{dashboard_url.rstrip('/')}/api/content-gen/generate"
-        payload = {
-            "tweets": [{"id": picked["tweet_id"], "text": picked["normalized"]}],
-        }
-
-        resp = httpx.post(
-            generate_url,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {cron_secret}",
-            },
-            json=payload,
-            timeout=300,
+        data = generate_content(
+            dashboard_url=dashboard_url,
+            cron_secret=cron_secret,
+            tweets=[{"id": picked["tweet_id"], "text": picked["normalized"]}],
+            platform="tiktok",
         )
-        resp.raise_for_status()
-        data = resp.json()
 
         if data.get("error"):
             raise RuntimeError(data["error"])
