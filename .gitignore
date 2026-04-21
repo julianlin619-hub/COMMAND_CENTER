@@ -35,4 +35,5 @@ exports/
 dashboard/exports/
 
 # Supabase local
-db/.temp/
+supabase/.temp/
+supabase/.branches/
