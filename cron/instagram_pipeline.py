@@ -29,6 +29,7 @@ from core.database import (
     post_caption_exists,
     update_post,
 )
+from core.env_diag import log_env_diagnostics
 from core.media import get_signed_url
 from core.models import Post
 
@@ -52,6 +53,18 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    # Log env-var presence first so the UI output pane shows whether the
+    # subprocess inherited every var this pipeline depends on.
+    log_env_diagnostics(
+        "instagram-pipeline",
+        required=[
+            "SUPABASE_URL",
+            "SUPABASE_SERVICE_KEY",
+            "BUFFER_ACCESS_TOKEN",
+            "BUFFER_ORG_ID",
+        ],
+    )
+
     # ─────────────────────────────────────────────────────────────────────
     # PHASE 1: Read recent TikTok posts from the database
     # ─────────────────────────────────────────────────────────────────────

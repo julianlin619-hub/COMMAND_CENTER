@@ -33,6 +33,7 @@ from core.database import (
     post_caption_exists,
     update_post,
 )
+from core.env_diag import log_env_diagnostics
 from core.media import get_signed_url
 from core.models import Post
 
@@ -56,6 +57,20 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    # Log env-var presence first so the UI output pane shows whether the
+    # subprocess inherited every var this pipeline depends on.
+    log_env_diagnostics(
+        "facebook-pipeline",
+        required=[
+            "SUPABASE_URL",
+            "SUPABASE_SERVICE_KEY",
+            "DASHBOARD_URL",
+            "CRON_SECRET",
+            "BUFFER_ACCESS_TOKEN",
+            "BUFFER_ORG_ID",
+        ],
+    )
+
     dashboard_url = os.environ.get("DASHBOARD_URL", "")
     cron_secret = os.environ.get("CRON_SECRET", "")
 

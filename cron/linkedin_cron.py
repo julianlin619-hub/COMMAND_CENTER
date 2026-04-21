@@ -18,6 +18,7 @@ import sys
 
 # Database helpers for tracking cron runs and storing data
 from core.database import log_cron_start, log_cron_finish
+from core.env_diag import log_env_diagnostics
 # process_due_posts handles the logic of finding posts whose scheduled time has passed
 # and calling the platform client to publish them
 from core.scheduler import process_due_posts
@@ -33,6 +34,18 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    # Log env-var presence first so the UI output pane shows whether the
+    # subprocess inherited every var this pipeline depends on.
+    log_env_diagnostics(
+        "linkedin-cron",
+        required=[
+            "SUPABASE_URL",
+            "SUPABASE_SERVICE_KEY",
+            "LINKEDIN_CLIENT_ID",
+            "LINKEDIN_CLIENT_SECRET",
+        ],
+    )
+
     # Create the LinkedIn platform client. This object knows how to talk to
     # the LinkedIn API -- creating posts, fetching analytics, refreshing tokens, etc.
     client = LinkedIn()

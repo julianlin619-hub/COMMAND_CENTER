@@ -38,6 +38,7 @@ from core.database import (
     log_cron_start,
     post_caption_exists,
 )
+from core.env_diag import log_env_diagnostics
 from core.models import Post
 # process_due_posts handles the logic of finding posts whose scheduled time has passed
 # and calling the platform client to publish them
@@ -54,6 +55,25 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    # Log env-var presence first so the UI output pane shows whether the
+    # subprocess inherited every var this pipeline depends on.
+    log_env_diagnostics(
+        "threads-cron",
+        required=[
+            "SUPABASE_URL",
+            "SUPABASE_SERVICE_KEY",
+            "BUFFER_ACCESS_TOKEN",
+            "BUFFER_THREADS_CHANNEL_ID",
+        ],
+        optional=[
+            "APIFY_API_KEY",
+            "APIFY_TWITTER_HANDLE",
+            "CONTENT_BANK_PATH",
+            "CONTENT_BANK_COUNT",
+            "THREADS_ACCESS_TOKEN",
+        ],
+    )
+
     # Create the Threads platform client. This object knows how to talk to
     # the Threads API -- publishing posts, fetching metrics, refreshing tokens, etc.
     # (Threads uses Buffer's API — see platforms/threads.py for details.)
