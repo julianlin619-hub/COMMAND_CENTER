@@ -24,9 +24,8 @@ import logging
 import os
 import sys
 
-import httpx
-
 from core.buffer import get_channel_id, send_to_buffer, truncate_caption
+from core.content_gen_client import generate_content
 from core.content_sources import fetch_apify_tweets
 from core.database import (
     get_client,
@@ -132,26 +131,15 @@ def main():
     # ─────────────────────────────────────────────────────────────────────
     # The dashboard's /api/content-gen/generate route handles canvas rendering,
     # ffmpeg conversion, Supabase Storage upload, and temp file cleanup.
+    # Retries on 5xx / network errors are handled inside generate_content.
     run_id = log_cron_start(platform="tiktok", job_type="content_generate")
     try:
-        generate_url = f"{dashboard_url.rstrip('/')}/api/content-gen/generate"
-        payload = {
-            "tweets": [{"id": t["id"], "text": t["text"]} for t in new_tweets],
-        }
-
-        # Generous timeout — canvas rendering + ffmpeg conversion is CPU-intensive.
-        # Each tweet takes ~10-20 seconds, so 5 minutes should cover a batch of 30.
-        resp = httpx.post(
-            generate_url,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {cron_secret}",
-            },
-            json=payload,
-            timeout=300,
+        data = generate_content(
+            dashboard_url=dashboard_url,
+            cron_secret=cron_secret,
+            tweets=[{"id": t["id"], "text": t["text"]} for t in new_tweets],
+            platform="tiktok",
         )
-        resp.raise_for_status()
-        data = resp.json()
 
         if data.get("error"):
             raise RuntimeError(data["error"])

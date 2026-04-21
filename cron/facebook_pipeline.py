@@ -23,9 +23,8 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-import httpx
-
 from core.buffer import get_channel_id, send_to_buffer
+from core.content_gen_client import generate_content
 from core.database import (
     get_client,
     insert_post,
@@ -115,28 +114,16 @@ def main():
     # ─────────────────────────────────────────────────────────────────────
     # The dashboard's /api/content-gen/generate route handles canvas rendering
     # and Supabase Storage upload. We pass platform='facebook' so it renders
-    # 1080x1080 PNGs instead of 1080x1920 MP4 videos.
+    # 1080x1080 PNGs instead of 1080x1920 MP4 videos. Retries on 5xx / network
+    # errors are handled inside generate_content.
     run_id = log_cron_start(platform="facebook", job_type="content_generate")
     try:
-        generate_url = f"{dashboard_url.rstrip('/')}/api/content-gen/generate"
-        payload = {
-            "platform": "facebook",
-            "tweets": [{"id": p["id"], "text": p["caption"]} for p in new_posts],
-        }
-
-        # Generous timeout — canvas rendering is CPU-intensive.
-        # Each image takes ~2-5 seconds, so 5 minutes covers a batch of 30.
-        resp = httpx.post(
-            generate_url,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {cron_secret}",
-            },
-            json=payload,
-            timeout=300,
+        data = generate_content(
+            dashboard_url=dashboard_url,
+            cron_secret=cron_secret,
+            tweets=[{"id": p["id"], "text": p["caption"]} for p in new_posts],
+            platform="facebook",
         )
-        resp.raise_for_status()
-        data = resp.json()
 
         if data.get("error"):
             raise RuntimeError(data["error"])
