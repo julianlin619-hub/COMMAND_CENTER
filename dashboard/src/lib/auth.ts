@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
+import { timingSafeEqual } from "./timing-safe";
 
 /**
  * Dual auth for API routes:
@@ -15,9 +16,12 @@ export async function verifyApiAuth(request: Request): Promise<boolean> {
   // We compare this token against the CRON_SECRET environment variable.
   // If it matches, the request is authorized immediately — no Clerk needed.
   const authHeader = request.headers.get("authorization");
-  if (authHeader) {
+  const secret = process.env.CRON_SECRET;
+  if (authHeader && secret) {
     const token = authHeader.replace("Bearer ", "");
-    if (token === process.env.CRON_SECRET) {
+    // Constant-time compare — avoids the timing side-channel that `===`
+    // exposes when two strings are compared character-by-character.
+    if (timingSafeEqual(token, secret)) {
       return true;
     }
   }

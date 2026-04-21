@@ -24,6 +24,16 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const platform = searchParams.get("platform");
 
+  // Whitelist platform values — keeps this endpoint from being used as an
+  // oracle to probe for arbitrary platform strings in cron_runs.
+  const VALID_PLATFORMS = new Set([
+    "youtube", "instagram", "instagram_2nd", "tiktok",
+    "linkedin", "facebook", "threads",
+  ]);
+  if (platform && !VALID_PLATFORMS.has(platform)) {
+    return NextResponse.json({ error: `Invalid platform: ${platform}` }, { status: 400 });
+  }
+
   const supabase = getSupabaseClient();
   let query = supabase
     .from("cron_runs")
@@ -55,7 +65,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
   const supabase = getSupabaseClient();
 
   const { data, error } = await supabase.from("cron_runs").insert(body).select().single();

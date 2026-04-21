@@ -321,4 +321,11 @@ def log_cron_finish(
         # Sanitize before storing — error messages from HTTP libraries can
         # contain tokens, API keys, or auth headers in the exception text
         data["error_message"] = sanitize_error_message(error_message)
-    client.table("cron_runs").update(data).eq("id", run_id).execute()
+    # Swallow DB failures here: this function is called from the `finally`-
+    # style end of every cron phase, so raising would replace the real run
+    # outcome with a DB error and leave operators chasing the wrong cause.
+    # A transient Supabase blip should not hide the underlying success/fail.
+    try:
+        client.table("cron_runs").update(data).eq("id", run_id).execute()
+    except Exception as e:
+        logger.error("log_cron_finish failed for run_id=%s: %s", run_id, e)
