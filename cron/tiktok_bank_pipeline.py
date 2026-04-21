@@ -29,6 +29,7 @@ from core.database import (
     post_caption_exists,
     update_post,
 )
+from core.env_diag import log_env_diagnostics
 from core.media import get_signed_url
 from core.models import Post
 from core.text_utils import normalize_tweet_text
@@ -53,6 +54,22 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    # Log env-var presence first so the UI output pane shows whether the
+    # subprocess inherited every var this pipeline depends on. See
+    # core/env_diag.py for rationale.
+    log_env_diagnostics(
+        "tiktok-bank-pipeline",
+        required=[
+            "SUPABASE_URL",
+            "SUPABASE_SERVICE_KEY",
+            "DASHBOARD_URL",
+            "CRON_SECRET",
+            "BUFFER_ACCESS_TOKEN",
+            "BUFFER_ORG_ID",
+        ],
+        optional=["CONTENT_BANK_PATH", "TIKTOK_BANK_MIN_LIKES"],
+    )
+
     # Read config from environment
     bank_path = os.environ.get("CONTENT_BANK_PATH", "data/TweetMasterBank.csv")
     min_likes = int(os.environ.get("TIKTOK_BANK_MIN_LIKES", "6500"))

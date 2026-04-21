@@ -35,6 +35,7 @@ from core.database import (
     post_caption_exists,
     update_post,
 )
+from core.env_diag import log_env_diagnostics
 from core.media import get_signed_url
 from core.models import Post
 from core.text_utils import normalize_tweet_text
@@ -65,6 +66,22 @@ logger = logging.getLogger(__name__)
 
 
 def main():
+    # Log env-var presence first so the UI output pane shows whether the
+    # subprocess inherited every var this pipeline depends on.
+    log_env_diagnostics(
+        "tiktok-pipeline",
+        required=[
+            "SUPABASE_URL",
+            "SUPABASE_SERVICE_KEY",
+            "APIFY_API_KEY",
+            "DASHBOARD_URL",
+            "CRON_SECRET",
+            "BUFFER_ACCESS_TOKEN",
+            "BUFFER_ORG_ID",
+        ],
+        optional=["APIFY_TWITTER_HANDLE", "TIKTOK_MIN_LIKES", "TIKTOK_MAX_ITEMS"],
+    )
+
     # Read config from environment (all have sensible defaults)
     twitter_handle = os.environ.get("APIFY_TWITTER_HANDLE", "AlexHormozi")
     max_items = int(os.environ.get("TIKTOK_MAX_ITEMS", "30"))
