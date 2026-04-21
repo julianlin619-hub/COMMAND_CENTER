@@ -5,7 +5,7 @@
 #   2. Serialization — .model_dump() converts them to dicts for Supabase inserts.
 #   3. Documentation — field names and types are the source of truth for the schema.
 #
-# Each model maps roughly to a Supabase table (see db/migrations/).
+# Each model maps roughly to a Supabase table (see supabase/migrations/).
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class Post(BaseModel):
     # None until Supabase assigns an ID on insert
     id: str | None = None
     # Which platform this post targets. Pinned to the same set as the SQL
-    # enum (`platform_enum` in db/migrations/001_initial_schema.sql) so a
+    # enum (`platform_enum` in supabase/migrations/20260412105430_initial_schema.sql) so a
     # typo surfaces at Pydantic validation time instead of later as a
     # cryptic Postgres constraint-violation error.
     platform: Literal[

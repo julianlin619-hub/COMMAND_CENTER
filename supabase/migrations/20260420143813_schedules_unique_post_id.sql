@@ -1,6 +1,6 @@
 -- Enforce the one-schedule-per-post invariant at the database layer.
 --
--- `db/migrations/001_initial_schema.sql` documents schedules as "one-to-one
+-- `supabase/migrations/20260412105430_initial_schema.sql` documents schedules as "one-to-one
 -- with posts" — but the schema itself only had a foreign key, not a UNIQUE
 -- constraint, on `schedules.post_id`. The cron "take a ticket" logic in
 -- `core/scheduler.py` relies on that 1:1 relationship: it picks a schedule
