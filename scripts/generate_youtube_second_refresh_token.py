@@ -7,6 +7,10 @@ Why this script exists:
   wrong channel. InstalledAppFlow.run_local_server() walks you through
   consent in a browser where you pick the right channel explicitly.
 
+Scopes requested: youtube.upload (videos.insert / resumable uploads) +
+youtube.readonly (videos.list used by upload-complete for channel
+verification). The consent screen will list both.
+
 How to run:
   1. Create an OAuth 2.0 Client ID in Google Cloud Console (type: "Web
      application"). Enable the YouTube Data API v3 for the project.
@@ -43,10 +47,16 @@ except ImportError:
     sys.exit(1)
 
 
-# youtube.upload is the minimum scope needed to upload videos. We intentionally
-# do not request broader scopes (channel management, analytics) — principle of
-# least privilege keeps the token's blast radius small if it leaks.
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+# Scopes:
+#   - youtube.upload   → required for videos.insert (resumable upload).
+#   - youtube.readonly → required for videos.list in upload-complete, which
+#     re-verifies the uploaded video belongs to the expected channel.
+# We deliberately stop there — no channel-management or analytics scope,
+# so the token's blast radius stays small if it ever leaks.
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.readonly",
+]
 
 # Pinned because Google validates the redirect URI (including the port)
 # against the OAuth client's allow-list. A random port can't be pre-
