@@ -163,6 +163,7 @@ export default function YouTubeSecondUploadPage() {
                     accept="video/*"
                     disabled={busy}
                     onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                    className="text-[var(--overview-fg)]/40 file:mr-3 file:cursor-pointer file:rounded-md file:bg-zinc-800 file:px-3 file:py-1 file:text-zinc-100 hover:file:bg-zinc-700"
                   />
                   {file && (
                     <p className="text-xs text-[var(--overview-fg)]/55 font-mono">
