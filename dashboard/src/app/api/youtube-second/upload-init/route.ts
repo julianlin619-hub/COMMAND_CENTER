@@ -379,9 +379,19 @@ async function initYouTubeResumableUpload(args: InitYtArgs): Promise<string> {
   );
 
   if (!res.ok) {
+    // Surface the response body so we can see the real reason (quota, auth,
+    // bad payload). Sanitized + length-capped. Authorization/access token
+    // never appear in the body; still run sanitize() as belt+braces.
     const bodyText = await res.text().catch(() => "");
+    console.error("youtube_second upload-init resumable-init failed", {
+      status: res.status,
+      body: sanitize(bodyText).slice(0, 1000),
+      sizeBytes: args.sizeBytes,
+      contentType: args.contentType,
+      browserOrigin: args.browserOrigin,
+    });
     throw new Error(
-      `YouTube resumable init failed: ${res.status} ${bodyText.slice(0, 300)}`,
+      `YouTube resumable init failed: ${res.status}`,
     );
   }
 

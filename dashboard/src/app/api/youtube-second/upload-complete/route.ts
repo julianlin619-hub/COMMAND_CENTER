@@ -85,7 +85,20 @@ export async function POST(request: Request) {
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
     if (!vidRes.ok) {
-      throw new Error(`videos.list failed: ${vidRes.status}`);
+      // Read the body so we can see the actual reason (insufficientPermissions,
+      // quotaExceeded, authError, etc.) rather than just the HTTP status.
+      // .text() can't throw meaningfully here; the outer try/catch still
+      // catches network errors on the fetch itself.
+      const errorBody = await vidRes.text().catch(() => "");
+      console.error("youtube_second upload-complete videos.list failed", {
+        status: vidRes.status,
+        body: sanitize(errorBody).slice(0, 1000),
+        videoId,
+      });
+      return NextResponse.json(
+        { error: "Failed to verify video with YouTube" },
+        { status: 502 },
+      );
     }
     const vidData = (await vidRes.json()) as {
       items?: Array<{
