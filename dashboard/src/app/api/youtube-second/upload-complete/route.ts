@@ -20,6 +20,12 @@ import { refreshOauthToken } from "@/lib/google-oauth";
 
 export const runtime = "nodejs";
 
+// Hormozi Highlights — the 2nd channel this feature uploads to. Pulled
+// from env so the fallback works out of the box but can be overridden
+// without a redeploy if we ever repoint the flow at a different channel.
+const EXPECTED_CHANNEL_ID =
+  process.env.YOUTUBE_SECOND_CHANNEL_ID || "UCrvch01h6lWZAuGaa1LqX9Q";
+
 interface CompleteBody {
   post_id?: unknown;
   video_id?: unknown;
@@ -72,23 +78,6 @@ export async function POST(request: Request) {
       refreshToken,
     });
 
-    // First, fetch our own channel id so we can compare. `mine=true` asks
-    // YouTube "which channel does this refresh token belong to?"
-    const meRes = await fetch(
-      "https://www.googleapis.com/youtube/v3/channels?part=id&mine=true",
-      { headers: { Authorization: `Bearer ${accessToken}` } },
-    );
-    if (!meRes.ok) {
-      throw new Error(`channels?mine=true failed: ${meRes.status}`);
-    }
-    const meData = (await meRes.json()) as {
-      items?: Array<{ id?: string }>;
-    };
-    const myChannelId = meData.items?.[0]?.id;
-    if (!myChannelId) {
-      throw new Error("Could not resolve authenticated channel id");
-    }
-
     const vidRes = await fetch(
       `https://www.googleapis.com/youtube/v3/videos?id=${encodeURIComponent(
         videoId,
@@ -120,10 +109,17 @@ export async function POST(request: Request) {
       );
     }
 
-    if (video.snippet?.channelId !== myChannelId) {
-      // Someone tried to bind our post row to a video on a different channel.
+    // Pin to the expected channel ID. A wrong refresh token (pointed at a
+    // different channel) or a spoofed video_id from a malicious client
+    // would otherwise slip through — this catches both.
+    if (video.snippet?.channelId !== EXPECTED_CHANNEL_ID) {
+      console.warn(
+        "youtube_second channel mismatch: expected %s, got %s",
+        EXPECTED_CHANNEL_ID,
+        video.snippet?.channelId,
+      );
       return NextResponse.json(
-        { error: "Video does not belong to the authenticated channel" },
+        { error: "Video does not belong to the expected channel" },
         { status: 403 },
       );
     }
