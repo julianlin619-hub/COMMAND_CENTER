@@ -30,6 +30,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Claude Code local state (worktrees, etc)
+.claude/worktrees/
+
 # Generated media (transient — created by ig-pipeline, not committed)
 exports/
 dashboard/exports/

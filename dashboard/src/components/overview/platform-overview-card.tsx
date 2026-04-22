@@ -17,6 +17,7 @@ import {
   FaInstagram,
   FaThreads,
   FaTiktok,
+  FaYoutube,
 } from "react-icons/fa6";
 import { NextRunCountdown } from "./next-run-countdown";
 import { StatusPill, type OverviewStatus } from "./status-pill";
@@ -32,6 +33,7 @@ const ACTIVE_ICONS: Record<
   tiktok: FaTiktok,
   facebook: FaFacebookF,
   instagram: FaInstagram,
+  "youtube-second": FaYoutube,
 };
 
 interface PlatformOverviewCardProps {

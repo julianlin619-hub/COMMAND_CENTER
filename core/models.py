@@ -31,6 +31,7 @@ class Post(BaseModel):
     # cryptic Postgres constraint-violation error.
     platform: Literal[
         "youtube",
+        "youtube_second",
         "instagram",
         "instagram_2nd",
         "tiktok",
@@ -41,8 +42,19 @@ class Post(BaseModel):
     # The ID the platform gives back after publishing (e.g. a YouTube video ID).
     # None until the post is actually published.
     platform_post_id: str | None = None
-    # Tracks where the post is in its lifecycle (see status flow above)
-    status: Literal["draft", "scheduled", "publishing", "published", "failed", "sent_to_buffer", "buffer_error"] = "draft"
+    # Tracks where the post is in its lifecycle (see status flow above).
+    # `uploading_to_youtube` is specific to the youtube_second direct-upload
+    # flow — the slot is claimed and the browser is PUT-ing bytes to YouTube.
+    status: Literal[
+        "draft",
+        "scheduled",
+        "publishing",
+        "published",
+        "failed",
+        "sent_to_buffer",
+        "buffer_error",
+        "uploading_to_youtube",
+    ] = "draft"
     # Title is used by platforms that support it (YouTube, LinkedIn articles);
     # other platforms ignore it.
     title: str | None = None
@@ -59,6 +71,9 @@ class Post(BaseModel):
     published_at: datetime | None = None
     # When status is "failed", this stores the error so it shows in the dashboard
     error_message: str | None = None
+    # Platform-specific structured metadata. For youtube_second, stores
+    # {"publish_at": "<ISO-8601 UTC>"} — the claimed publish slot.
+    metadata: dict = {}
 
 
 # ── ScheduledPost ───────────────────────────────────────────────────────
