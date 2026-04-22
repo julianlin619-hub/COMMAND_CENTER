@@ -43,6 +43,30 @@ const MAX_TITLE_LENGTH = 100;
 const MAX_FILE_SIZE_BYTES = 256 * 1024 * 1024 * 1024; // 256 GB (YouTube cap)
 const SLOT_CLAIM_MAX_ATTEMPTS = 3;
 
+// Browser origins we're willing to forward to Google as the CORS origin
+// on the resumable upload URL. Anything else is ignored with a warn and
+// we fall back to YOUTUBE_SECOND_BROWSER_ORIGIN.
+//
+// Why allowlist at all? Without it, an authenticated attacker from a
+// different origin could call this route and get an upload URL scoped to
+// *their* origin. Limited blast radius (they're burning their own slot on
+// our channel), but trivial to prevent.
+//
+// Configurable via YOUTUBE_SECOND_ALLOWED_ORIGINS (comma-separated) so a
+// staging domain can be added without a code change.
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://app.media-command.com",
+  "http://localhost:3000",
+];
+const ALLOWED_BROWSER_ORIGINS: ReadonlySet<string> = new Set(
+  (process.env.YOUTUBE_SECOND_ALLOWED_ORIGINS
+    ?.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)) ?? DEFAULT_ALLOWED_ORIGINS,
+);
+const FALLBACK_BROWSER_ORIGIN =
+  process.env.YOUTUBE_SECOND_BROWSER_ORIGIN ?? "https://app.media-command.com";
+
 // Hardcoded lock key for pg_advisory_xact_lock. We pick a fixed value
 // rather than hashtext('youtube_second_scheduler') because hashtext()
 // returns int4, and pg_advisory_xact_lock(int8) / (int4, int4) have
@@ -132,6 +156,28 @@ export async function POST(request: Request) {
     );
   }
 
+  // Google mirrors the Origin header we send on the init POST back onto
+  // the resumable upload URL's CORS responses. Without this, the browser
+  // blocks the subsequent PUT with "no Access-Control-Allow-Origin header."
+  //
+  // We only forward origins in ALLOWED_BROWSER_ORIGINS. An unknown origin
+  // is logged (for abuse spotting in Render logs) and falls back to the
+  // canonical production origin — this means a malicious caller can't
+  // cause us to mint an upload URL scoped to their origin.
+  const incomingOrigin = request.headers.get("origin");
+  let browserOrigin: string;
+  if (incomingOrigin && ALLOWED_BROWSER_ORIGINS.has(incomingOrigin)) {
+    browserOrigin = incomingOrigin;
+  } else {
+    if (incomingOrigin) {
+      console.warn(
+        "youtube_second upload-init: rejected origin %s (not in allowlist)",
+        incomingOrigin,
+      );
+    }
+    browserOrigin = FALLBACK_BROWSER_ORIGIN;
+  }
+
   // ── Step 1: claim slot + insert row ─────────────────────────────────
   let claim: { postId: string; publishAt: string };
   try {
@@ -143,7 +189,12 @@ export async function POST(request: Request) {
         { status: 503 },
       );
     }
-    console.error("youtube_second slot claim failed:", sanitize(err));
+    // Dump every field the postgres driver exposes — `code` alone often
+    // isn't enough to diagnose type-inference issues (you need `position`
+    // pointing at the parameter, `hint`, etc.). The raw `err` is still
+    // sanitized so we don't leak Bearer tokens into Render logs even if
+    // an error message accidentally includes one.
+    logPgError("youtube_second slot claim failed", err);
     return NextResponse.json(
       { error: "Could not claim publish slot" },
       { status: 500 },
@@ -164,6 +215,7 @@ export async function POST(request: Request) {
       publishAt: claim.publishAt,
       sizeBytes: size,
       contentType,
+      browserOrigin,
     });
 
     return NextResponse.json({
@@ -204,6 +256,9 @@ async function claimSlotAndInsert(
         // Snapshot the currently taken future slots. Exclude 'failed' rows
         // so their slots return to the pool; exclude slots already in the
         // past so rolling-forward to tomorrow works correctly.
+        //
+        // Literal enum comparison ('youtube_second') is fine here — Postgres
+        // casts the string literal to platform_enum at plan time. No parameter.
         const taken = await tx<
           { publish_at: string }[]
         >`
@@ -220,13 +275,24 @@ async function claimSlotAndInsert(
         );
         const publishAt = assignNextSlot(new Date(), takenIso);
 
+        // Build the JSONB value in JS and cast it on the wire. Previously
+        // we used jsonb_build_object('publish_at', $2), but that function
+        // is VARIADIC "any" so Postgres can't infer $2's type and the
+        // query fails with "could not determine data type of parameter $2".
+        // Serializing once + a single ::jsonb cast sidesteps the problem.
+        //
+        // platform and status are cast to their enum types explicitly so
+        // parameter inference on parameterized queries never surprises us
+        // in the future (the driver sends them as text otherwise).
+        const metadataJson = JSON.stringify({ publish_at: publishAt });
+
         const inserted = await tx<{ id: string }[]>`
           INSERT INTO posts (platform, status, title, metadata)
           VALUES (
-            'youtube_second',
-            'uploading_to_youtube',
+            ${"youtube_second"}::platform_enum,
+            ${"uploading_to_youtube"}::post_status,
             ${title},
-            jsonb_build_object('publish_at', ${publishAt})
+            ${metadataJson}::jsonb
           )
           RETURNING id
         `;
@@ -271,6 +337,8 @@ interface InitYtArgs {
   publishAt: string;
   sizeBytes: number;
   contentType: string;
+  /** Passed to Google as Origin; echoed onto the upload URL's CORS response. */
+  browserOrigin: string;
 }
 
 async function initYouTubeResumableUpload(args: InitYtArgs): Promise<string> {
@@ -302,6 +370,9 @@ async function initYouTubeResumableUpload(args: InitYtArgs): Promise<string> {
         "Content-Type": "application/json; charset=UTF-8",
         "X-Upload-Content-Length": String(args.sizeBytes),
         "X-Upload-Content-Type": args.contentType,
+        // See comment where browserOrigin is derived — this is what makes
+        // the eventual browser PUTs pass CORS.
+        Origin: args.browserOrigin,
       },
       body: JSON.stringify(payload),
     },
@@ -332,4 +403,45 @@ function sanitize(err: unknown): string {
   return raw
     .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
     .replace(/[A-Za-z0-9_\-]{40,}/g, "[REDACTED]");
+}
+
+/**
+ * Log a Postgres error with every field the `postgres` driver populates.
+ * `code`/`detail`/`hint`/`position`/`constraint` are the ones that
+ * actually make type-inference and constraint-violation bugs debuggable.
+ * Values are passed through sanitize() for belt-and-braces protection.
+ */
+function logPgError(prefix: string, err: unknown): void {
+  if (!err || typeof err !== "object") {
+    console.error(`${prefix}:`, sanitize(err));
+    return;
+  }
+  const e = err as {
+    message?: string;
+    code?: string;
+    detail?: string;
+    hint?: string;
+    position?: string;
+    severity?: string;
+    schema_name?: string;
+    table_name?: string;
+    column_name?: string;
+    constraint_name?: string;
+    where?: string;
+    routine?: string;
+  };
+  console.error(prefix, {
+    message: e.message ? sanitize(e.message) : undefined,
+    code: e.code,
+    detail: e.detail ? sanitize(e.detail) : undefined,
+    hint: e.hint,
+    position: e.position,
+    severity: e.severity,
+    schema: e.schema_name,
+    table: e.table_name,
+    column: e.column_name,
+    constraint: e.constraint_name,
+    where: e.where ? sanitize(e.where) : undefined,
+    routine: e.routine,
+  });
 }

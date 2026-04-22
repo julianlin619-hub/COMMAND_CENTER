@@ -53,6 +53,22 @@ services:
         sync: false
       - key: YOUTUBE_SECOND_DESCRIPTION  # optional — override the default channel description
         sync: false
+      # Expected channel ID for upload-complete verification. Default in
+      # code is UCrvch01h6lWZAuGaa1LqX9Q (Hormozi Highlights); set here
+      # explicitly so a future channel switch is one env-var edit.
+      - key: YOUTUBE_SECOND_CHANNEL_ID
+        sync: false
+      # Origin echoed on the init POST to YouTube's resumable endpoint —
+      # required so Google's CORS response on the upload URL allows the
+      # browser's subsequent PUTs. Fallback when the incoming request's
+      # Origin isn't in the allowlist below.
+      - key: YOUTUBE_SECOND_BROWSER_ORIGIN
+        sync: false
+      # Optional comma-separated allowlist of incoming browser origins.
+      # Defaults to app.media-command.com + localhost:3000. Add staging
+      # or preview domains here without a code change.
+      - key: YOUTUBE_SECOND_ALLOWED_ORIGINS
+        sync: false
       # Direct Postgres connection (session pooler, port 5432) — used only
       # by the upload-init route for its advisory-lock-guarded slot claim.
       # Supabase service key via the JS client cannot run arbitrary tx SQL.
