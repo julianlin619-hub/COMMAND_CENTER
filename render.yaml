@@ -42,6 +42,22 @@ services:
         sync: false
       - key: DASHBOARD_URL
         value: https://command-center-drnj.onrender.com
+      # YouTube (2nd channel) direct-upload flow — see
+      # dashboard/src/app/api/youtube-second/*. All runtime lives in the
+      # web service; no new cron job is needed for v1.
+      - key: YOUTUBE_SECOND_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_SECOND_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_SECOND_REFRESH_TOKEN
+        sync: false
+      - key: YOUTUBE_SECOND_DESCRIPTION  # optional — override the default channel description
+        sync: false
+      # Direct Postgres connection (session pooler, port 5432) — used only
+      # by the upload-init route for its advisory-lock-guarded slot claim.
+      # Supabase service key via the JS client cannot run arbitrary tx SQL.
+      - key: SUPABASE_SESSION_POOLER_URL
+        sync: false
 
   # ── Cron Jobs (Python) ─────────────────────────────────────────────────
   # IMPORTANT: Update the schedule values to match your actual posting cadence.

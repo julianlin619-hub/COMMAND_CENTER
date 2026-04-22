@@ -19,9 +19,10 @@ import type { OverviewStatus } from "@/components/overview/status-pill";
 export const dynamic = "force-dynamic";
 
 interface PlatformEntry {
-  key: string;       // unique ID, also the route slug (/threads, /tiktok, …)
+  key: string;       // unique ID, also the default route slug (/threads, /tiktok, …)
   platform: string;  // DB column value used to query posts/schedules/cron_runs
   label: string;
+  href?: string;     // optional override for the card link
 }
 
 const ACTIVE_PLATFORMS: PlatformEntry[] = [
@@ -30,6 +31,12 @@ const ACTIVE_PLATFORMS: PlatformEntry[] = [
   { key: "tiktok", platform: "tiktok", label: "TikTok" },
   { key: "facebook", platform: "facebook", label: "Facebook" },
   { key: "instagram", platform: "instagram", label: "Instagram (main)" },
+  {
+    key: "youtube-second",
+    platform: "youtube_second",
+    label: "YouTube (2nd)",
+    href: "/youtube-second/upload",
+  },
 ];
 
 // Paused platforms show "Pending" instead of deriving from cron_runs.
@@ -53,6 +60,8 @@ const PLATFORM_SUMMARIES: Record<string, string> = {
     "Re-uses TikTok's selected tweets from the past 48h, renders them as 1080×1080 PNG quote cards",
   instagram:
     "Mirrors TikTok Path 1 reels to Instagram — same 1080×1920 MP4s, Buffer queue on the Hormozi IG account",
+  "youtube-second":
+    "Direct upload — MP4 streams browser→YouTube.\nAuto-scheduled to 10 fixed publish slots/day (UTC grid).",
 };
 
 /* Gathers per-platform overview data from Supabase: last cron status for
@@ -103,6 +112,7 @@ async function getPlatformSummary(entry: PlatformEntry) {
     scheduleDescription: schedule?.description ?? null,
     cronExpression: schedule?.schedule ?? null,
     bufferQueue: bufferQueueResult.count ?? null,
+    href: entry.href,
   };
 }
 
@@ -181,7 +191,7 @@ export default async function DashboardHome() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {summaries.map((s, i) => (
-            <Link key={s.key} href={`/${s.key}`} className="block">
+            <Link key={s.key} href={s.href ?? `/${s.key}`} className="block">
               <PlatformOverviewCard
                 platformKey={s.key}
                 label={s.label}
