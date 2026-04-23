@@ -36,6 +36,8 @@
 
 - [ ] YouTube community post automation
 
+  I want it to access captions (see Victor) apply Claude prompt and add that as a title (bonus A/B test)
+
 ## Backlog
 
 - [ ] Add data insights tracker from Buffer

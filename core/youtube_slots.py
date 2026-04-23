@@ -14,6 +14,13 @@ caller passes `now`, the set of taken timestamps, and the lead-time minutes.
 That makes it trivial to unit-test and keeps the scheduler's concerns (env
 vars, database lookups) out of the slot math.
 
+`MIN_LEAD_MINUTES` is 240 (4 hours). The lead was 30 minutes when the
+scheduler sourced titles from the operator-typed Studio title, which was
+always available immediately. Since titles now come from the caption
+transcript (see `core.youtube_transcript`), and YouTube ASR can lag
+5–20 minutes behind an upload, a 4-hour lead gives captions comfortable
+room to finish processing before the slot fires.
+
 MAX_LOOKAHEAD_DAYS is deliberately 2 — a daily cron that schedules at
 most 10 drafts per run never needs to look further than today plus
 tomorrow.
@@ -26,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 
 SLOT_COUNT = 10
 SLOT_MINUTES = 144
-MIN_LEAD_MINUTES = 30
+MIN_LEAD_MINUTES = 240  # 4 hours — see module docstring.
 MAX_LOOKAHEAD_DAYS = 2
 CONFLICT_WINDOW_MINUTES = 10
 

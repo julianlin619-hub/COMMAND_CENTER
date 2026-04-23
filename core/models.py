@@ -69,7 +69,11 @@ class Post(BaseModel):
     error_message: str | None = None
     # Platform-specific structured metadata. For the YouTube studio-first
     # cron, stores {"source": "studio", "publish_at": "<ISO-8601 UTC>",
-    # "original_title": ..., "cleaned_title": ..., "sonnet_applied": bool}.
+    # "original_title": ..., "generated_title": ..., "transcript_chars": int,
+    # "caption_track_kind": "standard"|"asr"|"",
+    # "title_source": "generated"|"fallback",
+    # "fallback_skip_count": int (only on fallback rows, records how many
+    # consecutive "transcript unavailable" skips occurred before fallback)}.
     metadata: dict = {}
 
 

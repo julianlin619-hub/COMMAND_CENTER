@@ -12,10 +12,12 @@ by this cron; this cron reads YouTube directly and writes posts rows back.
 
 Studio-first workflow: the operator manually bulk-uploads videos to YouTube
 Studio as Private drafts. Once a day, this cron discovers the earliest drafts,
-cleans each title (regex strip + Claude Sonnet semantic pass), and schedules up
-to 10 of them into fixed publish slots over the next 24 hours. Direct uploads
-via videos.insert are NOT performed — see core.youtube_studio_scheduler for the
-full flow and quota-math reasoning.
+pulls each video's caption track (manual or ASR), generates a publish-ready
+title from the transcript via Claude Sonnet, and schedules up to 10 drafts
+into fixed publish slots over the next 24 hours. Drafts with no available
+transcript (ASR still processing) are skipped and retried on the next run.
+Direct uploads via videos.insert are NOT performed — see
+core.youtube_studio_scheduler for the full flow and quota-math reasoning.
 """
 
 import logging
@@ -49,12 +51,15 @@ def main():
         optional=[
             # Flip to "1" to log the videos.update payload without writing.
             "YOUTUBE_STUDIO_DRY_RUN",
-            # Override the 30-minute lead time (rarely needed).
-            "YOUTUBE_STUDIO_MIN_LEAD_MINUTES",
             # If set, validate_credentials asserts the owned channel matches.
             "YOUTUBE_CHANNEL_ID",
-            # Used by the title cleaner to call Claude Sonnet. Missing = regex-only cleanup.
+            # Used by the title generator to call Claude Sonnet. Missing =
+            # every draft is skipped with reason="title generation failed".
             "ANTHROPIC_API_KEY",
+            # Overrides the default 3-strike threshold before the scheduler
+            # falls back to a cleaned Studio title for drafts with no
+            # caption transcript. Useful to tune when debugging stuck drafts.
+            "YOUTUBE_TITLE_FALLBACK_AFTER",
         ],
     )
 

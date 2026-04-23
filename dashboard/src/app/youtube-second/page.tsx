@@ -6,8 +6,8 @@
  * `posts` row per scheduled video (platform='youtube',
  * metadata.source='studio'); this page reads them ordered newest-first.
  *
- * Each row shows the original title, the cleaned-up title pushed to
- * YouTube, the assigned publish slot in both UTC and America/Los_Angeles,
+ * Each row shows the original title, the transcript-generated title pushed
+ * to YouTube, the assigned publish slot in both UTC and America/Los_Angeles,
  * and a link back to the video in YouTube Studio.
  *
  * URL note: this page is named /youtube-second because the active channel
@@ -44,9 +44,17 @@ type StudioPost = {
   metadata: {
     source?: string;
     original_title?: string;
+    // New field (transcript-based generator). `cleaned_title` is kept for
+    // the fallback render of old rows written by the previous cleaner flow.
+    generated_title?: string;
     cleaned_title?: string;
     publish_at?: string;
-    sonnet_applied?: boolean;
+    transcript_chars?: number;
+    caption_track_kind?: string;
+    // "fallback" = the scheduler gave up waiting for ASR and scheduled
+    // with a cleaned version of the original Studio title. Needs review.
+    title_source?: "generated" | "fallback";
+    fallback_skip_count?: number;
   } | null;
 };
 
@@ -166,7 +174,7 @@ export default async function YouTubePage() {
             <TableRow className="border-border hover:bg-transparent">
               <TableHead>Created</TableHead>
               <TableHead>Original title</TableHead>
-              <TableHead>Cleaned title</TableHead>
+              <TableHead>Generated title</TableHead>
               <TableHead>Publish at</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-[80px]">Video</TableHead>
@@ -175,7 +183,16 @@ export default async function YouTubePage() {
           <TableBody>
             {posts.map((post) => {
               const original = post.metadata?.original_title ?? post.title ?? "-";
-              const cleaned = post.metadata?.cleaned_title ?? post.title ?? "-";
+              // Prefer the new transcript-based field; fall back to the old
+              // cleaner output for rows written before the migration.
+              const generated =
+                post.metadata?.generated_title ??
+                post.metadata?.cleaned_title ??
+                post.title ??
+                "-";
+              const trackKind = post.metadata?.caption_track_kind;
+              const isFallback = post.metadata?.title_source === "fallback";
+              const fallbackSkipCount = post.metadata?.fallback_skip_count;
               const publish = formatPublishAt(post.metadata?.publish_at);
               const videoUrl = post.platform_post_id
                 ? `https://studio.youtube.com/video/${post.platform_post_id}/edit`
@@ -191,14 +208,23 @@ export default async function YouTubePage() {
                     </div>
                   </TableCell>
                   <TableCell className="max-w-xs">
-                    <div className="truncate font-medium" title={cleaned}>
-                      {cleaned}
+                    <div className="truncate font-medium" title={generated}>
+                      {generated}
                     </div>
-                    {post.metadata?.sonnet_applied === false && (
-                      <div className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                        regex only
-                      </div>
-                    )}
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      {trackKind && (
+                        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {trackKind === "asr" ? "ASR" : trackKind}
+                        </span>
+                      )}
+                      {isFallback && (
+                        <Badge className="bg-[#d97706]/15 text-[#d97706] border-[#d97706]/25 text-[10px] font-normal">
+                          {fallbackSkipCount
+                            ? `fallback — skipped ${fallbackSkipCount}×`
+                            : "fallback"}
+                        </Badge>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className="whitespace-nowrap">
                     <div className="font-mono text-xs">{publish.utc}</div>

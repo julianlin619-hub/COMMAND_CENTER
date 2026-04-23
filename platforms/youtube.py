@@ -8,7 +8,9 @@ workflow lives in `core.youtube_studio_scheduler`; this file only exposes
 the API primitives it uses.
 
 Authentication: Google OAuth 2.0 with a long-lived refresh token in env
-vars. The refresh token needs both `youtube` and `youtube.readonly` scopes.
+vars. The refresh token needs `youtube.force-ssl` (for videos.update and
+captions.download) and `youtube.readonly` (for channel/playlist/video
+reads). See `scripts/generate_youtube_refresh_token.py`.
 
 API docs: https://developers.google.com/youtube/v3
 """
@@ -33,6 +35,21 @@ _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _API_BASE = "https://www.googleapis.com/youtube/v3"
 _REQUEST_TIMEOUT = 15.0
 _DEFAULT_CATEGORY_ID = "22"  # "People & Blogs" — YouTube's default for new uploads
+
+
+@dataclass(frozen=True)
+class CaptionTrack:
+    """A single caption track attached to a video.
+
+    `track_kind` is YouTube's `snippet.trackKind` — "standard" for
+    uploader-provided tracks, "asr" for auto-generated ones. `language`
+    is a BCP-47 tag (e.g. "en", "en-US", "es"). The scheduler prefers
+    standard + English tracks when present.
+    """
+
+    id: str
+    track_kind: str
+    language: str
 
 
 @dataclass(frozen=True)
@@ -111,6 +128,21 @@ class YouTube(PlatformBase):
                 f"but YOUTUBE_CHANNEL_ID is set to {expected}"
             )
         return True
+
+    @property
+    def channel_id(self) -> str:
+        """Owned channel ID. Requires validate_credentials to have run.
+
+        Exposed so the studio-first scheduler can key its per-draft retry
+        tracker on (channel_id, video_id). `list_my_private_videos()` calls
+        `validate_credentials()` lazily, so reading `client.channel_id`
+        immediately after the discovery call is safe in practice.
+        """
+        if self._channel_id is None:
+            raise PlatformAuthError(
+                "YouTube.channel_id accessed before validate_credentials ran"
+            )
+        return self._channel_id
 
     # ── Studio-first primitives ──────────────────────────────────────
 
@@ -218,6 +250,58 @@ class YouTube(PlatformBase):
             timeout=_REQUEST_TIMEOUT,
         )
         _raise_for_youtube_error(resp)
+
+    # ── Captions ─────────────────────────────────────────────────────
+
+    @with_retry()
+    def list_caption_tracks(self, video_id: str) -> list[CaptionTrack]:
+        """List all caption tracks attached to a video.
+
+        Returns both uploader-provided ("standard") and auto-generated
+        ("asr") tracks. Empty list is a valid result — new uploads often
+        have no ASR track yet while YouTube processes audio.
+
+        Cost: 50 quota units.
+        """
+        resp = httpx.get(
+            f"{_API_BASE}/captions",
+            params={"part": "snippet", "videoId": video_id},
+            headers=self._auth_headers(),
+            timeout=_REQUEST_TIMEOUT,
+        )
+        _raise_for_youtube_error(resp)
+        items = resp.json().get("items", [])
+        tracks: list[CaptionTrack] = []
+        for it in items:
+            snippet = it.get("snippet", {})
+            tracks.append(
+                CaptionTrack(
+                    id=it["id"],
+                    track_kind=snippet.get("trackKind", ""),
+                    language=snippet.get("language", ""),
+                )
+            )
+        return tracks
+
+    @with_retry()
+    def download_caption(self, track_id: str) -> str:
+        """Download a caption track's body as WEBVTT text.
+
+        Requires the `youtube.force-ssl` scope — a 403 here almost always
+        means the refresh token was minted without it, and is mapped to
+        `PlatformAuthError` by `_raise_for_youtube_error`. The scheduler
+        catches that and skips the draft.
+
+        Cost: 200 quota units.
+        """
+        resp = httpx.get(
+            f"{_API_BASE}/captions/{track_id}",
+            params={"tfmt": "vtt"},
+            headers=self._auth_headers(),
+            timeout=_REQUEST_TIMEOUT,
+        )
+        _raise_for_youtube_error(resp)
+        return resp.text
 
     # ── PlatformBase holdovers ───────────────────────────────────────
     # Direct uploads are not supported in studio-first. Kept only to satisfy

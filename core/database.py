@@ -258,6 +258,122 @@ def post_caption_exists(platform: str, caption: str) -> bool:
     return len(result.data) > 0
 
 
+# ── YouTube studio-first scheduler helpers ──────────────────────────────
+# Used by core.youtube_studio_scheduler to (a) read occupied publish slots
+# from prior cron runs so two runs never double-book the same slot, and
+# (b) count per-draft skip occurrences so we can fall back to a cleaned
+# raw title after N consecutive "transcript unavailable" skips. See the
+# fallback tracker migration for the table definition.
+
+
+def get_scheduled_youtube_publish_times(horizon_days: int = 14) -> set[datetime]:
+    """Return tz-aware UTC datetimes of studio-scheduled YouTube publishes.
+
+    Pulls `status='scheduled'`, `platform='youtube'`, `metadata.source='studio'`
+    rows whose `metadata.publish_at` falls in the window [now, now+horizon_days].
+    Past publish_ats are excluded — they've already fired on YouTube and
+    aren't useful for slot-conflict avoidance.
+
+    Used as one source of the "taken slots" set the scheduler passes to
+    `assign_next_slot`; the other source is YouTube's own list of already-
+    scheduled Private videos (which catches manual Studio schedules that
+    don't write to `posts`).
+    """
+    client = get_client()
+    now_utc = datetime.now(timezone.utc)
+    horizon_cutoff = now_utc + timedelta(days=horizon_days)
+
+    # Supabase doesn't support strict range filters on jsonb->>'key' via the
+    # SDK as cleanly as plain columns, so we filter server-side on the
+    # cheap conditions and do the publish_at parse + window check in Python.
+    result = (
+        client.table("posts")
+        .select("metadata")
+        .eq("platform", "youtube")
+        .eq("status", "scheduled")
+        .filter("metadata->>source", "eq", "studio")
+        .execute()
+    )
+
+    taken: set[datetime] = set()
+    for row in result.data:
+        raw = (row.get("metadata") or {}).get("publish_at")
+        if not raw:
+            continue
+        try:
+            # Posts are written with "...Z" suffix (see core.youtube_slots._to_iso_z).
+            dt = datetime.strptime(raw, "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc
+            )
+        except ValueError:
+            logger.warning("Unparseable publish_at in posts.metadata: %r", raw)
+            continue
+        # Only keep future publishes — past ones have already fired.
+        if now_utc <= dt < horizon_cutoff:
+            taken.add(dt)
+    return taken
+
+
+def get_title_fallback_skip_count(channel_id: str, video_id: str) -> int:
+    """Return the current skip_count for (channel_id, video_id), or 0."""
+    client = get_client()
+    result = (
+        client.table("youtube_title_fallback_tracker")
+        .select("skip_count")
+        .eq("channel_id", channel_id)
+        .eq("video_id", video_id)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        return 0
+    return int(result.data[0]["skip_count"])
+
+
+def bump_title_fallback_tracker(
+    channel_id: str, video_id: str, reason: str
+) -> int:
+    """Upsert the tracker row, incrementing skip_count. Returns the new count.
+
+    Not atomic against concurrent writers — but the studio scheduler
+    processes drafts sequentially inside a single cron run, and tracker
+    rows are keyed on a unique video_id, so two writers racing on the
+    same row is not a realistic case. The read-then-upsert pattern is
+    simpler than PostgREST's RPC surface and fine for our concurrency.
+    """
+    client = get_client()
+    current = get_title_fallback_skip_count(channel_id, video_id)
+    new_count = current + 1
+    now_iso = datetime.now(timezone.utc).isoformat()
+    row: dict = {
+        "channel_id": channel_id,
+        "video_id": video_id,
+        "skip_count": new_count,
+        "last_skipped_at": now_iso,
+        "last_reason": reason,
+    }
+    # first_skipped_at is only set on insert (keeps a true "first seen" date).
+    if current == 0:
+        row["first_skipped_at"] = now_iso
+    (
+        client.table("youtube_title_fallback_tracker")
+        .upsert(row, on_conflict="channel_id,video_id")
+        .execute()
+    )
+    return new_count
+
+
+def clear_title_fallback_tracker(channel_id: str, video_id: str) -> None:
+    """Delete the tracker row for a draft. Idempotent — missing row is fine."""
+    client = get_client()
+    (
+        client.table("youtube_title_fallback_tracker")
+        .delete()
+        .eq("channel_id", channel_id)
+        .eq("video_id", video_id)
+        .execute()
+    )
+
 
 # ── Cron Runs ────────────────────────────────────────────────────────────
 # Every cron execution logs a start and finish record. This gives visibility

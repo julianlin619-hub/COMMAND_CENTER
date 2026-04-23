@@ -54,41 +54,42 @@ class TestGenerateSlots:
 
 class TestAssignNextSlot:
     def test_picks_first_future_slot_when_queue_empty(self):
-        # Cron fires at 10:00 UTC. With 30-min lead, the earliest usable slot
-        # is the first canonical slot >= 10:30 UTC, which is 12:00 UTC.
+        # Cron fires at 10:00 UTC. With the 4-hour lead (MIN_LEAD_MINUTES=240),
+        # the earliest usable slot is the first canonical slot >= 14:00 UTC,
+        # which is 14:24 UTC. (Before the lead-time bump, this was 12:00.)
         now = utc(2026, 4, 22, 10, 0)
         result = assign_next_slot(now, taken=set())
-        assert result.publish_at == utc(2026, 4, 22, 12, 0)
-        assert result.iso == "2026-04-22T12:00:00Z"
+        assert result.publish_at == utc(2026, 4, 22, 14, 24)
+        assert result.iso == "2026-04-22T14:24:00Z"
 
     def test_skips_slots_before_lead_time(self):
-        # 11:55 UTC + 30-min lead = 12:25 earliest — too late for 12:00, so
-        # the first free slot is 14:24.
-        now = utc(2026, 4, 22, 11, 55)
+        # 10:25 UTC + 4h lead = 14:25 earliest — too late for 14:24, so
+        # the first free slot rolls forward to 16:48.
+        now = utc(2026, 4, 22, 10, 25)
         result = assign_next_slot(now, taken=set())
-        assert result.publish_at == utc(2026, 4, 22, 14, 24)
+        assert result.publish_at == utc(2026, 4, 22, 16, 48)
 
     def test_skips_taken_exact_slot(self):
         now = utc(2026, 4, 22, 10, 0)
-        taken = {utc(2026, 4, 22, 12, 0)}  # 12:00 already used
+        taken = {utc(2026, 4, 22, 14, 24)}  # 14:24 already used
         result = assign_next_slot(now, taken=taken)
-        assert result.publish_at == utc(2026, 4, 22, 14, 24)
+        assert result.publish_at == utc(2026, 4, 22, 16, 48)
 
     def test_skips_slot_when_existing_publish_is_within_conflict_window(self):
-        # A video manually scheduled at 11:57 UTC (within 10 min of the 12:00
-        # canonical slot) should cause us to skip 12:00 and pick 14:24.
+        # A video manually scheduled at 14:20 UTC (within 10 min of the 14:24
+        # canonical slot) should cause us to skip 14:24 and pick 16:48.
         now = utc(2026, 4, 22, 10, 0)
-        taken = {utc(2026, 4, 22, 11, 57)}
+        taken = {utc(2026, 4, 22, 14, 20)}
         result = assign_next_slot(now, taken=taken)
-        assert result.publish_at == utc(2026, 4, 22, 14, 24)
+        assert result.publish_at == utc(2026, 4, 22, 16, 48)
 
     def test_does_not_skip_when_existing_publish_is_outside_window(self):
-        # 11:40 is 20 minutes before 12:00 — outside the ±10 min window,
-        # so 12:00 remains free.
+        # 14:00 is 24 minutes before 14:24 — outside the ±10 min window,
+        # so 14:24 remains free.
         now = utc(2026, 4, 22, 10, 0)
-        taken = {utc(2026, 4, 22, 11, 40)}
+        taken = {utc(2026, 4, 22, 14, 0)}
         result = assign_next_slot(now, taken=taken)
-        assert result.publish_at == utc(2026, 4, 22, 12, 0)
+        assert result.publish_at == utc(2026, 4, 22, 14, 24)
 
     def test_rolls_into_next_day_when_today_full(self):
         now = utc(2026, 4, 22, 10, 0)
