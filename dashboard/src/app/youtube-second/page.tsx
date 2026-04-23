@@ -20,6 +20,7 @@ import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
 import { PlatformIcon } from "@/components/platform-icon";
+import { RunYouTubeCronButton } from "@/components/run-youtube-cron-button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -137,14 +138,17 @@ export default async function YouTubePage() {
           <ArrowLeftIcon className="size-3.5" />
           Back to Overview
         </Link>
-        <div className="flex items-center gap-3">
-          <PlatformIcon platform="youtube" className="size-8" />
-          <div>
-            <h1 className="text-xl font-semibold">YouTube</h1>
-            <p className="text-sm text-muted-foreground">
-              Drafts discovered in Studio and scheduled into canonical slots
-            </p>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <PlatformIcon platform="youtube" className="size-8" />
+            <div>
+              <h1 className="text-xl font-semibold">YouTube</h1>
+              <p className="text-sm text-muted-foreground">
+                Drafts discovered in Studio and scheduled into canonical slots
+              </p>
+            </div>
           </div>
+          <RunYouTubeCronButton />
         </div>
       </div>
 
