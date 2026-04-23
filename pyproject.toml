@@ -17,7 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0.3",
     "ruff>=0.4",
     # Only used by scripts/generate_youtube_refresh_token.py — a one-time
     # local script for minting the YouTube cron's refresh token. Not needed
