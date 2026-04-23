@@ -10,9 +10,9 @@
  * YouTube, the assigned publish slot in both UTC and America/Los_Angeles,
  * and a link back to the video in YouTube Studio.
  *
- * URL note: this page lives at /youtube-second because the active channel
- * occupies the "youtube_second" platform slot in the data model. The
- * "primary" /youtube slot is archived.
+ * URL note: this page is named /youtube-second because the active channel
+ * behind the YOUTUBE_* OAuth credentials is the 2nd channel. The "primary"
+ * /youtube slot is archived.
  */
 
 import Link from "next/link";

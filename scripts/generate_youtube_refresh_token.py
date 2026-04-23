@@ -1,18 +1,13 @@
 """One-time script to mint a YouTube refresh token for the studio-first scheduler.
 
-Sibling of generate_youtube_second_refresh_token.py. Differences:
-  - Reads YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET (not the _SECOND_ variants).
-  - Requests the broader `youtube` scope instead of `youtube.upload`, because
-    the studio-first cron calls videos.update to set publishAt, which
-    `youtube.upload` alone does not authorize. `youtube` is the minimum
-    scope that allows modifying an existing video's metadata.
+Requests the `youtube` scope (not `youtube.upload`) because the studio-first
+cron calls videos.update to set publishAt, which `youtube.upload` alone
+does not authorize. `youtube` is the minimum scope that allows modifying
+an existing video's metadata.
 
-How to run (same as the second-channel script):
-  1. Your existing Google Cloud OAuth client already has
-     http://localhost:8765/ in its Authorized redirect URIs, so no console
-     change needed. You can reuse YOUTUBE_SECOND_CLIENT_ID /
-     YOUTUBE_SECOND_CLIENT_SECRET values — just export them under the
-     YOUTUBE_ names below.
+How to run:
+  1. Your Google Cloud OAuth client must have http://localhost:8765/ in
+     its Authorized redirect URIs.
   2. Export the client ID/secret:
         export YOUTUBE_CLIENT_ID=...
         export YOUTUBE_CLIENT_SECRET=...
@@ -73,8 +68,7 @@ def main() -> int:
     if not client_id or not client_secret:
         print(
             "Set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET before running "
-            "this script (same values as YOUTUBE_SECOND_* are fine — they "
-            "point at the same OAuth client).",
+            "this script.",
             file=sys.stderr,
         )
         return 1

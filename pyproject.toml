@@ -19,10 +19,9 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",
-    # Only used by scripts/generate_youtube_second_refresh_token.py — a
-    # one-time local script. Not needed on Render at runtime because the
-    # YouTube second-channel upload flow lives entirely in the dashboard
-    # Node runtime.
+    # Only used by scripts/generate_youtube_refresh_token.py — a one-time
+    # local script for minting the YouTube cron's refresh token. Not needed
+    # at runtime on Render (the cron reuses the stored refresh token).
     "google-auth>=2.23",
     "google-auth-oauthlib>=1.1",
 ]
