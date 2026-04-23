@@ -14,10 +14,9 @@ caller passes `now`, the set of taken timestamps, and the lead-time minutes.
 That makes it trivial to unit-test and keeps the scheduler's concerns (env
 vars, database lookups) out of the slot math.
 
-Ported from dashboard/src/lib/youtube-second-scheduler.ts. The main
-difference: MAX_LOOKAHEAD_DAYS drops from 30 to 2 — a daily cron that
-schedules at most 10 drafts per run never needs to look further than today
-plus tomorrow.
+MAX_LOOKAHEAD_DAYS is deliberately 2 — a daily cron that schedules at
+most 10 drafts per run never needs to look further than today plus
+tomorrow.
 """
 
 from __future__ import annotations
