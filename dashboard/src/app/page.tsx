@@ -35,7 +35,7 @@ const ACTIVE_PLATFORMS: PlatformEntry[] = [
     key: "youtube-second",
     platform: "youtube_second",
     label: "YouTube (2nd)",
-    href: "/youtube-second/upload",
+    href: "/youtube-second",
   },
 ];
 
@@ -61,7 +61,7 @@ const PLATFORM_SUMMARIES: Record<string, string> = {
   instagram:
     "Mirrors TikTok Path 1 reels to Instagram — same 1080×1920 MP4s, Buffer queue on the Hormozi IG account",
   "youtube-second":
-    "Direct upload — MP4 streams browser→YouTube.\nAuto-scheduled to 10 fixed publish slots/day (UTC grid).",
+    "Studio-first — bulk-upload drafts manually, daily cron (10 UTC) schedules the 10 earliest into fixed publish slots.",
 };
 
 /* Gathers per-platform overview data from Supabase: last cron status for
