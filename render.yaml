@@ -47,8 +47,9 @@ services:
   # IMPORTANT: Update the schedule values to match your actual posting cadence.
   # These are placeholders.
 
+  # 2nd channel (Hormozi Highlights) — YOUTUBE_* vars are repurposed for the 2nd channel, see naming-debt TODO.
   - type: cron
-    name: youtube-cron
+    name: youtube-second-cron
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.youtube_cron
