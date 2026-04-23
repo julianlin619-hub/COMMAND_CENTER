@@ -39,15 +39,17 @@ except ImportError:
 
 
 # Scopes:
-#   - youtube → manage YouTube account. Covers both read (channels.list,
-#     videos.list, playlistItems.list) and write (videos.update). This is
-#     the minimum scope that authorizes videos.update — `youtube.upload`
-#     alone does not.
+#   - youtube.force-ssl → manage YouTube account over HTTPS. Authorizes
+#     videos.update (needed to set publishAt on Private drafts) and the
+#     write surface the cron uses. Narrower than the bare `youtube` scope.
+#   - youtube.readonly → read-only access for channels.list, videos.list,
+#     and playlistItems.list (discovering drafts + validating channel id).
 # We deliberately do not request `youtubepartner` or analytics scopes, so
 # the token's blast radius stays bounded to managing videos on owned
 # channels.
 SCOPES = [
-    "https://www.googleapis.com/auth/youtube",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
+    "https://www.googleapis.com/auth/youtube.readonly",
 ]
 
 # Pinned because Google validates the redirect URI (including the port)
