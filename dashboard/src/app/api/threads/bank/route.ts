@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     process.cwd(),
     process.env.CONTENT_BANK_PATH || "../data/TweetMasterBank.csv"
   );
-  const count = parseInt(process.env.CONTENT_BANK_COUNT || "5", 10);
+  const count = parseInt(process.env.CONTENT_BANK_COUNT || "24", 10);
 
   // Path containment check — ensure the resolved bank path stays within
   // the project root so a misconfigured CONTENT_BANK_PATH env var can't

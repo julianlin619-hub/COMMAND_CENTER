@@ -118,7 +118,7 @@ def main():
         now = datetime.now(timezone.utc)
 
         bank_path = os.environ.get("CONTENT_BANK_PATH", "data/TweetMasterBank.csv")
-        bank_count = int(os.environ.get("CONTENT_BANK_COUNT", "5"))
+        bank_count = int(os.environ.get("CONTENT_BANK_COUNT", "24"))
 
         bank_items = select_bank_content(bank_path, count=bank_count)
         for text in bank_items:
