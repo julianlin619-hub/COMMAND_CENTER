@@ -18,24 +18,68 @@ import type { OverviewStatus } from "@/components/overview/status-pill";
 
 export const dynamic = "force-dynamic";
 
+/* How the footer "Buffer" count should be computed for a given platform.
+   - sent_recent: count posts whose status is in `statuses` (default
+     ["sent_to_buffer"]), created within the last N hours. Works for both
+     direct-send pipelines (status ends at 'sent_to_buffer') and scheduler
+     pipelines that flip status to 'published' after publishing (Threads).
+   - hidden: the pill is omitted entirely (paused platforms, YouTube drafts). */
+type BufferMetric =
+  | { kind: "sent_recent"; hours: number; statuses?: string[] }
+  | { kind: "hidden" };
+
+// Window for the "Sent to Buffer" count on platform cards. Tune here.
+const BUFFER_WINDOW_HOURS = 24;
+
 interface PlatformEntry {
   key: string;       // unique ID, also the default route slug (/threads, /tiktok, …)
   platform: string;  // DB column value used to query posts/schedules/cron_runs
   label: string;
   href?: string;     // optional override for the card link
+  bufferMetric: BufferMetric;
 }
 
 const ACTIVE_PLATFORMS: PlatformEntry[] = [
-  { key: "threads", platform: "threads", label: "Threads" },
-  { key: "instagram-2nd", platform: "instagram_2nd", label: "Instagram (2nd)" },
-  { key: "tiktok", platform: "tiktok", label: "TikTok" },
-  { key: "facebook", platform: "facebook", label: "Facebook" },
-  { key: "instagram", platform: "instagram", label: "Instagram (main)" },
+  {
+    key: "threads",
+    platform: "threads",
+    label: "Threads",
+    // Threads is scheduler-based but the same cron run immediately picks up
+    // the schedule and publishes, flipping status to 'published'. So the
+    // "unpicked schedules" count is ~always 0 — we count recently published
+    // Threads posts instead, which reflects actual throughput.
+    bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS, statuses: ["published"] },
+  },
+  {
+    key: "instagram-2nd",
+    platform: "instagram_2nd",
+    label: "Instagram (2nd)",
+    bufferMetric: { kind: "hidden" },
+  },
+  {
+    key: "tiktok",
+    platform: "tiktok",
+    label: "TikTok",
+    bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
+  },
+  {
+    key: "facebook",
+    platform: "facebook",
+    label: "Facebook",
+    bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
+  },
+  {
+    key: "instagram",
+    platform: "instagram",
+    label: "Instagram (main)",
+    bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
+  },
   {
     key: "youtube-second",
     platform: "youtube_second",
     label: "YouTube (2nd)",
     href: "/youtube-second",
+    bufferMetric: { kind: "hidden" },
   },
 ];
 
@@ -64,14 +108,38 @@ const PLATFORM_SUMMARIES: Record<string, string> = {
     "Studio-first — bulk-upload drafts manually, daily cron (10 UTC) schedules the 10 earliest into fixed publish slots.",
 };
 
+/* Computes the footer "Buffer" count + label for one platform.
+   sent_recent → counts posts in one of `statuses` (default sent_to_buffer)
+   created within the last `hours` window. hidden → returns null so the card
+   suppresses the pill. */
+async function getBufferQueue(
+  entry: PlatformEntry,
+  supabase: ReturnType<typeof getSupabaseClient>,
+): Promise<{ count: number | null; label: string | undefined }> {
+  const metric = entry.bufferMetric;
+
+  if (metric.kind === "hidden") {
+    return { count: null, label: undefined };
+  }
+
+  const statuses = metric.statuses ?? ["sent_to_buffer"];
+  const since = new Date(Date.now() - metric.hours * 3600_000).toISOString();
+  const { count } = await supabase
+    .from("posts")
+    .select("id", { count: "exact", head: true })
+    .eq("platform", entry.platform)
+    .in("status", statuses)
+    .gte("created_at", since);
+  return { count: count ?? 0, label: `Sent to Buffer (${metric.hours}h)` };
+}
+
 /* Gathers per-platform overview data from Supabase: last cron status for
-   health, and the count of un-picked-up scheduled posts for the Buffer
-   queue pill. One row per active platform. */
+   health, and a pipeline-shape-aware count for the Buffer queue pill. */
 async function getPlatformSummary(entry: PlatformEntry) {
   const supabase = getSupabaseClient();
   const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
 
-  const [cronResult, bufferQueueResult] = await Promise.all([
+  const [cronResult, bufferQueue] = await Promise.all([
     supabase
       .from("cron_runs")
       .select("status,started_at")
@@ -80,16 +148,7 @@ async function getPlatformSummary(entry: PlatformEntry) {
       .gte("started_at", cutoff)
       .order("started_at", { ascending: false })
       .limit(1),
-    // Count of scheduled posts that haven't been picked up by a cron yet —
-    // this is the "Scheduled to Buffer: N" pill in the card footer.
-    supabase
-      .from("schedules")
-      .select("scheduled_for, posts!inner(platform)", {
-        count: "exact",
-        head: true,
-      })
-      .eq("posts.platform", entry.platform)
-      .is("picked_up_at", null),
+    getBufferQueue(entry, supabase),
   ]);
 
   const lastRun = cronResult.data?.[0];
@@ -111,7 +170,8 @@ async function getPlatformSummary(entry: PlatformEntry) {
     status,
     scheduleDescription: schedule?.description ?? null,
     cronExpression: schedule?.schedule ?? null,
-    bufferQueue: bufferQueueResult.count ?? null,
+    bufferQueue: bufferQueue.count,
+    bufferQueueLabel: bufferQueue.label,
     href: entry.href,
   };
 }
@@ -200,6 +260,7 @@ export default async function DashboardHome() {
                 scheduleDescription={s.scheduleDescription}
                 cronExpression={s.cronExpression}
                 bufferQueue={s.bufferQueue}
+                bufferQueueLabel={s.bufferQueueLabel}
                 index={i}
               />
             </Link>

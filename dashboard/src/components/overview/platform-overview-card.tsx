@@ -44,6 +44,7 @@ interface PlatformOverviewCardProps {
   scheduleDescription: string | null;
   cronExpression: string | null;
   bufferQueue: number | null;
+  bufferQueueLabel?: string;
   index: number;
 }
 
@@ -55,6 +56,7 @@ export function PlatformOverviewCard({
   scheduleDescription,
   cronExpression,
   bufferQueue,
+  bufferQueueLabel = "Scheduled to Buffer",
   index,
 }: PlatformOverviewCardProps) {
   const Icon = ACTIVE_ICONS[platformKey] ?? FaInstagram;
@@ -146,9 +148,9 @@ export function PlatformOverviewCard({
           borderColor: "var(--drawer-border)",
         }}
       >
-        <div className="flex items-center gap-2 text-[12px] text-[var(--overview-fg)]/55">
-          <span>Scheduled to Buffer</span>
-          {bufferQueue !== null && (
+        {bufferQueue !== null ? (
+          <div className="flex items-center gap-2 text-[12px] text-[var(--overview-fg)]/55">
+            <span>{bufferQueueLabel}</span>
             <span
               className="inline-flex items-center justify-center min-w-[20px] h-[18px] px-1.5 rounded-md text-[11px] font-medium font-mono"
               style={{
@@ -158,8 +160,10 @@ export function PlatformOverviewCard({
             >
               {bufferQueue}
             </span>
-          )}
-        </div>
+          </div>
+        ) : (
+          <span />
+        )}
         <ChevronRight
           className="h-[15px] w-[15px] text-[var(--overview-fg)]/30 transition-transform duration-150 group-hover:translate-x-[3px]"
         />
