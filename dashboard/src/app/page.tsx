@@ -104,7 +104,7 @@ const PLATFORM_SUMMARIES: Record<string, string> = {
   "instagram-2nd":
     "Paused — waiting for the new Instagram account before automation resumes.",
   tiktok:
-    "Path 1: pulls @AlexHormozi outlier tweets (≥4,000 likes, past 48h) from Apify, renders branded quote-card videos\nPath 2: picks 1 tweet from TweetMasterBank (≥6,500 likes), renders branded quote-card video",
+    "Path 1: pulls @AlexHormozi outlier tweets (≥4,000 likes, past 48h) from Apify, renders branded quote-card videos\nPath 2: picks 1 tweet from TweetMasterBank (≥6,500 likes), renders branded quote-card video\nPath 3: manual upload — pick an mp4, queue it on Buffer's next TikTok slot (user-triggered from /tiktok)",
   facebook:
     "Re-uses TikTok's selected tweets from the past 48h, renders them as 1080×1080 PNG quote cards",
   linkedin:

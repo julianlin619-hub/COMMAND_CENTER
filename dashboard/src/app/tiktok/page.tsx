@@ -1,9 +1,10 @@
 /**
  * TikTok Platform Detail Page
  *
- * Two pathways:
- *   1. Outlier reel — fetch viral tweets via Apify, turn into TikTok videos
- *   2. Bank reel   — pick from the CSV bank and produce one extra reel per day
+ * Three pathways:
+ *   1. Outlier reel  — fetch viral tweets via Apify, turn into TikTok videos
+ *   2. Bank reel     — pick from the CSV bank and produce one extra reel per day
+ *   3. Manual upload — user-picked mp4, queued directly on Buffer's TikTok channel
  */
 
 import Link from "next/link";
@@ -11,6 +12,7 @@ import { getSupabaseClient } from "@/lib/supabase";
 import { AppShell } from "@/components/app-shell";
 import { PlatformIcon } from "@/components/platform-icon";
 import { PathwayCard, type PathwayLastRun } from "@/components/pathway-card";
+import { TikTokManualUploadPathway } from "@/components/tiktok-manual-upload-pathway";
 import { ArrowLeftIcon } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -83,6 +85,8 @@ export default async function TikTokPage() {
         actions={[{ url: "/api/cron/run", body: { job: "tiktok-bank-pipeline" } }]}
         lastRun={bankLast}
       />
+
+      <TikTokManualUploadPathway number={3} />
     </AppShell>
   );
 }

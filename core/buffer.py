@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 
 import httpx
 
@@ -210,6 +211,41 @@ def send_to_buffer(
 
     logger.info("Sent to Buffer queue: post %s", post["id"])
     return post["id"]
+
+
+def get_buffer_post_sent_at(post_id: str) -> datetime | None:
+    """Return the UTC datetime Buffer published a post, or None if still queued.
+
+    Wraps Buffer's GraphQL `post(input:{id})` lookup and parses `sentAt`.
+    Used by cron/tiktok_storage_cleanup.py to decide when it's safe to
+    delete a manual-upload mp4 from Supabase Storage (3 days after Buffer
+    confirms the post went live).
+    """
+    data = _buffer_request(
+        """
+        query GetPost($id: PostId!) {
+            post(input: { id: $id }) {
+                ... on PostActionSuccess {
+                    post { id sentAt status }
+                }
+                ... on NotFoundError { message }
+                ... on UnauthorizedError { message }
+                ... on UnexpectedError { message }
+            }
+        }
+        """,
+        {"id": post_id},
+    )
+
+    result = data.get("post", {}) or {}
+    if result.get("message"):
+        raise RuntimeError(f"Buffer error: {result['message']}")
+    post = result.get("post") or {}
+    sent = post.get("sentAt")
+    if not sent:
+        return None
+    # Buffer returns ISO-8601 with a `Z` suffix; fromisoformat needs +00:00.
+    return datetime.fromisoformat(sent.replace("Z", "+00:00"))
 
 
 def truncate_caption(text: str, limit: int = TIKTOK_CAPTION_LIMIT) -> str:
