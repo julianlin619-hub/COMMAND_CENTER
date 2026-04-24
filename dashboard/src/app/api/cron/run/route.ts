@@ -85,7 +85,7 @@ const CRON_MODULES: Record<string, string> = {
   "facebook-pipeline": "cron.facebook_pipeline",
   "instagram-pipeline": "cron.instagram_pipeline",
   "youtube-cron": "cron.youtube_cron",
-  "linkedin-cron": "cron.linkedin_cron",
+  "linkedin-pipeline": "cron.linkedin_pipeline",
 };
 
 export async function POST(request: Request) {

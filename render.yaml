@@ -152,19 +152,23 @@ services:
         sync: false
 
   - type: cron
-    name: linkedin-cron
+    name: linkedin-pipeline
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
-    startCommand: python -m cron.linkedin_cron
-    schedule: "0 */4 * * *"  # TODO: set your real schedule
+    startCommand: python -m cron.linkedin_pipeline
+    # Daily at 12:00 UTC = 5:00 AM PDT — 30 min after facebook-pipeline so
+    # Facebook's posts are already in the DB for LinkedIn to re-queue.
+    # No DASHBOARD_URL/CRON_SECRET needed: LinkedIn reads existing Facebook
+    # posts and re-queues the same storage path, so no content-gen call.
+    schedule: "0 12 * * *"
     envVars:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
-      - key: LINKEDIN_CLIENT_ID
+      - key: BUFFER_ACCESS_TOKEN
         sync: false
-      - key: LINKEDIN_CLIENT_SECRET
+      - key: BUFFER_ORG_ID
         sync: false
 
   - type: cron

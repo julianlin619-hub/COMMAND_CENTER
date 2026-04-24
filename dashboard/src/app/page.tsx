@@ -9,7 +9,7 @@
 
 import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
-import { FaLinkedinIn, FaYoutube } from "react-icons/fa6";
+import { FaYoutube } from "react-icons/fa6";
 import { getSupabaseClient } from "@/lib/supabase";
 import { CRON_SCHEDULES } from "@/lib/cron-schedule";
 import { CronTestRunButton } from "@/components/cron-test-run-button";
@@ -69,6 +69,12 @@ const ACTIVE_PLATFORMS: PlatformEntry[] = [
     bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
   },
   {
+    key: "linkedin",
+    platform: "linkedin",
+    label: "LinkedIn",
+    bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
+  },
+  {
     key: "instagram",
     platform: "instagram",
     label: "Instagram (main)",
@@ -88,7 +94,6 @@ const PAUSED_PLATFORMS = new Set(["instagram_2nd"]);
 
 const INACTIVE_PLATFORMS = [
   { key: "youtube", label: "YouTube", icon: FaYoutube },
-  { key: "linkedin", label: "LinkedIn", icon: FaLinkedinIn },
 ];
 
 /* One-line plain-English summary of what each active platform's cron does.
@@ -102,6 +107,8 @@ const PLATFORM_SUMMARIES: Record<string, string> = {
     "Path 1: pulls @AlexHormozi outlier tweets (≥4,000 likes, past 48h) from Apify, renders branded quote-card videos\nPath 2: picks 1 tweet from TweetMasterBank (≥6,500 likes), renders branded quote-card video",
   facebook:
     "Re-uses TikTok's selected tweets from the past 48h, renders them as 1080×1080 PNG quote cards",
+  linkedin:
+    "Re-queues Facebook's already-rendered quote cards (same 1080×1080 PNGs) on the LinkedIn channel — no re-render",
   instagram:
     "Mirrors TikTok Path 1 reels to Instagram — same 1080×1920 MP4s, Buffer queue on the Hormozi IG account",
   "youtube-second":

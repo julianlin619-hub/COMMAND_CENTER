@@ -17,6 +17,7 @@ export const CRON_SCHEDULES: Record<string, CronScheduleInfo> = {
   tiktok:    { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
   facebook:  { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
   instagram: { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
+  linkedin:  { schedule: "0 12 * * *",  description: "Daily at 5:00 AM PDT" },
 };
 
 /** Compute the next UTC run time from a simple cron pattern. */

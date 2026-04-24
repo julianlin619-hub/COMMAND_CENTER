@@ -86,10 +86,10 @@ const CRON_JOBS: CronJob[] = [
   {
     platform: "linkedin",
     dbPlatform: "linkedin",
-    label: "LinkedIn",
-    cronName: "linkedin-cron",
-    schedule: "0 */4 * * *",
-    kind: "publish",
+    label: "LinkedIn Pipeline",
+    cronName: "linkedin-pipeline",
+    schedule: "0 12 * * *",
+    kind: "pipeline",
   },
 ];
 
@@ -221,6 +221,48 @@ export async function POST(request: Request) {
           description: "Queue each video on the TikTok channel.",
           detail: "Skipped (dry run) — would call Buffer and insert posts with status=sent_to_buffer.",
         });
+      } else if (job.platform === "linkedin") {
+        // linkedin_pipeline: read recent Facebook posts (last 48h,
+        // status=sent_to_buffer), dedup against LinkedIn, requeue same
+        // media on Buffer's LinkedIn channel. No content-gen call.
+        const { data: recentFb } = await supabase
+          .from("posts")
+          .select("id, caption")
+          .eq("platform", "facebook")
+          .eq("status", "sent_to_buffer")
+          .gte("created_at", cutoff48h);
+
+        let candidateCount = 0;
+        if (recentFb && recentFb.length > 0) {
+          const captions = recentFb
+            .map((p) => p.caption)
+            .filter((c): c is string => !!c);
+          if (captions.length > 0) {
+            const { data: existingLi } = await supabase
+              .from("posts")
+              .select("caption")
+              .eq("platform", "linkedin")
+              .in("caption", captions);
+            const existing = new Set(
+              (existingLi ?? [])
+                .map((p) => p.caption)
+                .filter((c): c is string => !!c),
+            );
+            candidateCount = captions.filter((c) => !existing.has(c)).length;
+          }
+        }
+
+        steps.push({
+          name: "Phase 1 — Read recent Facebook posts",
+          description: "Pull posts.platform=facebook from the last 48h, dedup against LinkedIn.",
+          detail: `${recentFb?.length ?? 0} recent Facebook post(s) found; ${candidateCount} would become LinkedIn candidates after dedup.`,
+        });
+        steps.push({
+          name: "Phase 2 — Send to Buffer",
+          description: "Queue each image on the LinkedIn channel with caption='Agree?' — reuses the Facebook storage path, no re-render.",
+          detail: "Skipped (dry run) — would call Buffer and insert posts with status=sent_to_buffer.",
+        });
+        wouldPublish = candidateCount;
       } else {
         // facebook_pipeline
         // Phase 1: read recent TikTok posts from DB (last 48h, status=sent_to_buffer),
