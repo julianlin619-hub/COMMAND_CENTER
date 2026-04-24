@@ -62,6 +62,16 @@ def refresh_oauth_token(
     response = httpx.post(token_url, data=data, timeout=10)
     # If the refresh token is invalid/expired, this raises an HTTPStatusError.
     # That signals the platform adapter to re-authenticate from scratch.
+    # Log the response body on failure — Google/Meta/etc. return the actual
+    # reason (invalid_grant, invalid_client, etc.) in the body, which is the
+    # only way to tell "token revoked" apart from "wrong client secret".
+    if not response.is_success:
+        logger.error(
+            "OAuth token refresh failed: %s %s — body: %s",
+            response.status_code,
+            token_url,
+            response.text,
+        )
     response.raise_for_status()
     token_data = response.json()
     access_token = token_data["access_token"]
