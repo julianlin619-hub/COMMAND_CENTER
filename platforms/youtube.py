@@ -249,6 +249,14 @@ class YouTube(PlatformBase):
             headers=self._auth_headers(),
             timeout=_REQUEST_TIMEOUT,
         )
+        # Log the exact payload we sent when the update fails — YouTube's
+        # error messages are generic (e.g. invalidPublishAt is a catch-all),
+        # so seeing the payload side-by-side with the rejection is often the
+        # only way to tell what's actually being rejected.
+        if not resp.is_success:
+            logger.error(
+                "videos.update rejected for %s — payload: %s", video_id, payload
+            )
         _raise_for_youtube_error(resp)
 
     # ── Captions ─────────────────────────────────────────────────────
