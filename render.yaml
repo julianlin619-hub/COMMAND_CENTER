@@ -42,6 +42,19 @@ services:
         sync: false
       - key: DASHBOARD_URL
         value: https://command-center-drnj.onrender.com
+      # YouTube cron is *also* run from the dashboard via the "Run cron now"
+      # UI button (dashboard/src/app/api/cron/run/route.ts spawns python).
+      # Keep these in sync with youtube-cron-second's envVars — rotating on
+      # only one service will cause the UI button to silently diverge from
+      # the scheduled cron.
+      - key: YOUTUBE_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_REFRESH_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
 
   # ── Cron Jobs (Python) ─────────────────────────────────────────────────
   # IMPORTANT: Update the schedule values to match your actual posting cadence.
