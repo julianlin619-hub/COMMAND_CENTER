@@ -1,22 +1,26 @@
 /**
  * POST /api/tiktok/manual-upload
  *
- * User-triggered manual upload path. Accepts an mp4, stores it in Supabase
- * Storage, signs a 7-day URL, and fans out the same video to Buffer's TikTok
- * AND YouTube Shorts queues (schedulingType=automatic + mode=addToQueue →
- * Buffer picks the next slot per channel). Records one `posts` row per
- * platform, both referencing the same storage path.
+ * Single user-triggered manual upload entry point. Accepts an mp4, stores
+ * it in Supabase Storage, signs a 7-day URL, and fans out the same video
+ * to Buffer's TikTok + YouTube Shorts + LinkedIn queues (schedulingType=
+ * automatic + mode=addToQueue → Buffer picks the next slot per channel).
+ * Records one `posts` row per successful platform, all referencing the
+ * same storage path.
  *
  * Body: multipart/form-data with `file` (video/mp4), `title`, `caption`.
- * Title is mandatory because YouTube requires a non-empty video title.
+ * Title is mandatory because YouTube requires a non-empty video title;
+ * LinkedIn ignores it but it's stored on the LinkedIn posts row anyway.
  *
- * Partial success: if the YouTube side fails after TikTok is already queued,
- * the response still returns 200 with `youtubeError` set. Buffer can't cleanly
- * un-queue the TikTok post so we don't pretend the whole request failed.
+ * Partial success: if YouTube and/or LinkedIn fail after TikTok is already
+ * queued, the response still returns 200 with `youtubeError` / `linkedinError`
+ * set. Buffer can't cleanly un-queue the TikTok post so we don't pretend
+ * the whole request failed.
  *
- * The source mp4 is deleted from Storage 3 days after Buffer publishes BOTH
- * posts (via `cron/tiktok_storage_cleanup.py`). `metadata.source='manual_upload'`
- * is the flag the cleanup cron scans for.
+ * The source mp4 is deleted from Storage 3 days after Buffer publishes
+ * every recorded post (via `cron/tiktok_storage_cleanup.py`, which groups
+ * by storage path). `metadata.source='manual_upload'` is the flag the
+ * cleanup cron scans for.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -32,6 +36,10 @@ export const dynamic = "force-dynamic";
 // protects against accidental multi-gigabyte uploads that would blow the
 // serverless runtime's memory.
 const MAX_FILE_BYTES = 250 * 1024 * 1024;
+
+// LinkedIn allows up to 3000 chars in a post body. sendToBuffer defaults to
+// TikTok's 150-char truncation, so we override per-call for LinkedIn.
+const LINKEDIN_CAPTION_LIMIT = 3000;
 
 const PG_UNIQUE_VIOLATION = "23505";
 
@@ -234,8 +242,8 @@ export async function POST(req: NextRequest) {
   }
 
   // 6. If YouTube succeeded, record its posts row too. Same storage path so
-  //    the cleanup cron can group both rows and only delete the file after
-  //    BOTH Buffer sentAt windows pass.
+  //    the cleanup cron can group all rows and only delete the file after
+  //    every Buffer sentAt window passes.
   if (youtubeBufferId) {
     const { error: ytInsertError } = await supabase
       .from("posts")
@@ -270,11 +278,65 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // 7. Fan out to Buffer's LinkedIn channel. Same partial-success contract
+  //    as YouTube — TikTok is already queued, can't be un-queued, so any
+  //    LinkedIn failure is surfaced via linkedinError without rolling back.
+  let linkedinBufferId: string | undefined;
+  let linkedinError: string | undefined;
+  try {
+    const liChannelId = await getChannelId(undefined, "linkedin");
+    linkedinBufferId = await sendToBuffer(
+      liChannelId,
+      caption,
+      signed.signedUrl,
+      "video",
+      { captionLimit: LINKEDIN_CAPTION_LIMIT },
+    );
+  } catch (err) {
+    linkedinError = (err as Error).message;
+    console.error("Buffer LinkedIn send failed:", linkedinError);
+  }
+
+  // 8. If LinkedIn succeeded, record its posts row too.
+  if (linkedinBufferId) {
+    const { error: liInsertError } = await supabase
+      .from("posts")
+      .insert({
+        platform: "linkedin",
+        status: "sent_to_buffer",
+        title,
+        caption,
+        media_type: "video",
+        media_urls: [storagePath],
+        platform_post_id: linkedinBufferId,
+        metadata: {
+          source: "manual_upload",
+          buffer_post_id: linkedinBufferId,
+          storage_cleanup_status: "pending",
+        },
+      });
+    if (liInsertError) {
+      if (isUniqueViolation(liInsertError)) {
+        linkedinError = "A LinkedIn post with this exact caption already exists.";
+      } else {
+        linkedinError = `LinkedIn post insert failed: ${liInsertError.message}`;
+      }
+      console.error(
+        "LinkedIn post insert failed (Buffer id=%s): %s",
+        linkedinBufferId,
+        liInsertError.message,
+      );
+      linkedinBufferId = undefined;
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     postId: tiktokPost.id,
     tiktokBufferId,
     youtubeBufferId,
     youtubeError,
+    linkedinBufferId,
+    linkedinError,
   });
 }

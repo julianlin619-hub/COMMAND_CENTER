@@ -1,16 +1,17 @@
 "use client";
 
 /**
- * Manual Upload Dialog (TikTok + YouTube Shorts).
+ * Manual Upload Dialog (TikTok + YouTube Shorts + LinkedIn).
  *
  * File picker + title + caption → POST /api/tiktok/manual-upload. On success,
- * the API has queued the video on Buffer's TikTok channel AND YouTube Shorts
- * channel (next open slot on each). The dialog shows both Buffer post IDs —
- * or a partial-success state if YouTube failed — and stays open so the user
- * can confirm, mirroring ig-pipeline-dialog's idle/running/success/error
- * pattern.
+ * the API has queued the video on Buffer's TikTok, YouTube Shorts, AND
+ * LinkedIn channels (next open slot on each). The dialog shows every
+ * Buffer post ID — or a partial-success state if YouTube and/or LinkedIn
+ * failed — and stays open so the user can confirm, mirroring
+ * ig-pipeline-dialog's idle/running/success/error pattern.
  *
- * Title is required: YouTube rejects video inserts without one.
+ * Title is required: YouTube rejects video inserts without one. LinkedIn
+ * ignores it but the row stores it for record-keeping.
  */
 
 import { useState } from "react";
@@ -50,6 +51,8 @@ export function TikTokUploadDialog({
   const [tiktokBufferId, setTiktokBufferId] = useState<string | null>(null);
   const [youtubeBufferId, setYoutubeBufferId] = useState<string | null>(null);
   const [youtubeError, setYoutubeError] = useState<string | null>(null);
+  const [linkedinBufferId, setLinkedinBufferId] = useState<string | null>(null);
+  const [linkedinError, setLinkedinError] = useState<string | null>(null);
 
   function reset() {
     setFile(null);
@@ -60,6 +63,8 @@ export function TikTokUploadDialog({
     setTiktokBufferId(null);
     setYoutubeBufferId(null);
     setYoutubeError(null);
+    setLinkedinBufferId(null);
+    setLinkedinError(null);
   }
 
   function handleOpenChange(next: boolean) {
@@ -82,6 +87,8 @@ export function TikTokUploadDialog({
     setTiktokBufferId(null);
     setYoutubeBufferId(null);
     setYoutubeError(null);
+    setLinkedinBufferId(null);
+    setLinkedinError(null);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -96,6 +103,8 @@ export function TikTokUploadDialog({
         tiktokBufferId?: string;
         youtubeBufferId?: string;
         youtubeError?: string;
+        linkedinBufferId?: string;
+        linkedinError?: string;
         error?: string;
       };
       if (!res.ok || !data.ok) {
@@ -105,10 +114,13 @@ export function TikTokUploadDialog({
       setTiktokBufferId(data.tiktokBufferId ?? null);
       setYoutubeBufferId(data.youtubeBufferId ?? null);
       setYoutubeError(data.youtubeError ?? null);
+      setLinkedinBufferId(data.linkedinBufferId ?? null);
+      setLinkedinError(data.linkedinError ?? null);
+      const anyError = !!(data.youtubeError || data.linkedinError);
       setMessage(
-        data.youtubeError
-          ? "TikTok queued, but the YouTube side failed — see below."
-          : "Video queued on Buffer's TikTok + YouTube Shorts channels.",
+        anyError
+          ? "TikTok queued, but at least one fan-out failed — see below."
+          : "Video queued on Buffer's TikTok + YouTube Shorts + LinkedIn channels.",
       );
     } catch (err) {
       setStatus("error");
@@ -122,12 +134,12 @@ export function TikTokUploadDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <UploadIcon className="size-4 text-[#ae5630]" />
-            Manual Upload · TikTok + YouTube Shorts
+            Manual Upload · TikTok + YouTube Shorts + LinkedIn
           </DialogTitle>
           <DialogDescription>
-            Queues the same mp4 on Buffer&apos;s TikTok and YouTube Shorts
-            channels (next open slot on each). The source file is removed from
-            storage 3 days after Buffer publishes both.
+            Queues the same mp4 on Buffer&apos;s TikTok, YouTube Shorts, and
+            LinkedIn channels (next open slot on each). The source file is
+            removed from storage 3 days after Buffer publishes them all.
           </DialogDescription>
         </DialogHeader>
 
@@ -176,30 +188,32 @@ export function TikTokUploadDialog({
             <Textarea
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
-              placeholder="Shown under the video on TikTok and used as the YouTube description"
+              placeholder="TikTok caption · YouTube description · LinkedIn post body"
               rows={3}
               disabled={status === "running"}
             />
             <p className="text-[11px] text-[var(--overview-fg)]/40">
-              {caption.length} chars · TikTok truncates at 150 · YouTube uses full text as description
+              {caption.length} chars · TikTok truncates at 150 · LinkedIn at 3000 · YouTube uses full text
             </p>
           </div>
 
-          {status !== "idle" && (
+          {status !== "idle" && (() => {
+            const anyError = !!(youtubeError || linkedinError);
+            return (
             <div
               className={`flex items-start gap-2 rounded-lg px-3 py-2 text-xs ${
-                status === "success" && !youtubeError
+                status === "success" && !anyError
                   ? "bg-[#8ca082]/10 text-[#8ca082]"
                   : status === "error"
                   ? "bg-red-500/10 text-red-400"
-                  : status === "success" && youtubeError
+                  : status === "success" && anyError
                   ? "bg-amber-500/10 text-amber-400"
                   : "bg-white/[0.04] text-[var(--overview-fg)]/70"
               }`}
             >
               {status === "running" && <LoaderIcon className="size-3.5 mt-0.5 shrink-0 animate-spin" />}
-              {status === "success" && !youtubeError && <CheckCircle2Icon className="size-3.5 mt-0.5 shrink-0" />}
-              {status === "success" && youtubeError && <XCircleIcon className="size-3.5 mt-0.5 shrink-0" />}
+              {status === "success" && !anyError && <CheckCircle2Icon className="size-3.5 mt-0.5 shrink-0" />}
+              {status === "success" && anyError && <XCircleIcon className="size-3.5 mt-0.5 shrink-0" />}
               {status === "error" && <XCircleIcon className="size-3.5 mt-0.5 shrink-0" />}
               <div className="min-w-0 space-y-0.5">
                 <p className="break-words">{message}</p>
@@ -218,9 +232,20 @@ export function TikTokUploadDialog({
                     YouTube failed: {youtubeError}
                   </p>
                 )}
+                {linkedinBufferId && (
+                  <p className="font-mono text-[var(--overview-fg)]/60">
+                    LinkedIn buffer id: {linkedinBufferId}
+                  </p>
+                )}
+                {linkedinError && (
+                  <p className="text-red-400 break-words">
+                    LinkedIn failed: {linkedinError}
+                  </p>
+                )}
               </div>
             </div>
-          )}
+            );
+          })()}
         </div>
 
         <div className="flex justify-end gap-2 pt-1">

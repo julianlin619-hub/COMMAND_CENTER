@@ -1,8 +1,10 @@
 /**
  * LinkedIn Platform Detail Page
  *
- * Single pathway: read recent Facebook posts (already-rendered quote cards)
- * and re-queue the same PNGs on Buffer's LinkedIn channel — no re-render.
+ * Pathway 1: read recent Facebook posts (already-rendered quote cards) and
+ * re-queue the same PNGs on Buffer's LinkedIn channel — no re-render.
+ * Pathway 2: user-triggered manual mp4 upload, queued on Buffer's LinkedIn
+ * channel via /api/linkedin/manual-upload.
  */
 
 import Link from "next/link";
@@ -10,6 +12,7 @@ import { getSupabaseClient } from "@/lib/supabase";
 import { AppShell } from "@/components/app-shell";
 import { PlatformIcon } from "@/components/platform-icon";
 import { PathwayCard, type PathwayLastRun } from "@/components/pathway-card";
+import { LinkedInManualUploadPathway } from "@/components/linkedin-manual-upload-pathway";
 import { ArrowLeftIcon } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +51,7 @@ export default async function LinkedInPage() {
           <div>
             <h1 className="text-xl font-semibold">LinkedIn</h1>
             <p className="text-sm text-muted-foreground">
-              Re-queue Facebook quote cards on LinkedIn
+              Facebook quote-card requeues + manual mp4 uploads
             </p>
           </div>
         </div>
@@ -64,6 +67,8 @@ export default async function LinkedInPage() {
         actions={[{ url: "/api/cron/run", body: { job: "linkedin-pipeline" } }]}
         lastRun={lastRun}
       />
+
+      <LinkedInManualUploadPathway number={2} />
     </AppShell>
   );
 }

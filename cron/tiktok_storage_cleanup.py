@@ -6,17 +6,19 @@ themselves stay live on their platforms — only the source mp4 in Supabase
 Storage is removed, 3 days after Buffer confirms every queued copy is live.
 
 Each manual upload writes one `posts` row per fan-out target (currently
-`platform='tiktok'` and `platform='youtube'`) pointing at the SAME storage
-path. This cron groups rows by storage path and only deletes the file once
-every row in the group is both published (Buffer sentAt set) AND past its
-3-day retention window. Per-row `published_at` is still mirrored from
-Buffer's sentAt as soon as the post goes live, so the posts view reflects
-publish state before the file is collected.
+`platform='tiktok'`, `platform='youtube'`, and `platform='linkedin'`)
+pointing at the SAME storage path. This cron groups rows by storage path
+and only deletes the file once every row in the group is both published
+(Buffer sentAt set) AND past its 3-day retention window. LinkedIn manual
+uploads have no fan-out, so their groups are size 1 — the same logic
+applies. Per-row `published_at` is still mirrored from Buffer's sentAt as
+soon as the post goes live, so the posts view reflects publish state
+before the file is collected.
 
 Scan predicate per row:
   metadata->>'source'         = 'manual_upload'
   metadata->>'storage_cleanup_status' = 'pending'
-  platform                    in ('tiktok','youtube')
+  platform                    in ('tiktok','youtube','linkedin')
 
 Idempotency: a row flips to `done` only after the Storage delete succeeds
 (or the row has no media_urls to delete). A failed Storage call leaves the
@@ -44,7 +46,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-MANUAL_UPLOAD_PLATFORMS = ("tiktok", "youtube")
+MANUAL_UPLOAD_PLATFORMS = ("tiktok", "youtube", "linkedin")
 RETENTION = timedelta(days=3)
 
 
