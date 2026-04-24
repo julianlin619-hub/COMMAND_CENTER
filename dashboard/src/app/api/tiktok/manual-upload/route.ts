@@ -1,15 +1,21 @@
 /**
  * POST /api/tiktok/manual-upload
  *
- * User-triggered manual upload path for TikTok. Accepts an mp4, stores it in
- * Supabase Storage, signs a 7-day URL, queues it on Buffer's TikTok channel
- * (schedulingType=automatic + mode=addToQueue → next open slot), and records
- * the post in Supabase.
+ * User-triggered manual upload path. Accepts an mp4, stores it in Supabase
+ * Storage, signs a 7-day URL, and fans out the same video to Buffer's TikTok
+ * AND YouTube Shorts queues (schedulingType=automatic + mode=addToQueue →
+ * Buffer picks the next slot per channel). Records one `posts` row per
+ * platform, both referencing the same storage path.
  *
  * Body: multipart/form-data with `file` (video/mp4), `title`, `caption`.
+ * Title is mandatory because YouTube requires a non-empty video title.
  *
- * The source mp4 is deleted from Storage 3 days after Buffer publishes it
- * (via `cron/tiktok_storage_cleanup.py`). `metadata.source='manual_upload'`
+ * Partial success: if the YouTube side fails after TikTok is already queued,
+ * the response still returns 200 with `youtubeError` set. Buffer can't cleanly
+ * un-queue the TikTok post so we don't pretend the whole request failed.
+ *
+ * The source mp4 is deleted from Storage 3 days after Buffer publishes BOTH
+ * posts (via `cron/tiktok_storage_cleanup.py`). `metadata.source='manual_upload'`
  * is the flag the cleanup cron scans for.
  */
 
@@ -17,7 +23,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { getSupabaseClient } from "@/lib/supabase";
 import { verifyApiAuth } from "@/lib/auth";
-import { getChannelId, sendToBuffer } from "@/lib/buffer";
+import { getChannelId, sendToBuffer, type YouTubeMetadata } from "@/lib/buffer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +34,17 @@ export const dynamic = "force-dynamic";
 const MAX_FILE_BYTES = 250 * 1024 * 1024;
 
 const PG_UNIQUE_VIOLATION = "23505";
+
+// Defaults applied to every YouTube Shorts upload. Pulled out so they're
+// easy to scan and tweak. `title` is supplied per-upload from the dialog.
+const YOUTUBE_DEFAULTS: Omit<YouTubeMetadata, "title"> = {
+  categoryId: "27", // Education
+  privacy: "public",
+  madeForKids: false,
+  notifySubscribers: true,
+  embeddable: true,
+  license: "youtube",
+};
 
 function isUniqueViolation(err: unknown): boolean {
   const e = err as { code?: string; message?: string } | null;
@@ -62,6 +79,12 @@ export async function POST(req: NextRequest) {
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Missing `file` field" }, { status: 400 });
+  }
+  if (!title) {
+    return NextResponse.json(
+      { error: "Missing `title` field — required for YouTube Shorts" },
+      { status: 400 },
+    );
   }
   if (!caption) {
     return NextResponse.json({ error: "Missing `caption` field" }, { status: 400 });
@@ -119,13 +142,18 @@ export async function POST(req: NextRequest) {
 
   // 3. Queue the video on Buffer's TikTok channel. sendToBuffer already
   //    truncates the caption to TikTok's 150-char limit.
-  let channelId: string;
-  let bufferId: string;
+  let tiktokChannelId: string;
+  let tiktokBufferId: string;
   try {
-    channelId = await getChannelId(undefined, "tiktok");
-    bufferId = await sendToBuffer(channelId, caption, signed.signedUrl, "video");
+    tiktokChannelId = await getChannelId(undefined, "tiktok");
+    tiktokBufferId = await sendToBuffer(
+      tiktokChannelId,
+      caption,
+      signed.signedUrl,
+      "video",
+    );
   } catch (err) {
-    console.error("Buffer send failed:", (err as Error).message);
+    console.error("Buffer TikTok send failed:", (err as Error).message);
     // Orphan file cleanup: we haven't written a posts row yet, so no DB state
     // to roll back. Removing the Storage file avoids paying for dead bytes.
     await supabase.storage.from("media").remove([storagePath]);
@@ -135,49 +163,118 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 4. Record the post. platform_post_id holds the Buffer ID so the cleanup
-  //    cron can query Buffer for sentAt later.
-  const { data: post, error: insertError } = await supabase
+  // 4. Record the TikTok post. platform_post_id holds the Buffer ID so the
+  //    cleanup cron can query Buffer for sentAt later.
+  const { data: tiktokPost, error: tiktokInsertError } = await supabase
     .from("posts")
     .insert({
       platform: "tiktok",
       status: "sent_to_buffer",
-      title: title || null,
+      title,
       caption,
       media_type: "video",
       media_urls: [storagePath],
-      platform_post_id: bufferId,
+      platform_post_id: tiktokBufferId,
       metadata: {
         source: "manual_upload",
-        buffer_post_id: bufferId,
+        buffer_post_id: tiktokBufferId,
         storage_cleanup_status: "pending",
       },
     })
     .select("id")
     .single();
 
-  if (insertError || !post) {
+  if (tiktokInsertError || !tiktokPost) {
     // Buffer has already accepted the post — rolling back its queue is fiddly
     // and risky. Better to leave the video queued and surface the Buffer ID
     // so the user can reconcile manually.
-    if (isUniqueViolation(insertError)) {
+    if (isUniqueViolation(tiktokInsertError)) {
       return NextResponse.json(
         {
           error: "A TikTok post with this exact caption already exists.",
-          bufferId,
+          tiktokBufferId,
         },
         { status: 409 },
       );
     }
-    console.error("Post insert failed (Buffer id=%s): %s", bufferId, insertError?.message);
+    console.error(
+      "TikTok post insert failed (Buffer id=%s): %s",
+      tiktokBufferId,
+      tiktokInsertError?.message,
+    );
     return NextResponse.json(
       {
-        error: `Post insert failed: ${insertError?.message}`,
-        bufferId,
+        error: `Post insert failed: ${tiktokInsertError?.message}`,
+        tiktokBufferId,
       },
       { status: 500 },
     );
   }
 
-  return NextResponse.json({ ok: true, postId: post.id, bufferId });
+  // 5. Fan out to Buffer's YouTube channel. Failures here are reported as
+  //    partial success — TikTok is already queued and we can't un-queue it,
+  //    so surface the YouTube error without rolling anything back.
+  let youtubeBufferId: string | undefined;
+  let youtubeError: string | undefined;
+  try {
+    const ytChannelId = await getChannelId(undefined, "youtube");
+    youtubeBufferId = await sendToBuffer(
+      ytChannelId,
+      caption,
+      signed.signedUrl,
+      "video",
+      {
+        youtube: { title, ...YOUTUBE_DEFAULTS },
+        captionLimit: 5000,
+      },
+    );
+  } catch (err) {
+    youtubeError = (err as Error).message;
+    console.error("Buffer YouTube send failed:", youtubeError);
+  }
+
+  // 6. If YouTube succeeded, record its posts row too. Same storage path so
+  //    the cleanup cron can group both rows and only delete the file after
+  //    BOTH Buffer sentAt windows pass.
+  if (youtubeBufferId) {
+    const { error: ytInsertError } = await supabase
+      .from("posts")
+      .insert({
+        platform: "youtube",
+        status: "sent_to_buffer",
+        title,
+        caption,
+        media_type: "video",
+        media_urls: [storagePath],
+        platform_post_id: youtubeBufferId,
+        metadata: {
+          source: "manual_upload",
+          buffer_post_id: youtubeBufferId,
+          storage_cleanup_status: "pending",
+        },
+      });
+    if (ytInsertError) {
+      // Buffer accepted the YouTube post but the DB row failed. Treat this
+      // as a YouTube-side partial failure so the user can reconcile.
+      if (isUniqueViolation(ytInsertError)) {
+        youtubeError = "A YouTube post with this exact caption already exists.";
+      } else {
+        youtubeError = `YouTube post insert failed: ${ytInsertError.message}`;
+      }
+      console.error(
+        "YouTube post insert failed (Buffer id=%s): %s",
+        youtubeBufferId,
+        ytInsertError.message,
+      );
+      youtubeBufferId = undefined;
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    postId: tiktokPost.id,
+    tiktokBufferId,
+    youtubeBufferId,
+    youtubeError,
+  });
 }

@@ -1,13 +1,16 @@
 "use client";
 
 /**
- * TikTok Manual Upload Dialog.
+ * Manual Upload Dialog (TikTok + YouTube Shorts).
  *
- * File picker + title + caption → POST /api/tiktok/manual-upload.
- * On success, the API has already queued the video on Buffer's TikTok
- * channel (next open slot) and recorded the post row; the dialog shows
- * the Buffer post ID and stays open so the user can confirm, mirroring
- * ig-pipeline-dialog's idle/running/success/error pattern.
+ * File picker + title + caption → POST /api/tiktok/manual-upload. On success,
+ * the API has queued the video on Buffer's TikTok channel AND YouTube Shorts
+ * channel (next open slot on each). The dialog shows both Buffer post IDs —
+ * or a partial-success state if YouTube failed — and stays open so the user
+ * can confirm, mirroring ig-pipeline-dialog's idle/running/success/error
+ * pattern.
+ *
+ * Title is required: YouTube rejects video inserts without one.
  */
 
 import { useState } from "react";
@@ -44,7 +47,9 @@ export function TikTokUploadDialog({
   const [caption, setCaption] = useState("");
   const [status, setStatus] = useState<UploadStatus>("idle");
   const [message, setMessage] = useState("");
-  const [bufferId, setBufferId] = useState<string | null>(null);
+  const [tiktokBufferId, setTiktokBufferId] = useState<string | null>(null);
+  const [youtubeBufferId, setYoutubeBufferId] = useState<string | null>(null);
+  const [youtubeError, setYoutubeError] = useState<string | null>(null);
 
   function reset() {
     setFile(null);
@@ -52,7 +57,9 @@ export function TikTokUploadDialog({
     setCaption("");
     setStatus("idle");
     setMessage("");
-    setBufferId(null);
+    setTiktokBufferId(null);
+    setYoutubeBufferId(null);
+    setYoutubeError(null);
   }
 
   function handleOpenChange(next: boolean) {
@@ -62,13 +69,19 @@ export function TikTokUploadDialog({
 
   const sizeOk = !file || file.size <= MAX_FILE_BYTES;
   const canSubmit =
-    status !== "running" && !!file && sizeOk && caption.trim().length > 0;
+    status !== "running" &&
+    !!file &&
+    sizeOk &&
+    title.trim().length > 0 &&
+    caption.trim().length > 0;
 
   async function submit() {
     if (!file) return;
     setStatus("running");
     setMessage("Uploading to Supabase and sending to Buffer…");
-    setBufferId(null);
+    setTiktokBufferId(null);
+    setYoutubeBufferId(null);
+    setYoutubeError(null);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -80,15 +93,23 @@ export function TikTokUploadDialog({
       });
       const data = (await res.json()) as {
         ok?: boolean;
-        bufferId?: string;
+        tiktokBufferId?: string;
+        youtubeBufferId?: string;
+        youtubeError?: string;
         error?: string;
       };
       if (!res.ok || !data.ok) {
         throw new Error(data.error ?? `Request failed (${res.status})`);
       }
       setStatus("success");
-      setBufferId(data.bufferId ?? null);
-      setMessage("Video queued on Buffer's TikTok channel.");
+      setTiktokBufferId(data.tiktokBufferId ?? null);
+      setYoutubeBufferId(data.youtubeBufferId ?? null);
+      setYoutubeError(data.youtubeError ?? null);
+      setMessage(
+        data.youtubeError
+          ? "TikTok queued, but the YouTube side failed — see below."
+          : "Video queued on Buffer's TikTok + YouTube Shorts channels.",
+      );
     } catch (err) {
       setStatus("error");
       setMessage((err as Error).message);
@@ -101,11 +122,12 @@ export function TikTokUploadDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <UploadIcon className="size-4 text-[#ae5630]" />
-            Manual TikTok Upload
+            Manual Upload · TikTok + YouTube Shorts
           </DialogTitle>
           <DialogDescription>
-            Queue an mp4 directly on Buffer&apos;s TikTok channel. The source
-            file is removed from storage 3 days after Buffer publishes.
+            Queues the same mp4 on Buffer&apos;s TikTok and YouTube Shorts
+            channels (next open slot on each). The source file is removed from
+            storage 3 days after Buffer publishes both.
           </DialogDescription>
         </DialogHeader>
 
@@ -137,12 +159,12 @@ export function TikTokUploadDialog({
 
           <div className="space-y-1.5">
             <label className="text-[11px] font-medium tracking-[0.14em] uppercase text-[var(--overview-fg)]/55">
-              Title <span className="text-[var(--overview-fg)]/30 normal-case tracking-normal">(internal, not posted)</span>
+              Title <span className="text-[var(--overview-fg)]/30 normal-case tracking-normal">(YouTube Shorts · required)</span>
             </label>
             <Input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Internal label for this upload"
+              placeholder="YouTube video title — posted as-is"
               disabled={status === "running"}
             />
           </div>
@@ -154,33 +176,46 @@ export function TikTokUploadDialog({
             <Textarea
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
-              placeholder="What TikTok will show under the video"
+              placeholder="Shown under the video on TikTok and used as the YouTube description"
               rows={3}
               disabled={status === "running"}
             />
             <p className="text-[11px] text-[var(--overview-fg)]/40">
-              {caption.length} chars · TikTok truncates at 150
+              {caption.length} chars · TikTok truncates at 150 · YouTube uses full text as description
             </p>
           </div>
 
           {status !== "idle" && (
             <div
               className={`flex items-start gap-2 rounded-lg px-3 py-2 text-xs ${
-                status === "success"
+                status === "success" && !youtubeError
                   ? "bg-[#8ca082]/10 text-[#8ca082]"
                   : status === "error"
                   ? "bg-red-500/10 text-red-400"
+                  : status === "success" && youtubeError
+                  ? "bg-amber-500/10 text-amber-400"
                   : "bg-white/[0.04] text-[var(--overview-fg)]/70"
               }`}
             >
               {status === "running" && <LoaderIcon className="size-3.5 mt-0.5 shrink-0 animate-spin" />}
-              {status === "success" && <CheckCircle2Icon className="size-3.5 mt-0.5 shrink-0" />}
+              {status === "success" && !youtubeError && <CheckCircle2Icon className="size-3.5 mt-0.5 shrink-0" />}
+              {status === "success" && youtubeError && <XCircleIcon className="size-3.5 mt-0.5 shrink-0" />}
               {status === "error" && <XCircleIcon className="size-3.5 mt-0.5 shrink-0" />}
-              <div className="min-w-0">
+              <div className="min-w-0 space-y-0.5">
                 <p className="break-words">{message}</p>
-                {bufferId && (
+                {tiktokBufferId && (
                   <p className="mt-0.5 font-mono text-[var(--overview-fg)]/60">
-                    Buffer post: {bufferId}
+                    TikTok buffer id: {tiktokBufferId}
+                  </p>
+                )}
+                {youtubeBufferId && (
+                  <p className="font-mono text-[var(--overview-fg)]/60">
+                    YouTube buffer id: {youtubeBufferId}
+                  </p>
+                )}
+                {youtubeError && (
+                  <p className="text-red-400 break-words">
+                    YouTube failed: {youtubeError}
                   </p>
                 )}
               </div>

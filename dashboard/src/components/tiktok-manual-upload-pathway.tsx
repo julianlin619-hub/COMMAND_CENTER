@@ -23,8 +23,8 @@ import { TikTokUploadDialog } from "@/components/tiktok-upload-dialog";
 const STEPS = [
   "Pick mp4 from your computer",
   "Upload to Supabase Storage",
-  "Queue on Buffer (next TikTok slot)",
-  "Auto-delete storage file 3 days after publish",
+  "Queue on Buffer: TikTok + YouTube Shorts (next open slot each)",
+  "Auto-delete storage file 3 days after both publish",
 ];
 
 export function TikTokManualUploadPathway({ number }: { number: number }) {

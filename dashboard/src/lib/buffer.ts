@@ -103,6 +103,34 @@ export async function getChannelId(
   return channel.id;
 }
 
+// Full YouTube publisher metadata Buffer requires. Buffer surfaced a
+// "YouTube posts require a category" InvalidInputError when only `title`
+// was set, so we pass the full policy block on every YouTube call.
+// Field names follow YouTube Data API's videos.insert snippet+status
+// naming — adjust here if Buffer's schema rejects a specific key.
+export type YouTubeMetadata = {
+  title: string;
+  // Numeric categoryId as a string. 27 = Education. Full list:
+  // https://developers.google.com/youtube/v3/docs/videoCategories/list
+  categoryId: string;
+  privacy: "public" | "unlisted" | "private";
+  // COPPA flag. Required on every upload since 2020.
+  madeForKids: boolean;
+  notifySubscribers: boolean;
+  embeddable: boolean;
+  license: "youtube" | "creativeCommon";
+  // Omit entirely when empty — some publishers reject `[]`.
+  tags?: string[];
+};
+
+export type SendToBufferOptions = {
+  facebookPostType?: "post" | "story" | "reel";
+  youtube?: YouTubeMetadata;
+  // Overrides the caption truncation limit (default 150 for TikTok).
+  // YouTube callers pass 5000 so descriptions aren't amputated.
+  captionLimit?: number;
+};
+
 /**
  * Send content to Buffer's posting queue.
  *
@@ -118,8 +146,10 @@ export async function sendToBuffer(
   caption: string,
   mediaUrl: string,
   mediaType: "video" | "image" = "video",
-  facebookPostType?: "post" | "story" | "reel"
+  options: SendToBufferOptions = {}
 ): Promise<string> {
+  const { facebookPostType, youtube, captionLimit } = options;
+
   // Build assets payload based on media type.
   // Buffer's AssetsInput accepts: images, videos, documents, link
   const assets =
@@ -131,14 +161,21 @@ export async function sendToBuffer(
     channelId,
     schedulingType: "automatic",
     mode: "addToQueue",
-    text: truncateCaption(caption),
+    text: truncateCaption(caption, captionLimit ?? TIKTOK_CAPTION_LIMIT),
     assets,
   };
-  // Facebook requires metadata.facebook.type — Buffer's schema nests
-  // platform-specific fields under metadata, not on the top-level input.
-  if (facebookPostType) {
-    input.metadata = { facebook: { type: facebookPostType } };
+  // Buffer nests platform-specific fields under metadata, not on the
+  // top-level input. Facebook: { facebook: { type } }. YouTube: the full
+  // YouTubeMetadata block — title, categoryId, privacy, madeForKids, etc.
+  const metadata: Record<string, unknown> = {};
+  if (facebookPostType) metadata.facebook = { type: facebookPostType };
+  if (youtube) {
+    // Strip the optional `tags` key when empty/missing so Buffer doesn't
+    // see `tags: []` (some publishers reject an empty array).
+    const { tags, ...rest } = youtube;
+    metadata.youtube = tags && tags.length > 0 ? { ...rest, tags } : rest;
   }
+  if (Object.keys(metadata).length > 0) input.metadata = metadata;
 
   const data = await bufferRequest<{
     createPost: { post?: { id: string }; message?: string };

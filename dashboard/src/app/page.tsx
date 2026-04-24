@@ -81,6 +81,12 @@ const ACTIVE_PLATFORMS: PlatformEntry[] = [
     bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
   },
   {
+    key: "youtube",
+    platform: "youtube",
+    label: "YouTube",
+    bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
+  },
+  {
     key: "youtube-second",
     platform: "youtube_second",
     label: "YouTube (2nd)",
@@ -92,9 +98,7 @@ const ACTIVE_PLATFORMS: PlatformEntry[] = [
 // Paused platforms show "Pending" instead of deriving from cron_runs.
 const PAUSED_PLATFORMS = new Set(["instagram_2nd"]);
 
-const INACTIVE_PLATFORMS = [
-  { key: "youtube", label: "YouTube", icon: FaYoutube },
-];
+const INACTIVE_PLATFORMS: { key: string; label: string; icon: typeof FaYoutube }[] = [];
 
 /* One-line plain-English summary of what each active platform's cron does.
    Kept in sync with cron/ + render.yaml behavior. */
@@ -104,7 +108,7 @@ const PLATFORM_SUMMARIES: Record<string, string> = {
   "instagram-2nd":
     "Paused — waiting for the new Instagram account before automation resumes.",
   tiktok:
-    "Path 1: pulls @AlexHormozi outlier tweets (≥4,000 likes, past 48h) from Apify, renders branded quote-card videos\nPath 2: picks 1 tweet from TweetMasterBank (≥6,500 likes), renders branded quote-card video\nPath 3: manual upload — pick an mp4, queue it on Buffer's next TikTok slot (user-triggered from /tiktok)",
+    "Path 1: pulls @AlexHormozi outlier tweets (≥4,000 likes, past 48h) from Apify, renders branded quote-card videos\nPath 2: picks 1 tweet from TweetMasterBank (≥6,500 likes), renders branded quote-card video\nPath 3: manual upload — pick an mp4, fans out to Buffer's TikTok + YouTube Shorts queues (user-triggered from /tiktok)",
   facebook:
     "Re-uses TikTok's selected tweets from the past 48h, renders them as 1080×1080 PNG quote cards",
   linkedin:
@@ -113,6 +117,8 @@ const PLATFORM_SUMMARIES: Record<string, string> = {
     "Mirrors TikTok Path 1 reels to Instagram — same 1080×1920 MP4s, Buffer queue on the Hormozi IG account",
   "youtube-second":
     "Studio-first — bulk-upload drafts manually, daily cron (10 UTC) schedules the 10 earliest into fixed publish slots.",
+  youtube:
+    "Queued via the TikTok Manual Upload dialog on /tiktok — the same mp4 fans out to Buffer's YouTube Shorts channel, Buffer picks the slot.",
 };
 
 /* Computes the footer "Buffer" count + label for one platform.
@@ -274,34 +280,36 @@ export default async function DashboardHome() {
           ))}
         </div>
 
-        <div className="mt-12">
-          <SectionLabel tone="muted">Coming soon</SectionLabel>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-6 opacity-55">
-            {INACTIVE_PLATFORMS.map((p) => {
-              const Icon = p.icon;
-              return (
-                <div
-                  key={p.key}
-                  className="rounded-xl px-5 py-4 border"
-                  style={{
-                    backgroundColor: "rgba(255,255,255,0.015)",
-                    borderColor: "rgba(255,255,255,0.06)",
-                  }}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Icon
-                      className="h-[15px] w-[15px]"
-                      style={{ color: "rgba(237,234,224,0.55)" }}
-                    />
-                    <span className="text-[14px] font-medium text-[var(--overview-fg)]/70">
-                      {p.label}
-                    </span>
+        {INACTIVE_PLATFORMS.length > 0 && (
+          <div className="mt-12">
+            <SectionLabel tone="muted">Coming soon</SectionLabel>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-6 opacity-55">
+              {INACTIVE_PLATFORMS.map((p) => {
+                const Icon = p.icon;
+                return (
+                  <div
+                    key={p.key}
+                    className="rounded-xl px-5 py-4 border"
+                    style={{
+                      backgroundColor: "rgba(255,255,255,0.015)",
+                      borderColor: "rgba(255,255,255,0.06)",
+                    }}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Icon
+                        className="h-[15px] w-[15px]"
+                        style={{ color: "rgba(237,234,224,0.55)" }}
+                      />
+                      <span className="text-[14px] font-medium text-[var(--overview-fg)]/70">
+                        {p.label}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

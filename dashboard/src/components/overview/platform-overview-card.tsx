@@ -22,8 +22,7 @@ import {
 import { NextRunCountdown } from "./next-run-countdown";
 import { StatusPill, type OverviewStatus } from "./status-pill";
 
-/* Platform-key → react-icons mapping. Only covers active platforms; inactive
-   (YouTube, LinkedIn) are rendered by a separate card component below. */
+/* Platform-key → react-icons mapping for the home-page overview grid. */
 const ACTIVE_ICONS: Record<
   string,
   React.ComponentType<{ className?: string; style?: React.CSSProperties }>
@@ -33,6 +32,7 @@ const ACTIVE_ICONS: Record<
   tiktok: FaTiktok,
   facebook: FaFacebookF,
   instagram: FaInstagram,
+  youtube: FaYoutube,
   "youtube-second": FaYoutube,
 };
 

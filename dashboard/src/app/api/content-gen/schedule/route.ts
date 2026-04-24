@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
         caption,
         signedData.signedUrl,
         mediaType,
-        platform === "facebook" ? "post" : undefined
+        platform === "facebook" ? { facebookPostType: "post" } : {}
       );
 
       // 3. Record the post in Supabase with sent_to_buffer status.
