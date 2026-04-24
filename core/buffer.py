@@ -221,26 +221,23 @@ def get_buffer_post_sent_at(post_id: str) -> datetime | None:
     delete a manual-upload mp4 from Supabase Storage (3 days after Buffer
     confirms the post went live).
     """
+    # Buffer's `post(input:{id})` returns a plain Post object, not a union,
+    # so we select fields directly. `createPost` uses a union (PostActionSuccess
+    # | *Error), but reads don't — a mismatch here returns GRAPHQL_VALIDATION_FAILED.
     data = _buffer_request(
         """
         query GetPost($id: PostId!) {
             post(input: { id: $id }) {
-                ... on PostActionSuccess {
-                    post { id sentAt status }
-                }
-                ... on NotFoundError { message }
-                ... on UnauthorizedError { message }
-                ... on UnexpectedError { message }
+                id
+                sentAt
+                status
             }
         }
         """,
         {"id": post_id},
     )
 
-    result = data.get("post", {}) or {}
-    if result.get("message"):
-        raise RuntimeError(f"Buffer error: {result['message']}")
-    post = result.get("post") or {}
+    post = data.get("post") or {}
     sent = post.get("sentAt")
     if not sent:
         return None
