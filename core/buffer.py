@@ -49,7 +49,9 @@ def _buffer_request(query: str, variables: dict | None = None) -> dict:
             "Authorization": f"Bearer {token}",
         },
         json={"query": query, "variables": variables or {}},
-        timeout=30,
+        # createPost with a video asset is slow: Buffer downloads the file
+        # from our signed URL before responding, which can exceed 30s.
+        timeout=120,
     )
 
     if resp.status_code == 401:
