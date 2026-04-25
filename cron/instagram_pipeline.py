@@ -77,12 +77,19 @@ def main():
         # Compute the 48-hour cutoff in Python — Supabase's PostgREST filters
         # don't evaluate SQL expressions, so we must pass an ISO timestamp.
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+        # Skip rows whose metadata.source is "manual_upload" — those come from
+        # the dashboard's TikTok manual upload route (Pathway 3), which is
+        # explicitly scoped to TikTok + YouTube Shorts + LinkedIn. Re-fanning
+        # them out here would publish the same video to Instagram against the
+        # user's intent.
         result = client.table("posts").select("id, caption, media_urls").eq(
             "platform", "tiktok"
         ).eq(
             "status", "sent_to_buffer"
         ).gte(
             "created_at", cutoff
+        ).neq(
+            "metadata->>source", "manual_upload"
         ).execute()
 
         tiktok_posts = result.data or []
