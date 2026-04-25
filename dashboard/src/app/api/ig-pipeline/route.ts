@@ -1,15 +1,17 @@
 /**
  * Instagram auto-pipeline API route.
  *
- * This is the main orchestrator for the automated Instagram posting pipeline.
- * It runs the full flow: pick tweets → generate images → convert to video →
- * schedule on Instagram via Zernio.
+ * This is the main orchestrator for the automated Instagram (2nd) posting
+ * pipeline. It runs the full flow: pick tweets → generate images → convert
+ * to video → upload to Supabase Storage → schedule on Instagram via Buffer
+ * (alexhighlights2026 channel).
  *
- * Triggered by GitHub Actions on a daily schedule (see .github/workflows/ig-pipeline.yml).
- * Protected by CRON_SECRET bearer token to prevent unauthorized access.
+ * Triggered by GitHub Actions on a daily schedule (see .github/workflows/ig-pipeline.yml)
+ * AND from the dashboard "Run" button on /instagram-2nd. Auth via verifyApiAuth,
+ * which accepts both CRON_SECRET (for the workflow) and a Clerk session
+ * (for dashboard users) — see dashboard/src/lib/auth.ts.
  *
  * POST /api/ig-pipeline
- * Authorization: Bearer <CRON_SECRET>
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -19,18 +21,25 @@ import { pickRandomUnused, markUsed } from '@/lib/tweet-bank';
 import { normalizeTweetText } from '@/lib/tweet-normalize';
 import { renderTweetToBuffer } from '@/lib/canvas-render';
 import { renderPngToVideo } from '@/lib/video-render';
-import { getInstagramAccount, scheduleVideoToInstagram } from '@/lib/zernio';
+import { getChannelId, sendToBuffer } from '@/lib/buffer';
 import { getSupabaseClient } from '@/lib/supabase';
+import { verifyApiAuth } from '@/lib/auth';
 
 // How many tweets to process per pipeline run
 const BATCH_SIZE = 10;
 
+// Instagram's Graph API caption ceiling — Buffer rejects longer captions.
+const INSTAGRAM_CAPTION_LIMIT = 2200;
+
+// Buffer profile name for the second Instagram account.
+const BUFFER_IG_2ND_NAME =
+  process.env.BUFFER_INSTAGRAM_2ND_NAME ?? 'alexhighlights2026';
+
+// 7-day signed URL — Buffer may not pull the file for hours or days.
+const SIGNED_URL_EXPIRY_SECONDS = 604800;
+
 export async function POST(req: NextRequest) {
-  // Auth check — only allow requests with the correct CRON_SECRET token.
-  // This prevents random internet traffic from triggering the pipeline.
-  const authHeader = req.headers.get('authorization');
-  const secret = process.env.CRON_SECRET;
-  if (!secret || authHeader !== `Bearer ${secret}`) {
+  if (!(await verifyApiAuth(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -75,26 +84,76 @@ export async function POST(req: NextRequest) {
       generated.push({ hash: tweet.hash, text: tweet.text, pngPath, mp4Path });
     }
 
-    // 3. Schedule each video to Instagram via Zernio and mark used incrementally.
-    //    Zernio handles the actual Instagram API interaction. We mark each
-    //    tweet as "used" immediately after its schedule call succeeds — NOT
-    //    at the end of the loop. Previous code only marked used after ALL
-    //    tweets succeeded, so if Zernio failed on tweet #7 of 10 the first
-    //    6 stayed in the unused pool. Next run would regenerate and re-post
-    //    them to Instagram as duplicates.
-    const { accountId, profileId } = await getInstagramAccount();
+    // 3. Schedule each video to Instagram via Buffer and mark used incrementally.
+    //    Buffer downloads the MP4 from a Supabase Storage signed URL, so we
+    //    upload first and pass the signed URL to sendToBuffer. We mark each
+    //    tweet "used" immediately after Buffer accepts the post — NOT at the
+    //    end of the loop. Otherwise a partial-batch failure would leave
+    //    already-queued items in the unused pool, and the next run would
+    //    regenerate and re-post them as Instagram duplicates.
+    const channelId = await getChannelId(undefined, 'instagram', BUFFER_IG_2ND_NAME);
     const scheduled: { hash: string; postId: string }[] = [];
     const failedHashes: { hash: string; error: string }[] = [];
     for (const g of generated) {
+      const storagePath = `instagram_2nd/tweet-${g.hash}.mp4`;
+      let uploaded = false;
       try {
-        const post = await scheduleVideoToInstagram(accountId, profileId, g.text, g.mp4Path);
-        scheduled.push({ hash: g.hash, postId: post.id });
+        const fileBytes = await fs.readFile(g.mp4Path);
+        const { error: uploadError } = await supabase.storage
+          .from('media')
+          .upload(storagePath, fileBytes, { contentType: 'video/mp4', upsert: true });
+        if (uploadError) {
+          throw new Error(`Storage upload failed: ${uploadError.message}`);
+        }
+        uploaded = true;
+
+        const { data: signed, error: signError } = await supabase.storage
+          .from('media')
+          .createSignedUrl(storagePath, SIGNED_URL_EXPIRY_SECONDS);
+        if (signError || !signed?.signedUrl) {
+          throw new Error(`Failed to sign URL: ${signError?.message ?? 'unknown'}`);
+        }
+
+        const bufferPostId = await sendToBuffer(
+          channelId,
+          g.text,
+          signed.signedUrl,
+          'video',
+          { instagramPostType: 'reel', captionLimit: INSTAGRAM_CAPTION_LIMIT },
+        );
+
+        // Record one posts row per successful Buffer hand-off. The
+        // overview card's "Sent to Buffer (24h)" pill counts these rows.
+        // We don't fail the run if the insert errors — Buffer already
+        // accepted the post and rolling that back is fiddly, so log and
+        // continue.
+        const { error: insertError } = await supabase.from('posts').insert({
+          platform: 'instagram_2nd',
+          status: 'sent_to_buffer',
+          caption: g.text,
+          media_type: 'video',
+          media_urls: [storagePath],
+          platform_post_id: bufferPostId,
+        });
+        if (insertError) {
+          console.error(
+            `posts insert failed for instagram_2nd hash=${g.hash} (Buffer id=${bufferPostId}):`,
+            insertError.message,
+          );
+        }
+
+        scheduled.push({ hash: g.hash, postId: bufferPostId });
         // Commit this one tweet to the used pool right away so a later
         // failure in this batch can't cause it to be regenerated.
         markUsed('instagram', [g.hash]);
       } catch (err) {
+        // Orphan-file cleanup so a retry isn't blocked by a half-uploaded
+        // artifact at the same storage path.
+        if (uploaded) {
+          await supabase.storage.from('media').remove([storagePath]).catch(() => {});
+        }
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`Zernio scheduling failed for ${g.hash}:`, message);
+        console.error(`Buffer scheduling failed for ${g.hash}:`, message);
         failedHashes.push({ hash: g.hash, error: message });
       }
     }

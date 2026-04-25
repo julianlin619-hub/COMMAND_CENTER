@@ -1,10 +1,12 @@
 name: Instagram Daily Pipeline
 
 # Runs daily at 4:00 AM Las Vegas time (Pacific, UTC-7 PDT / UTC-8 PST)
-# Using UTC-7 (PDT): 4 AM PT = 11:00 UTC
+# Using UTC-7 (PDT): 4 AM PT = 11:00 UTC. Same daily slot as the TikTok and
+# Threads Render crons — IG-2nd doesn't depend on any of their output (it
+# pulls from its own CSV bank), so no staggering is needed.
 on:
-  # schedule:                        # Paused — waiting for new Instagram account
-  #   - cron: '0 11 * * *'
+  schedule:
+    - cron: '0 11 * * *'
   workflow_dispatch: # Allow manual runs from GitHub UI
 
 env:
@@ -52,13 +54,14 @@ jobs:
         working-directory: dashboard
         run: |
           {
-            echo "ZERNIO_API_KEY=${{ secrets.ZERNIO_API_KEY }}"
             echo "CRON_SECRET=${{ secrets.CRON_SECRET }}"
             echo "TWEET_BANK_DATA_DIR=${{ github.workspace }}/data"
             echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}"
             echo "SUPABASE_SERVICE_KEY=${{ secrets.SUPABASE_SERVICE_KEY }}"
             echo "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}"
             echo "CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}"
+            echo "BUFFER_ACCESS_TOKEN=${{ secrets.BUFFER_ACCESS_TOKEN }}"
+            echo "BUFFER_ORG_ID=${{ secrets.BUFFER_ORG_ID }}"
           } > .env.local
 
       - name: Build Next.js app
@@ -82,7 +85,7 @@ jobs:
           done
 
       # This is the main pipeline step — it triggers the full flow:
-      # pick tweets → generate images → convert to video → schedule on Instagram via Zernio
+      # pick tweets → generate images → convert to video → schedule on Instagram via Buffer (alexhighlights2026)
       - name: Run Instagram bank pipeline
         run: |
           echo "Running Instagram bank auto-pipeline..."

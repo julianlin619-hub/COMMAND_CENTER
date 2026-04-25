@@ -11,13 +11,16 @@ export interface CronScheduleInfo {
   description: string;   // human-readable local-time summary
 }
 
-// Mirrors render.yaml. Platforms without a cron (e.g. instagram_2nd) are absent.
+// Mirrors render.yaml + .github/workflows/ig-pipeline.yml (instagram_2nd
+// runs as a GitHub Actions workflow, not a Render cron, but the cadence
+// shows up identically on the dashboard).
 export const CRON_SCHEDULES: Record<string, CronScheduleInfo> = {
-  threads:   { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
-  tiktok:    { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
-  facebook:  { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
-  instagram: { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
-  linkedin:  { schedule: "0 12 * * *",  description: "Daily at 5:00 AM PDT" },
+  threads:       { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
+  tiktok:        { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
+  instagram_2nd: { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
+  facebook:      { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
+  instagram:     { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
+  linkedin:      { schedule: "0 12 * * *",  description: "Daily at 5:00 AM PDT" },
 };
 
 /** Compute the next UTC run time from a simple cron pattern. */

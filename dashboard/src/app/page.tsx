@@ -54,7 +54,7 @@ const ACTIVE_PLATFORMS: PlatformEntry[] = [
     key: "instagram-2nd",
     platform: "instagram_2nd",
     label: "Instagram (2nd)",
-    bufferMetric: { kind: "hidden" },
+    bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
   },
   {
     key: "tiktok",
@@ -96,7 +96,7 @@ const ACTIVE_PLATFORMS: PlatformEntry[] = [
 ];
 
 // Paused platforms show "Pending" instead of deriving from cron_runs.
-const PAUSED_PLATFORMS = new Set(["instagram_2nd"]);
+const PAUSED_PLATFORMS = new Set<string>([]);
 
 const INACTIVE_PLATFORMS: { key: string; label: string; icon: typeof FaYoutube }[] = [];
 
@@ -106,7 +106,7 @@ const PLATFORM_SUMMARIES: Record<string, string> = {
   threads:
     "Path 1: scrapes new @AlexHormozi tweets from the past 24h via Apify\nPath 2: picks 5 random tweets from TweetMasterBank CSV",
   "instagram-2nd":
-    "Paused — waiting for the new Instagram account before automation resumes.",
+    "Picks tweets from TweetMasterBank, renders branded quote-card 5s reels (PNG → MP4), schedules to the alexhighlights2026 IG via Buffer.",
   tiktok:
     "Path 1: pulls @AlexHormozi outlier tweets (≥4,000 likes, past 48h) from Apify, renders branded quote-card videos\nPath 2: picks 1 tweet from TweetMasterBank (≥6,500 likes), renders branded quote-card video\nPath 3: manual upload — pick an mp4, fans out to Buffer's TikTok + YouTube Shorts queues (user-triggered from /tiktok)",
   facebook:

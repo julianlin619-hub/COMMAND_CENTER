@@ -72,10 +72,14 @@ export function truncateCaption(
  *
  * @param orgId - Buffer org ID. Defaults to BUFFER_ORG_ID env var.
  * @param service - Buffer service name: 'tiktok', 'facebook', etc.
+ * @param name - Optional channel name (case-insensitive) to disambiguate
+ *   when an org has multiple channels for the same service (e.g., two
+ *   Instagram profiles). Without it, the first match wins.
  */
 export async function getChannelId(
   orgId: string | undefined,
-  service: string
+  service: string,
+  name?: string
 ): Promise<string> {
   const org = orgId || process.env.BUFFER_ORG_ID;
   if (!org) throw new Error("BUFFER_ORG_ID env var not set");
@@ -94,10 +98,14 @@ export async function getChannelId(
     { orgId: org }
   );
 
-  const channel = data.channels.find((c) => c.service === service);
+  const wantName = name?.toLowerCase();
+  const channel = data.channels.find(
+    (c) => c.service === service && (!wantName || c.name.toLowerCase() === wantName)
+  );
   if (!channel) {
+    const suffix = name ? ` named "${name}"` : "";
     throw new Error(
-      `No ${service} channel connected in Buffer. Connect ${service} at buffer.com first.`
+      `No ${service} channel${suffix} connected in Buffer. Connect ${service} at buffer.com first.`
     );
   }
   return channel.id;
@@ -125,6 +133,10 @@ export type YouTubeMetadata = {
 
 export type SendToBufferOptions = {
   facebookPostType?: "post" | "story" | "reel";
+  // Instagram requires metadata.instagram.type on every post. Reels also
+  // need shouldShareToFeed=true to surface in the main feed (Buffer adds
+  // that automatically when type === "reel").
+  instagramPostType?: "post" | "story" | "reel";
   youtube?: YouTubeMetadata;
   // Overrides the caption truncation limit (default 150 for TikTok).
   // YouTube callers pass 5000 so descriptions aren't amputated.
@@ -148,7 +160,7 @@ export async function sendToBuffer(
   mediaType: "video" | "image" = "video",
   options: SendToBufferOptions = {}
 ): Promise<string> {
-  const { facebookPostType, youtube, captionLimit } = options;
+  const { facebookPostType, instagramPostType, youtube, captionLimit } = options;
 
   // Build assets payload based on media type.
   // Buffer's AssetsInput accepts: images, videos, documents, link
@@ -169,6 +181,15 @@ export async function sendToBuffer(
   // YouTubeMetadata block — title, categoryId, privacy, madeForKids, etc.
   const metadata: Record<string, unknown> = {};
   if (facebookPostType) metadata.facebook = { type: facebookPostType };
+  if (instagramPostType) {
+    // 1080x1920 vertical videos belong in the Reels tab; shouldShareToFeed
+    // also pushes them into the main feed so they aren't only discoverable
+    // via the Reels surface. Mirrors core/buffer.py:181-197.
+    metadata.instagram = {
+      type: instagramPostType,
+      ...(instagramPostType === "reel" ? { shouldShareToFeed: true } : {}),
+    };
+  }
   if (youtube) {
     // Strip the optional `tags` key when empty/missing so Buffer doesn't
     // see `tags: []` (some publishers reject an empty array).
