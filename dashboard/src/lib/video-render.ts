@@ -3,10 +3,12 @@
  *
  * Takes a static PNG image and creates a 5-second MP4 video from it.
  * Instagram requires video (Reels) for this content format, so we convert
- * the rendered tweet image into a short looping video with silent audio.
+ * the rendered tweet image into a short looping video with no audio track.
  *
- * The silent audio track is required because Instagram may reject videos
- * without an audio stream — even if the audio is silence.
+ * Audio is intentionally omitted: a previous version muxed in a silent PCM
+ * track encoded as AAC, which produced a faint buzz on playback. Buffer
+ * accepts audio-less reels for the alexhighlights2026 queue, so we just
+ * skip the audio stream entirely.
  *
  * Uses the system-installed ffmpeg binary (installed via apt in GitHub Actions).
  * fluent-ffmpeg is an optionalDependency — this module only runs in the
@@ -17,8 +19,6 @@ export async function renderPngToVideo(inputPath: string, outputPath: string): P
   // Lazy-load fluent-ffmpeg to avoid crashing environments where it's not installed
   const ffmpegModule = await import('fluent-ffmpeg');
   const ffmpeg = ffmpegModule.default;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const path = require('path') as typeof import('path');
 
   // Use system ffmpeg (installed via apt-get in GitHub Actions).
   // If FFMPEG_PATH is set, use that; otherwise rely on PATH lookup.
@@ -26,49 +26,22 @@ export async function renderPngToVideo(inputPath: string, outputPath: string): P
     ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const fs = require('fs') as typeof import('fs');
-  // Build temp paths using path utilities rather than string-replace on the
-  // output path. Replace-based naming could misbehave if the directory also
-  // contained ".mp4" (e.g. `/tmp/foo.mp4.d/out.mp4`) and leave orphans.
-  const dir = path.dirname(outputPath);
-  const base = path.basename(outputPath, path.extname(outputPath));
-  const tempVideo = path.join(dir, `${base}.tmp.mp4`);
-  const silentRaw = path.join(dir, `${base}.raw`);
-
-  try {
-    // Create a raw silent PCM file (44100Hz * 2 channels * 2 bytes * 5 seconds)
-    const silentBuffer = Buffer.alloc(44100 * 2 * 2 * 5, 0);
-    fs.writeFileSync(silentRaw, silentBuffer);
-
-    // Step 1: Create video without audio
-    await new Promise<void>((resolve, reject) => {
-      ffmpeg()
-        .input(inputPath)
-        .inputOptions(['-loop 1'])
-        .outputOptions(['-t 5', '-vf', 'scale=1080:1920', '-c:v libx264', '-pix_fmt yuv420p', '-r 24'])
-        .output(tempVideo)
-        .on('end', () => resolve())
-        .on('error', reject)
-        .run();
-    });
-
-    // Step 2: Mux silent audio into the video
-    await new Promise<void>((resolve, reject) => {
-      ffmpeg()
-        .input(tempVideo)
-        .input(silentRaw)
-        .inputOptions(['-f s16le', '-ar 44100', '-ac 2'])
-        .outputOptions(['-c:v copy', '-c:a aac', '-b:a 128k', '-shortest', '-movflags', '+faststart'])
-        .output(outputPath)
-        .on('end', () => resolve())
-        .on('error', reject)
-        .run();
-    });
-  } finally {
-    // Always clean up temp artifacts — even on ffmpeg failure — so we don't
-    // accumulate .tmp.mp4 and .raw files across retries.
-    try { fs.unlinkSync(tempVideo); } catch { /* may not exist if Step 1 failed */ }
-    try { fs.unlinkSync(silentRaw); } catch { /* may not exist if alloc/write failed */ }
-  }
+  await new Promise<void>((resolve, reject) => {
+    ffmpeg()
+      .input(inputPath)
+      .inputOptions(['-loop 1'])
+      .outputOptions([
+        '-t 5',
+        '-vf', 'scale=1080:1920',
+        '-c:v libx264',
+        '-pix_fmt yuv420p',
+        '-r 24',
+        '-an',
+        '-movflags', '+faststart',
+      ])
+      .output(outputPath)
+      .on('end', () => resolve())
+      .on('error', reject)
+      .run();
+  });
 }
