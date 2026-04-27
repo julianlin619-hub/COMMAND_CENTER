@@ -95,14 +95,20 @@ def main():
         # explicitly scoped to TikTok + YouTube Shorts + LinkedIn. Re-fanning
         # them out here would generate a Facebook post (and chain a duplicate
         # LinkedIn via linkedin_pipeline) against the user's intent.
+        #
+        # Use OR(is.null, neq) instead of plain .neq() because in SQL
+        # NULL != 'x' evaluates to NULL (not TRUE), so a bare neq filter
+        # silently drops every automated tiktok-pipeline / tiktok-bank row
+        # (those inserts don't set metadata.source). That's the upstream
+        # bug that broke the FB → LinkedIn fanout chain.
         result = client.table("posts").select("id, caption").eq(
             "platform", "tiktok"
         ).eq(
             "status", "sent_to_buffer"
         ).gte(
             "created_at", cutoff
-        ).neq(
-            "metadata->>source", "manual_upload"
+        ).or_(
+            "metadata->>source.is.null,metadata->>source.neq.manual_upload"
         ).execute()
 
         tiktok_posts = result.data or []
