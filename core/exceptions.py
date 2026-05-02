@@ -69,6 +69,20 @@ class PlatformAPIError(CommandCenterError):
         self.status_code = status_code
 
 
+class NonRetryablePlatformError(PlatformAPIError):
+    """A platform error that should NOT be retried.
+
+    Subclass of PlatformAPIError so existing `except PlatformAPIError`
+    handlers still catch it. Use this for permanent, deterministic
+    rejections — e.g. YouTube's `400 invalidPublishAt` on a video that
+    has already been published once. Retrying these wastes API quota
+    and never recovers.
+
+    The retry decorator (core/retry.py) raises immediately when it
+    catches this class, bypassing the exponential-backoff loop.
+    """
+
+
 class MediaProcessingError(CommandCenterError):
     """Failed to process media (download, resize, transcode).
 

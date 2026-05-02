@@ -161,13 +161,22 @@ def _draft(
     uploaded: str = "2026-04-20T00:00:00Z",
     publish_at: str | None = None,
     category_id: str = "22",
+    has_been_published: bool = False,
+    published_at: str | None = None,
 ) -> PrivateVideo:
+    # `published_at` defaults to `uploaded` so the test fixture mirrors the
+    # never-published case (videos.snippet.publishedAt == playlistItems
+    # snippet.publishedAt). Tests that need to simulate "previously
+    # published" pass `has_been_published=True` and a different
+    # `published_at`.
     return PrivateVideo(
         video_id=video_id,
         title=title,
         category_id=category_id,
-        published_at=uploaded,
+        uploaded_at=uploaded,
+        published_at=published_at if published_at is not None else uploaded,
         publish_at=publish_at,
+        has_been_published=has_been_published,
     )
 
 
@@ -302,6 +311,51 @@ class TestErrorHandling:
         assert len(summary.skipped) == 1
         assert len(summary.scheduled) == 1
         assert summary.scheduled[0].video_id == "b"
+
+
+class TestPreviouslyPublishedFilter:
+    """Videos with `has_been_published=True` must be skipped at discovery.
+
+    YouTube returns `400 invalidPublishAt` whenever you try to set a
+    future `publishAt` on a video that has already been public once
+    (cron schedule fired, or manual publish in Studio, then privatized).
+    Retrying never recovers and burns 50 quota units per attempt — so
+    the cron must filter these out before issuing any update calls.
+    """
+
+    def test_blocked_video_is_not_scheduled(self):
+        drafts = [
+            _draft(
+                "previously-public",
+                uploaded="2026-04-19T00:00:00Z",
+                published_at="2026-04-21T07:12:00Z",  # later than upload → published
+                has_been_published=True,
+            ),
+            _draft("fresh-draft", uploaded="2026-04-20T00:00:00Z"),
+        ]
+        client = FakeYouTube(drafts)
+        summary = scheduler_mod.schedule_studio_drafts(client, now_utc=_now_utc())
+        # Only the fresh draft was sent to YouTube.
+        assert len(client.update_calls) == 1
+        assert client.update_calls[0].video_id == "fresh-draft"
+        # Blocked video lands in `skipped` with the right reason.
+        assert any(
+            s.video_id == "previously-public"
+            and "previously published" in s.reason
+            for s in summary.skipped
+        )
+        # `drafts_discovered` reports actionable drafts only — blocked
+        # videos shouldn't inflate the queue depth metric.
+        assert summary.drafts_discovered == 1
+
+    def test_fresh_drafts_are_unaffected(self):
+        # Default _draft() sets has_been_published=False and uploaded_at ==
+        # published_at, so the existing happy-path behavior is preserved.
+        drafts = [_draft("a"), _draft("b"), _draft("c")]
+        client = FakeYouTube(drafts)
+        summary = scheduler_mod.schedule_studio_drafts(client, now_utc=_now_utc())
+        assert len(summary.scheduled) == 3
+        assert len(summary.skipped) == 0
 
 
 class TestSlotExhausted:
@@ -525,3 +579,64 @@ class TestQuotaTracking:
         # 3 (discovery) + 2 * 50 (captions.list only; download never ran).
         # Both drafts are at count 1/3 so neither fallback fires.
         assert summary.quota_used == 3 + 2 * 50
+
+
+class TestWasPreviouslyPublishedHelper:
+    """Direct unit tests for the timestamp-comparison detector."""
+
+    def test_identical_timestamps_treat_as_fresh(self):
+        from platforms.youtube import _was_previously_published
+
+        # The common case for never-published Private videos.
+        assert (
+            _was_previously_published(
+                "2026-04-26T12:00:00Z", "2026-04-26T12:00:00Z"
+            )
+            is False
+        )
+
+    def test_small_drift_within_tolerance_treat_as_fresh(self):
+        from platforms.youtube import _was_previously_published
+
+        # 30s drift between playlistItems and videos.list timestamps —
+        # within the 60s tolerance, so still considered fresh.
+        assert (
+            _was_previously_published(
+                "2026-04-26T12:00:00Z", "2026-04-26T12:00:30Z"
+            )
+            is False
+        )
+
+    def test_minutes_apart_signals_prior_publish(self):
+        from platforms.youtube import _was_previously_published
+
+        # 5 minutes apart is well outside the tolerance — almost
+        # certainly a real publish event.
+        assert (
+            _was_previously_published(
+                "2026-04-26T12:00:00Z", "2026-04-26T12:05:00Z"
+            )
+            is True
+        )
+
+    def test_days_apart_signals_prior_publish(self):
+        from platforms.youtube import _was_previously_published
+
+        # The exact case from the production bug: uploaded Apr 26,
+        # videos.snippet.publishedAt shows Apr 29.
+        assert (
+            _was_previously_published(
+                "2026-04-26T00:00:00Z", "2026-04-29T07:12:00Z"
+            )
+            is True
+        )
+
+    def test_missing_or_unparseable_timestamps_treat_as_fresh(self):
+        from platforms.youtube import _was_previously_published
+
+        # Missing/empty timestamps fall back to "fresh" so we don't
+        # incorrectly block schedulable videos. Worst case the cron
+        # hits one rejected videos.update that's now non-retryable.
+        assert _was_previously_published("", "2026-04-29T07:12:00Z") is False
+        assert _was_previously_published("2026-04-26T00:00:00Z", "") is False
+        assert _was_previously_published("garbage", "also-garbage") is False

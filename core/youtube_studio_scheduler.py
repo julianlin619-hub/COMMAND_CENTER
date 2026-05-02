@@ -230,14 +230,40 @@ def schedule_studio_drafts(
     # channel_id is guaranteed to be populated by now.
     channel_id = client.channel_id
 
-    drafts = [v for v in videos if v.publish_at is None]
+    # `has_been_published` is set when YouTube's records show the video
+    # was previously made public and reverted to Private. YouTube refuses
+    # any future `publishAt` on those videos (returns `invalidPublishAt`),
+    # so we filter them out of the schedulable pool. They surface in the
+    # summary as skipped, with reason "previously published", so the
+    # operator can see them but the cron stops burning quota retrying.
+    blocked = [v for v in videos if v.publish_at is None and v.has_been_published]
+    drafts = [
+        v for v in videos if v.publish_at is None and not v.has_been_published
+    ]
     already_scheduled = [v for v in videos if v.publish_at is not None]
     summary.drafts_discovered = len(drafts)
+    for v in blocked:
+        logger.info(
+            "Skipping %s — previously published (uploaded=%s, published=%s); "
+            "YouTube rejects rescheduling. Manually publish in Studio or "
+            "ignore.",
+            v.video_id,
+            v.uploaded_at,
+            v.published_at,
+        )
+        summary.skipped.append(
+            SkippedOutcome(
+                video_id=v.video_id,
+                reason="previously published — cannot reschedule via API",
+            )
+        )
     logger.info(
-        "Discovered %d Private videos: %d drafts, %d already scheduled",
+        "Discovered %d Private videos: %d drafts, %d already scheduled, "
+        "%d previously published",
         len(videos),
         len(drafts),
         len(already_scheduled),
+        len(blocked),
     )
 
     # Build the "taken" set from two sources:

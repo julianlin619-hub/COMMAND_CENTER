@@ -30,7 +30,7 @@ import random
 from collections.abc import Callable
 from typing import TypeVar
 
-from core.exceptions import PlatformRateLimitError
+from core.exceptions import NonRetryablePlatformError, PlatformRateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,11 @@ def with_retry(
             for attempt in range(max_retries + 1):
                 try:
                     return await func(*args, **kwargs)
+                except NonRetryablePlatformError:
+                    # Permanent rejection — retrying just wastes API quota.
+                    # Re-raise immediately so the caller can record the
+                    # failure and move on.
+                    raise
                 except PlatformRateLimitError as e:
                     # Rate limits get special treatment: if the platform told
                     # us how long to wait (retry_after), we honor that instead
@@ -102,6 +107,8 @@ def with_retry(
             for attempt in range(max_retries + 1):
                 try:
                     return func(*args, **kwargs)
+                except NonRetryablePlatformError:
+                    raise
                 except PlatformRateLimitError as e:
                     last_exception = e
                     if attempt == max_retries:
