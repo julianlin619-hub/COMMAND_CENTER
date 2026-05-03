@@ -70,22 +70,17 @@ class PrivateVideo:
     Studio) and was later reverted to Private. Once a video has been
     published once, YouTube refuses any future `publishAt` on it with a
     misleading `invalidPublishAt` error — so the scheduler must skip
-    these. We detect the case by comparing two timestamps that the API
-    exposes:
-        - playlistItems.snippet.publishedAt = when the video was added to
-          the channel's "uploads" playlist (i.e. true upload time)
-        - videos.snippet.publishedAt = first-publish time (or upload time
-          if never published)
-    If the two differ by more than a small tolerance, the video has been
-    published before.
+    these. The detection signal is `view_count > 0`: a Private video that
+    has never been visible cannot accumulate public views, so any non-zero
+    count means the video was public at some point in its history.
     """
 
     video_id: str
     title: str
     category_id: str
-    uploaded_at: str  # playlistItems.snippet.publishedAt — true upload time
-    published_at: str  # videos.snippet.publishedAt — first-publish or upload time
+    published_at: str  # snippet.publishedAt — first-publish or upload time
     publish_at: str | None  # status.publishAt — scheduled publish time
+    view_count: int = 0  # statistics.viewCount — used to detect prior publish
     has_been_published: bool = False
 
 
@@ -185,16 +180,10 @@ class YouTube(PlatformBase):
             self.validate_credentials()
         assert self._uploads_playlist_id is not None
 
-        # We pull `snippet` from playlistItems (not just contentDetails) so we
-        # can capture each item's `snippet.publishedAt` — the time the video
-        # was added to the channel's uploads playlist, which is the original
-        # upload time. We compare it with `videos.snippet.publishedAt` below
-        # to detect videos that were previously published and reverted to
-        # Private (YouTube refuses to reschedule those).
         playlist_resp = httpx.get(
             f"{_API_BASE}/playlistItems",
             params={
-                "part": "contentDetails,snippet",
+                "part": "contentDetails",
                 "playlistId": self._uploads_playlist_id,
                 "maxResults": str(max_results),
             },
@@ -202,21 +191,27 @@ class YouTube(PlatformBase):
             timeout=_REQUEST_TIMEOUT,
         )
         _raise_for_youtube_error(playlist_resp)
-        # Build {video_id: upload_time_iso} so we can join against the
-        # videos.list response by ID.
-        upload_times: dict[str, str] = {}
-        for item in playlist_resp.json().get("items", []):
-            vid = item.get("contentDetails", {}).get("videoId")
-            if not vid:
-                continue
-            upload_times[vid] = item.get("snippet", {}).get("publishedAt", "")
-        video_ids = list(upload_times.keys())
+        video_ids = [
+            it["contentDetails"]["videoId"]
+            for it in playlist_resp.json().get("items", [])
+        ]
         if not video_ids:
             return []
 
+        # `statistics` is requested so we can read `viewCount` — the only
+        # reliable way to detect a Private video that was previously made
+        # public. A truly never-public video has 0 views (Studio's owner
+        # previews don't count). Any non-zero view count means the video
+        # was visible at some point, which is exactly the state YouTube
+        # refuses to reschedule (returns `400 invalidPublishAt`). Adding
+        # `statistics` to an existing videos.list call doesn't change the
+        # quota cost — videos.list bills per call, not per part.
         videos_resp = httpx.get(
             f"{_API_BASE}/videos",
-            params={"part": "snippet,status", "id": ",".join(video_ids)},
+            params={
+                "part": "snippet,status,statistics",
+                "id": ",".join(video_ids),
+            },
             headers=self._auth_headers(),
             timeout=_REQUEST_TIMEOUT,
         )
@@ -228,19 +223,24 @@ class YouTube(PlatformBase):
             if status.get("privacyStatus") != "private":
                 continue
             snippet = v.get("snippet", {})
-            uploaded_at = upload_times.get(v["id"], "")
-            published_at = snippet.get("publishedAt", "")
+            # YouTube returns viewCount as a string in JSON (per their
+            # convention for big-number fields). Parse defensively — if
+            # it's missing or unparseable, treat as 0 (i.e. "treat as
+            # fresh, allow scheduling"). The worst case is one rejected
+            # videos.update call, now non-retryable.
+            try:
+                view_count = int(v.get("statistics", {}).get("viewCount", "0"))
+            except (TypeError, ValueError):
+                view_count = 0
             results.append(
                 PrivateVideo(
                     video_id=v["id"],
                     title=snippet.get("title", ""),
                     category_id=snippet.get("categoryId", _DEFAULT_CATEGORY_ID),
-                    uploaded_at=uploaded_at,
-                    published_at=published_at,
+                    published_at=snippet.get("publishedAt", ""),
                     publish_at=status.get("publishAt"),
-                    has_been_published=_was_previously_published(
-                        uploaded_at, published_at
-                    ),
+                    view_count=view_count,
+                    has_been_published=view_count > 0,
                 )
             )
         # Oldest upload first — earliest drafts get scheduled first.
@@ -385,43 +385,6 @@ class YouTube(PlatformBase):
                 "YouTube adapter has no access token — call refresh_credentials() first"
             )
         return {"Authorization": f"Bearer {self._access_token}"}
-
-
-def _was_previously_published(uploaded_at: str, published_at: str) -> bool:
-    """Detect whether YouTube records show this video was previously public.
-
-    A Private video that has never been made public has
-    `videos.snippet.publishedAt == playlistItems.snippet.publishedAt`
-    (both equal the original upload time). Once the video has gone public
-    even briefly, `videos.snippet.publishedAt` is rewritten to the publish
-    moment and stays there even if the privacy is reverted to Private.
-    A non-trivial difference therefore means the video has already been
-    published — and YouTube will reject any future `publishAt` on it with
-    a `400 invalidPublishAt` error.
-
-    We compare with a 60-second tolerance. The two timestamps come from
-    different parts of the API and occasionally differ by a few seconds
-    even on never-published videos (e.g. when the video and the playlist
-    item are recorded by separate services). 60s is generous enough to
-    absorb that drift while still catching real prior-publish events,
-    which differ by hours or days.
-
-    Returns False (i.e. "treat as fresh, attempt to schedule") if either
-    timestamp is missing or unparseable — the conservative choice, since
-    the scheduler will at worst hit one rejected videos.update call which
-    is now non-retryable.
-    """
-    from datetime import datetime, timezone
-
-    if not uploaded_at or not published_at:
-        return False
-    fmt = "%Y-%m-%dT%H:%M:%SZ"
-    try:
-        u = datetime.strptime(uploaded_at, fmt).replace(tzinfo=timezone.utc)
-        p = datetime.strptime(published_at, fmt).replace(tzinfo=timezone.utc)
-    except ValueError:
-        return False
-    return abs((p - u).total_seconds()) > 60
 
 
 def _raise_for_youtube_error(response: httpx.Response) -> None:
