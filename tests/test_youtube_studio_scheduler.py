@@ -161,21 +161,19 @@ def _draft(
     uploaded: str = "2026-04-20T00:00:00Z",
     publish_at: str | None = None,
     category_id: str = "22",
+    view_count: int = 0,
     has_been_published: bool = False,
-    published_at: str | None = None,
 ) -> PrivateVideo:
-    # `published_at` defaults to `uploaded` so the test fixture mirrors the
-    # never-published case (videos.snippet.publishedAt == playlistItems
-    # snippet.publishedAt). Tests that need to simulate "previously
-    # published" pass `has_been_published=True` and a different
-    # `published_at`.
+    # Default fixture is a never-published draft: 0 views, has_been_published
+    # False. Tests that need to simulate "previously published" pass a
+    # non-zero `view_count` (or `has_been_published=True` directly).
     return PrivateVideo(
         video_id=video_id,
         title=title,
         category_id=category_id,
-        uploaded_at=uploaded,
-        published_at=published_at if published_at is not None else uploaded,
+        published_at=uploaded,
         publish_at=publish_at,
+        view_count=view_count,
         has_been_published=has_been_published,
     )
 
@@ -328,7 +326,7 @@ class TestPreviouslyPublishedFilter:
             _draft(
                 "previously-public",
                 uploaded="2026-04-19T00:00:00Z",
-                published_at="2026-04-21T07:12:00Z",  # later than upload → published
+                view_count=2805,  # accumulated views ⇒ was public at some point
                 has_been_published=True,
             ),
             _draft("fresh-draft", uploaded="2026-04-20T00:00:00Z"),
@@ -349,8 +347,8 @@ class TestPreviouslyPublishedFilter:
         assert summary.drafts_discovered == 1
 
     def test_fresh_drafts_are_unaffected(self):
-        # Default _draft() sets has_been_published=False and uploaded_at ==
-        # published_at, so the existing happy-path behavior is preserved.
+        # Default _draft() has view_count=0 and has_been_published=False,
+        # so the existing happy-path behavior is preserved.
         drafts = [_draft("a"), _draft("b"), _draft("c")]
         client = FakeYouTube(drafts)
         summary = scheduler_mod.schedule_studio_drafts(client, now_utc=_now_utc())
@@ -581,62 +579,89 @@ class TestQuotaTracking:
         assert summary.quota_used == 3 + 2 * 50
 
 
-class TestWasPreviouslyPublishedHelper:
-    """Direct unit tests for the timestamp-comparison detector."""
+class TestViewCountSignal:
+    """Verify the viewCount-based detection inside list_my_private_videos.
 
-    def test_identical_timestamps_treat_as_fresh(self):
-        from platforms.youtube import _was_previously_published
+    The unit under test is the small block in `list_my_private_videos`
+    that maps `statistics.viewCount` from the API response to
+    `view_count` and `has_been_published` on the dataclass. We exercise
+    it by stubbing the two HTTP calls.
+    """
 
-        # The common case for never-published Private videos.
-        assert (
-            _was_previously_published(
-                "2026-04-26T12:00:00Z", "2026-04-26T12:00:00Z"
-            )
-            is False
-        )
+    def _make_client(self, monkeypatch, videos_response):
+        """Build a real YouTube adapter with stubbed httpx + auth."""
+        from platforms import youtube as yt
 
-    def test_small_drift_within_tolerance_treat_as_fresh(self):
-        from platforms.youtube import _was_previously_published
+        client = yt.YouTube()
+        client._access_token = "fake-token"
+        client._channel_id = "UC_TEST"
+        client._uploads_playlist_id = "UU_TEST"
 
-        # 30s drift between playlistItems and videos.list timestamps —
-        # within the 60s tolerance, so still considered fresh.
-        assert (
-            _was_previously_published(
-                "2026-04-26T12:00:00Z", "2026-04-26T12:00:30Z"
-            )
-            is False
-        )
+        def fake_get(url, params=None, headers=None, timeout=None):
+            class _R:
+                def __init__(self, payload):
+                    self._payload = payload
+                    self.status_code = 200
+                    self.is_success = True
 
-    def test_minutes_apart_signals_prior_publish(self):
-        from platforms.youtube import _was_previously_published
+                def json(self):
+                    return self._payload
 
-        # 5 minutes apart is well outside the tolerance — almost
-        # certainly a real publish event.
-        assert (
-            _was_previously_published(
-                "2026-04-26T12:00:00Z", "2026-04-26T12:05:00Z"
-            )
-            is True
-        )
+            if "playlistItems" in url:
+                # Synthesise a playlistItems response from the video IDs in
+                # the videos_response fixture.
+                return _R({"items": [
+                    {"contentDetails": {"videoId": v["id"]}}
+                    for v in videos_response["items"]
+                ]})
+            return _R(videos_response)
 
-    def test_days_apart_signals_prior_publish(self):
-        from platforms.youtube import _was_previously_published
+        monkeypatch.setattr(yt.httpx, "get", fake_get)
+        return client
 
-        # The exact case from the production bug: uploaded Apr 26,
-        # videos.snippet.publishedAt shows Apr 29.
-        assert (
-            _was_previously_published(
-                "2026-04-26T00:00:00Z", "2026-04-29T07:12:00Z"
-            )
-            is True
-        )
+    def test_zero_views_treated_as_fresh(self, monkeypatch):
+        videos_response = {"items": [{
+            "id": "fresh",
+            "snippet": {"title": "T", "categoryId": "22",
+                        "publishedAt": "2026-04-20T00:00:00Z"},
+            "status": {"privacyStatus": "private"},
+            "statistics": {"viewCount": "0"},
+        }]}
+        client = self._make_client(monkeypatch, videos_response)
+        result = client.list_my_private_videos()
+        assert len(result) == 1
+        assert result[0].view_count == 0
+        assert result[0].has_been_published is False
 
-    def test_missing_or_unparseable_timestamps_treat_as_fresh(self):
-        from platforms.youtube import _was_previously_published
+    def test_nonzero_views_signal_prior_publish(self, monkeypatch):
+        # Mirrors the production case: Private video with 2805 views
+        # accumulated while it was previously public.
+        videos_response = {"items": [{
+            "id": "previously-public",
+            "snippet": {"title": "T", "categoryId": "22",
+                        "publishedAt": "2026-04-29T07:12:00Z"},
+            "status": {"privacyStatus": "private"},
+            "statistics": {"viewCount": "2805"},
+        }]}
+        client = self._make_client(monkeypatch, videos_response)
+        result = client.list_my_private_videos()
+        assert len(result) == 1
+        assert result[0].view_count == 2805
+        assert result[0].has_been_published is True
 
-        # Missing/empty timestamps fall back to "fresh" so we don't
-        # incorrectly block schedulable videos. Worst case the cron
-        # hits one rejected videos.update that's now non-retryable.
-        assert _was_previously_published("", "2026-04-29T07:12:00Z") is False
-        assert _was_previously_published("2026-04-26T00:00:00Z", "") is False
-        assert _was_previously_published("garbage", "also-garbage") is False
+    def test_missing_statistics_treated_as_fresh(self, monkeypatch):
+        # If YouTube omits the statistics block (shouldn't happen for
+        # owned videos, but defensive), default to view_count=0 and
+        # allow scheduling. Worst case is one rejected videos.update
+        # that's now non-retryable.
+        videos_response = {"items": [{
+            "id": "no-stats",
+            "snippet": {"title": "T", "categoryId": "22",
+                        "publishedAt": "2026-04-20T00:00:00Z"},
+            "status": {"privacyStatus": "private"},
+        }]}
+        client = self._make_client(monkeypatch, videos_response)
+        result = client.list_my_private_videos()
+        assert len(result) == 1
+        assert result[0].view_count == 0
+        assert result[0].has_been_published is False

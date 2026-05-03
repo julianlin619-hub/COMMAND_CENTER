@@ -244,11 +244,11 @@ def schedule_studio_drafts(
     summary.drafts_discovered = len(drafts)
     for v in blocked:
         logger.info(
-            "Skipping %s — previously published (uploaded=%s, published=%s); "
+            "Skipping %s — previously published (views=%d, published_at=%s); "
             "YouTube rejects rescheduling. Manually publish in Studio or "
             "ignore.",
             v.video_id,
-            v.uploaded_at,
+            v.view_count,
             v.published_at,
         )
         summary.skipped.append(
