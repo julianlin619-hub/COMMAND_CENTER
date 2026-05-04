@@ -10,11 +10,14 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import {
   PlayIcon,
   LoaderIcon,
   CheckCircle2Icon,
   XCircleIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
 } from "lucide-react";
 
 export interface PathwayAction {
@@ -48,7 +51,16 @@ function formatTimeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
-async function runActions(actions: PathwayAction[]): Promise<void> {
+interface ActionOutcome {
+  /** Last action's full stdout+stderr, when the underlying API returned one
+   *  (currently /api/cron/run does — others may not). Available in both the
+   *  success and failure branches so the operator can see env-diag, phase
+   *  progress, etc., not just the bottom error line. */
+  output: string | null;
+}
+
+async function runActions(actions: PathwayAction[]): Promise<ActionOutcome> {
+  let lastOutput: string | null = null;
   for (const action of actions) {
     const res = await fetch(action.url, {
       method: "POST",
@@ -60,13 +72,28 @@ async function runActions(actions: PathwayAction[]): Promise<void> {
       status?: string;
       output?: string;
     };
+    lastOutput = data.output ?? null;
     if (!res.ok) {
-      throw new Error(data.error || `Request failed (${res.status}) at ${action.url}`);
+      throw new ActionError(
+        data.error || `Request failed (${res.status}) at ${action.url}`,
+        lastOutput,
+      );
     }
     // /api/cron/run returns 200 with { status: "failed" } on Python exit(1)
     if (data.status === "failed") {
-      throw new Error(data.output || data.error || `Cron job failed at ${action.url}`);
+      throw new ActionError(
+        data.error || `Cron job failed at ${action.url}`,
+        lastOutput,
+      );
     }
+  }
+  return { output: lastOutput };
+}
+
+class ActionError extends Error {
+  constructor(message: string, public readonly output: string | null) {
+    super(message);
+    this.name = "ActionError";
   }
 }
 
@@ -110,23 +137,35 @@ export function PathwayCard({
   const router = useRouter();
   const [status, setStatus] = useState<RunStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const [output, setOutput] = useState<string | null>(null);
+  const [outputExpanded, setOutputExpanded] = useState(false);
 
   async function handleRun() {
     setStatus("running");
     setMessage(null);
+    setOutput(null);
+    setOutputExpanded(false);
     try {
-      await runActions(actions);
+      const outcome = await runActions(actions);
       setStatus("success");
       setMessage("Pathway completed");
+      setOutput(outcome.output);
     } catch (err) {
       setStatus("error");
       setMessage((err as Error).message);
+      // Auto-expand on failure so the operator immediately sees env-diag /
+      // phase logs / Python tracebacks without an extra click.
+      if (err instanceof ActionError) {
+        setOutput(err.output);
+        setOutputExpanded(true);
+      }
     } finally {
       router.refresh();
     }
   }
 
   const running = status === "running";
+  const hasOutput = output !== null && output.length > 0;
 
   return (
     <Card className="mb-4">
@@ -181,6 +220,34 @@ export function PathwayCard({
             </span>
           )}
         </div>
+
+        {/* Full output panel — collapsible; auto-expanded on failure so the
+            operator sees env-diag and the failing phase without scrolling
+            past a truncated single-line error. */}
+        {hasOutput && (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => setOutputExpanded((v) => !v)}
+              className="flex items-center gap-1.5 text-[11px] text-[var(--overview-fg)]/55 hover:text-[var(--overview-fg)]/85 transition-colors"
+            >
+              {outputExpanded ? (
+                <ChevronDownIcon className="size-3.5" />
+              ) : (
+                <ChevronRightIcon className="size-3.5" />
+              )}
+              {outputExpanded ? "Hide output" : "Show full output"}
+            </button>
+            {outputExpanded && (
+              <>
+                <Separator className="my-2" />
+                <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-black/30 p-2 font-mono text-[11px] leading-relaxed text-[var(--overview-fg)]/75">
+                  {output}
+                </pre>
+              </>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

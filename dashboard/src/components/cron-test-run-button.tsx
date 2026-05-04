@@ -341,11 +341,13 @@ export function CronTestRunButton({
                     </div>
                   </div>
 
-                  {/* Collapsible output log */}
+                  {/* Collapsible output log. overflow-auto + larger max
+                      height so multi-line env-diag / phase logs aren't
+                      visually clipped past the box. */}
                   {hasOutput && isExpanded && (
                     <>
                       <Separator className="my-2" />
-                      <pre className="text-[11px] text-[var(--overview-fg)]/70 bg-black/30 rounded p-2 overflow-x-auto max-h-48 whitespace-pre-wrap font-mono leading-relaxed">
+                      <pre className="text-[11px] text-[var(--overview-fg)]/70 bg-black/30 rounded p-2 overflow-auto max-h-96 whitespace-pre-wrap break-words font-mono leading-relaxed">
                         {result.output}
                       </pre>
                     </>
