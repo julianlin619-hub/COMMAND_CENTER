@@ -85,7 +85,7 @@ def _is_unique_violation(exc: Exception) -> bool:
 #
 # Find the entry where service="linkedin" and name matches Leila's LinkedIn,
 # then paste its `id` here.
-LINKEDIN_LEILA_CHANNEL_ID = ""  # TODO(julian): paste Leila's LinkedIn channel ID
+LINKEDIN_LEILA_CHANNEL_ID = "69f8e8fb5c4c051afa0d487e"
 
 # Engagement hook — image is the focus, caption is just a question that
 # tends to drive comments. Same string Alex's Facebook + LinkedIn cron uses.
