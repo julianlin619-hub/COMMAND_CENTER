@@ -176,15 +176,11 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.linkedin_pipeline
-    # DISABLED 2026-05-02 — re-enable later. Leap-day schedule means it
-    # effectively never fires (next Feb 29 is 2028) but keeps the service
-    # and its env vars intact on Render. To re-enable: restore "0 12 * * *".
-    # Original schedule context: daily at 12:00 UTC = 5:00 AM PDT — 30 min
-    # after facebook-pipeline so Facebook's posts are already in the DB for
-    # LinkedIn to re-queue. No DASHBOARD_URL/CRON_SECRET needed: LinkedIn
-    # reads existing Facebook posts and re-queues the same storage path,
-    # so no content-gen call.
-    schedule: "0 0 29 2 *"
+    # Daily at 12:00 UTC = 5:00 AM PDT — 30 min after facebook-pipeline so
+    # Facebook's posts are already in the DB for LinkedIn to re-queue. No
+    # DASHBOARD_URL/CRON_SECRET needed: LinkedIn reads existing Facebook
+    # posts and re-queues the same storage path, so no content-gen call.
+    schedule: "0 12 * * *"
     envVars:
       - key: SUPABASE_URL
         sync: false
