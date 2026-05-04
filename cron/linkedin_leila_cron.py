@@ -31,7 +31,6 @@ import logging
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
 
 from core.buffer import send_to_buffer
 from core.content_gen_client import generate_content
@@ -179,11 +178,17 @@ def main() -> None:
     # We mint fresh UUIDs because the post row hasn't been inserted yet
     # (matches cron/facebook_pipeline.py — tweets carry "id" purely so the
     # API can echo them back paired with each storagePath).
+    request_items = [
+        {"id": str(uuid.uuid4()), "text": tweet["text"]} for tweet in new_tweets
+    ]
+    # Built before the API call so it's available unconditionally in Phase 2,
+    # not bound inside the try-block that may raise. The route preserves the
+    # input id so we can pair the rendered image back to the tweet's text
+    # (used for Post.caption / dedup against post_caption_exists).
+    text_by_id: dict[str, str] = {item["id"]: item["text"] for item in request_items}
+
     run_id = log_cron_start(platform="linkedin_leila", job_type="content_generate")
     try:
-        request_items = [
-            {"id": str(uuid.uuid4()), "text": tweet["text"]} for tweet in new_tweets
-        ]
         data = generate_content(
             dashboard_url=dashboard_url,
             cron_secret=cron_secret,
@@ -206,10 +211,6 @@ def main() -> None:
                 f"Generate API returned empty results. API errors: {api_errors}"
             )
 
-        # The route preserves the input id so we can pair the rendered image
-        # back to the tweet's text (used for Post.caption / dedup).
-        text_by_id = {item["id"]: item["text"] for item in request_items}
-
         log_cron_finish(run_id, status="success", posts_processed=len(generated))
         logger.info("Phase 1: generated %d square images", len(generated))
     except Exception as e:
@@ -229,8 +230,6 @@ def main() -> None:
     sent_count = 0
     error_count = 0
 
-    started_at = datetime.now(timezone.utc).isoformat()
-
     for item in generated:
         storage_path = item["storagePath"]
         tweet_id = item.get("id", "")
@@ -249,7 +248,6 @@ def main() -> None:
             media_type="image",
             media_urls=[storage_path],
             caption=tweet_text,
-            metadata={"started_at": started_at},
         )
         try:
             post_id = insert_post(post)

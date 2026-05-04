@@ -50,7 +50,7 @@ const CRON_JOBS: CronJobDef[] = [
   // Schedule below is the original 4am UTC slot — render.yaml currently
   // uses a leap-day pause expression, but this list shows operator intent.
   { name: "linkedin-pipeline", label: "LinkedIn (Alex)", schedule: "0 12 * * *" },
-  { name: "linkedin-leila-cron", label: "LinkedIn (Leila)", schedule: "30 11 * * *" },
+  { name: "linkedin-leila-cron", label: "LinkedIn (Leila)", schedule: "45 11 * * *" },
 ];
 
 type JobStatus = "pending" | "running" | "success" | "failed";

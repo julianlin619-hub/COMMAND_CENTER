@@ -280,10 +280,13 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.linkedin_leila_cron
-    # Daily at 11:30 UTC = 4:30 AM PDT — 30 min after threads-leila so the
-    # dashboard isn't running two node-canvas renders concurrently if we ever
-    # add Leila video pipelines on the same slot. Buffer queues from there.
-    schedule: "30 11 * * *"
+    # Daily at 11:45 UTC = 4:45 AM PDT. Wedged between the 11:30 slot
+    # (facebook-pipeline + instagram-pipeline both call /api/content-gen
+    # with node-canvas — three concurrent renders on the standard-plan
+    # dashboard would risk OOM) and the 12:00 slot (linkedin-pipeline).
+    # 15 min of headroom on each side is enough for the FB/IG renders to
+    # finish before this cron's render starts.
+    schedule: "45 11 * * *"
     envVars:
       - key: SUPABASE_URL
         sync: false

@@ -35,9 +35,24 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as {
       tweets: { id: string; text: string }[];
-      platform?: "tiktok" | "facebook" | "linkedin_leila";
+      platform?: string;
     };
-    const { tweets, platform = "tiktok" } = body;
+    const { tweets, platform: rawPlatform = "tiktok" } = body;
+
+    // Explicit allowlist — the type assertion above is compile-time only,
+    // so without this check an unknown platform value would silently fall
+    // through to the TikTok branch (wrong storage path, wrong render).
+    // The storage path is also interpolated from `platform` directly for
+    // the square-template branch; keeping this list authoritative prevents
+    // anything from sneaking into a path it shouldn't.
+    const VALID_PLATFORMS = ["tiktok", "facebook", "linkedin_leila"] as const;
+    if (!(VALID_PLATFORMS as readonly string[]).includes(rawPlatform)) {
+      return NextResponse.json(
+        { error: `Unknown platform: ${rawPlatform}` },
+        { status: 400 }
+      );
+    }
+    const platform = rawPlatform as (typeof VALID_PLATFORMS)[number];
 
     // Explicit Array.isArray — previously `!tweets?.length` would pass
     // for `tweets = null` and crash later in the for-loop with a cryptic
