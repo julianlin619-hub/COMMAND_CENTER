@@ -1,0 +1,12 @@
+-- Leila Hormozi LinkedIn pipeline: enum addition.
+--
+-- Mirrors the precedent set by 20260504120000_threads_leila_enum.sql for
+-- threads_leila. Inserting platform='linkedin_leila' anywhere (cron, API
+-- route, manual SQL) requires this value on the enum first; without it,
+-- the insert fails with invalid_text_representation.
+--
+-- Postgres rule: an enum value added in a transaction can't be used in
+-- the same transaction. This migration runs a single ALTER TYPE in its
+-- own transaction; the next migration or runtime insert is what consumes
+-- the new value, so this is safe.
+ALTER TYPE platform_enum ADD VALUE IF NOT EXISTS 'linkedin_leila';

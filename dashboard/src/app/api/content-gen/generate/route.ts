@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as {
       tweets: { id: string; text: string }[];
-      platform?: "tiktok" | "facebook";
+      platform?: "tiktok" | "facebook" | "linkedin_leila";
     };
     const { tweets, platform = "tiktok" } = body;
 
@@ -53,9 +53,15 @@ export async function POST(req: NextRequest) {
     // on based on errors.length vs generated.length.
     const errors: { id: string; error: string }[] = [];
 
-    // For Facebook: fetch the active template config from the database
+    // Both Facebook and Leila-LinkedIn render the same square 1080×1080
+    // quote card from the Facebook template config. Leila's pipeline will
+    // eventually want its own template, but per the linkedin_leila plan
+    // we explicitly reuse Alex's template for now and just namespace the
+    // storage path so generated images don't collide with the Facebook
+    // pipeline's outputs.
+    const usesSquareTemplate = platform === "facebook" || platform === "linkedin_leila";
     let fbTemplateConfig: TemplateConfig | null = null;
-    if (platform === "facebook") {
+    if (usesSquareTemplate) {
       const { data: template, error: tmplError } = await supabase
         .from("templates")
         .select("config")
@@ -98,10 +104,14 @@ export async function POST(req: NextRequest) {
           // Normalize tweet text (strip URLs, fix spacing)
           const normalized = normalizeTweetText(tweet.text);
 
-          if (platform === "facebook") {
-            // Facebook path: render a 1080x1080 square PNG — no video conversion
+          if (usesSquareTemplate) {
+            // Facebook + Leila-LinkedIn path: render 1080×1080 square PNG.
+            // Storage path is namespaced by `platform` so Leila's renders
+            // don't collide with Facebook's (same tweet text could be used
+            // for both creators in the future, and Buffer needs distinct
+            // signed URLs anyway).
             const pngBuffer = await renderSquareQuoteCard(normalized, fbTemplateConfig!);
-            const storagePath = `facebook/tweet-${tweet.id}.png`;
+            const storagePath = `${platform}/tweet-${tweet.id}.png`;
 
             const { error: uploadError } = await supabase.storage
               .from("media")

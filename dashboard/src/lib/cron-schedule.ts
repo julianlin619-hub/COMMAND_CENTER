@@ -34,6 +34,9 @@ export const CRON_SCHEDULES: Record<string, CronScheduleInfo> = {
   // Paused 2026-05-02 — re-enable when render.yaml linkedin-pipeline
   // schedule is restored to "0 12 * * *".
   linkedin:      { schedule: "0 12 * * *",  description: "Daily at 5:00 AM PDT", paused: true },
+  // Leila's LinkedIn — Apify-source pipeline that renders 1080×1080 quote
+  // cards from recent @LeilaHormozi tweets and queues them on Buffer.
+  linkedin_leila: { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
 };
 
 /** Compute the next UTC run time from a simple cron pattern. */

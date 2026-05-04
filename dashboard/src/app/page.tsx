@@ -116,14 +116,12 @@ const ACTIVE_PLATFORMS: PlatformEntry[] = [
   {
     key: "leila-linkedin",
     creator: "leila",
-    // Empty platform — placeholder short-circuits all DB queries before
-    // this is read. Using a real enum value (e.g. "linkedin") here would
-    // silently surface Alex's data if the placeholder check ever regressed.
-    platform: "",
+    platform: "linkedin_leila",
     label: "LinkedIn",
     href: "/leila/linkedin",
-    bufferMetric: { kind: "hidden" },
-    placeholder: true,
+    // Direct-send pipeline (status terminates at "sent_to_buffer", same as
+    // Alex's Facebook/LinkedIn flows). Default `statuses` is fine.
+    bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
   },
 ];
 
@@ -154,7 +152,7 @@ const PLATFORM_SUMMARIES: Record<string, string> = {
   "leila-threads":
     "Pulls @LeilaHormozi tweets from the past 24h via Apify (max 5/day, no engagement filter), schedules verbatim to Buffer's Leila Threads channel.",
   "leila-linkedin":
-    "Pipeline coming soon.",
+    "Pulls @LeilaHormozi tweets from the past 24h via Apify (72h fallback if quiet), renders each into a 1080×1080 quote card using Alex's template, and queues to Buffer's Leila LinkedIn channel with caption \"Agree?\".",
 };
 
 /* Computes the footer "Buffer" count + label for one platform.

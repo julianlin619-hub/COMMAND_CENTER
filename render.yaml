@@ -274,3 +274,29 @@ services:
         sync: false
       - key: APIFY_LEILA_TWITTER_HANDLE  # optional — defaults to LeilaHormozi
         sync: false
+
+  - type: cron
+    name: linkedin-leila-cron
+    runtime: python
+    buildCommand: pip install -r requirements.txt && pip install -e .
+    startCommand: python -m cron.linkedin_leila_cron
+    # Daily at 11:30 UTC = 4:30 AM PDT — 30 min after threads-leila so the
+    # dashboard isn't running two node-canvas renders concurrently if we ever
+    # add Leila video pipelines on the same slot. Buffer queues from there.
+    schedule: "30 11 * * *"
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: BUFFER_ACCESS_TOKEN
+        sync: false
+      - key: APIFY_API_KEY
+        sync: false
+      # Calls /api/content-gen/generate on the dashboard for square PNG renders
+      - key: DASHBOARD_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: APIFY_LEILA_TWITTER_HANDLE  # optional — defaults to LeilaHormozi
+        sync: false

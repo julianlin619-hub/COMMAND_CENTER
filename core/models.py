@@ -37,6 +37,8 @@ class Post(BaseModel):
         "linkedin",
         "facebook",
         "threads",
+        "threads_leila",
+        "linkedin_leila",
     ]
     # The ID the platform gives back after publishing (e.g. a YouTube video ID).
     # None until the post is actually published.
