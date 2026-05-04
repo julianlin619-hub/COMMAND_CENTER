@@ -39,7 +39,8 @@ interface CronJobDef {
 // Matches the cron jobs defined in render.yaml and the CRON_MODULES map
 // in /api/cron/run/route.ts.
 const CRON_JOBS: CronJobDef[] = [
-  { name: "threads-cron", label: "Threads", schedule: "0 11 * * *" },
+  { name: "threads-cron", label: "Threads (Alex)", schedule: "0 11 * * *" },
+  { name: "threads-leila-cron", label: "Threads (Leila)", schedule: "0 11 * * *" },
   { name: "tiktok-pipeline", label: "TikTok Pipeline", schedule: "0 12 * * *" },
   { name: "tiktok-bank-pipeline", label: "TikTok Bank", schedule: "0 14 * * *" },
   { name: "facebook-pipeline", label: "Facebook Pipeline", schedule: "0 13 * * *" },

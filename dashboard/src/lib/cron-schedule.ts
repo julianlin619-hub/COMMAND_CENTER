@@ -9,6 +9,14 @@
 export interface CronScheduleInfo {
   schedule: string;      // cron expression (UTC)
   description: string;   // human-readable local-time summary
+  /**
+   * When true, the cron is intentionally disabled at the infra layer
+   * (render.yaml schedule changed to a never-fires expression, or the
+   * GitHub Actions schedule trigger commented out). The dashboard treats
+   * the platform as "paused" — Paused pill, no countdown — until this
+   * flag is removed and the original schedule is restored.
+   */
+  paused?: boolean;
 }
 
 // Mirrors render.yaml + .github/workflows/ig-pipeline.yml (instagram_2nd
@@ -16,11 +24,16 @@ export interface CronScheduleInfo {
 // shows up identically on the dashboard).
 export const CRON_SCHEDULES: Record<string, CronScheduleInfo> = {
   threads:       { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
+  threads_leila: { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
   tiktok:        { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
-  instagram_2nd: { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
+  // Paused 2026-05-02 — re-enable when the GitHub Actions schedule
+  // trigger in .github/workflows/ig-pipeline.yml is uncommented.
+  instagram_2nd: { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT", paused: true },
   facebook:      { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
   instagram:     { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
-  linkedin:      { schedule: "0 12 * * *",  description: "Daily at 5:00 AM PDT" },
+  // Paused 2026-05-02 — re-enable when render.yaml linkedin-pipeline
+  // schedule is restored to "0 12 * * *".
+  linkedin:      { schedule: "0 12 * * *",  description: "Daily at 5:00 AM PDT", paused: true },
 };
 
 /** Compute the next UTC run time from a simple cron pattern. */

@@ -34,6 +34,7 @@ const ACTIVE_ICONS: Record<
   instagram: FaInstagram,
   youtube: FaYoutube,
   "youtube-second": FaYoutube,
+  "leila-threads": FaThreads,
 };
 
 interface PlatformOverviewCardProps {
@@ -43,6 +44,8 @@ interface PlatformOverviewCardProps {
   status: OverviewStatus;
   scheduleDescription: string | null;
   cronExpression: string | null;
+  /** Cron is intentionally disabled — render a "Paused" label instead of a countdown. */
+  paused?: boolean;
   bufferQueue: number | null;
   bufferQueueLabel?: string;
   index: number;
@@ -55,6 +58,7 @@ export function PlatformOverviewCard({
   status,
   scheduleDescription,
   cronExpression,
+  paused = false,
   bufferQueue,
   bufferQueueLabel = "Scheduled to Buffer",
   index,
@@ -125,7 +129,14 @@ export function PlatformOverviewCard({
           <span className="text-[10px] font-medium tracking-[0.14em] uppercase text-[var(--overview-fg)]/40 shrink-0">
             Next run
           </span>
-          {cronExpression && scheduleDescription ? (
+          {paused ? (
+            // Operator-disabled — say so explicitly. The status pill in the
+            // header carries the same signal but a runner reading the card
+            // top-to-bottom shouldn't see a blank em-dash here and wonder.
+            <span className="text-[12px] font-mono text-[var(--overview-fg)]/45 italic">
+              Paused
+            </span>
+          ) : cronExpression && scheduleDescription ? (
             <div
               className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-mono"
             >

@@ -7,13 +7,10 @@
  * Supabase and the cron schedule config, not hardcoded.
  */
 
-import Link from "next/link";
-import { UserButton } from "@clerk/nextjs";
 import { FaYoutube } from "react-icons/fa6";
 import { getSupabaseClient } from "@/lib/supabase";
 import { CRON_SCHEDULES } from "@/lib/cron-schedule";
-import { CronTestRunButton } from "@/components/cron-test-run-button";
-import { PlatformOverviewCard } from "@/components/overview/platform-overview-card";
+import { CreatorTabs, type PlatformSummary } from "@/components/creator-tabs";
 import type { OverviewStatus } from "@/components/overview/status-pill";
 
 export const dynamic = "force-dynamic";
@@ -33,15 +30,21 @@ const BUFFER_WINDOW_HOURS = 24;
 
 interface PlatformEntry {
   key: string;       // unique ID, also the default route slug (/threads, /tiktok, …)
+  creator: "alex" | "leila";
   platform: string;  // DB column value used to query posts/schedules/cron_runs
   label: string;
   href?: string;     // optional override for the card link
   bufferMetric: BufferMetric;
+  // True for cards whose pipeline isn't wired yet — skip DB queries and
+  // render a synthetic "pending" summary so the card stays informative
+  // without crashing on a missing platform_enum value.
+  placeholder?: boolean;
 }
 
 const ACTIVE_PLATFORMS: PlatformEntry[] = [
   {
     key: "threads",
+    creator: "alex",
     platform: "threads",
     label: "Threads",
     // Threads is scheduler-based but the same cron run immediately picks up
@@ -52,46 +55,72 @@ const ACTIVE_PLATFORMS: PlatformEntry[] = [
   },
   {
     key: "instagram-2nd",
+    creator: "alex",
     platform: "instagram_2nd",
     label: "Instagram (2nd)",
     bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
   },
   {
     key: "tiktok",
+    creator: "alex",
     platform: "tiktok",
     label: "TikTok",
     bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
   },
   {
     key: "facebook",
+    creator: "alex",
     platform: "facebook",
     label: "Facebook",
     bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
   },
   {
     key: "linkedin",
+    creator: "alex",
     platform: "linkedin",
     label: "LinkedIn",
     bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
   },
   {
     key: "instagram",
+    creator: "alex",
     platform: "instagram",
     label: "Instagram (main)",
     bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
   },
   {
     key: "youtube",
+    creator: "alex",
     platform: "youtube",
     label: "YouTube",
     bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS },
   },
   {
     key: "youtube-second",
+    creator: "alex",
     platform: "youtube_second",
     label: "YouTube (2nd)",
     href: "/youtube-second",
     bufferMetric: { kind: "hidden" },
+  },
+  {
+    key: "leila-threads",
+    creator: "leila",
+    platform: "threads_leila",
+    label: "Threads",
+    href: "/leila/threads",
+    // Same shape as Alex's threads — the cron immediately publishes via
+    // Buffer, so we count published rows in the recent window for throughput.
+    bufferMetric: { kind: "sent_recent", hours: BUFFER_WINDOW_HOURS, statuses: ["published"] },
+  },
+  {
+    key: "leila-linkedin",
+    creator: "leila",
+    platform: "linkedin",  // unused — placeholder short-circuits queries
+    label: "LinkedIn",
+    href: "/leila/linkedin",
+    bufferMetric: { kind: "hidden" },
+    placeholder: true,
   },
 ];
 
@@ -119,6 +148,10 @@ const PLATFORM_SUMMARIES: Record<string, string> = {
     "Studio-first — bulk-upload drafts manually, daily cron (10 UTC) schedules the 10 earliest into fixed publish slots.",
   youtube:
     "Queued via the TikTok Manual Upload dialog on /tiktok — the same mp4 fans out to Buffer's YouTube Shorts channel, Buffer picks the slot.",
+  "leila-threads":
+    "Pulls @LeilaHormozi tweets from the past 24h via Apify (max 5/day, no engagement filter), schedules verbatim to Buffer's Leila Threads channel.",
+  "leila-linkedin":
+    "Pipeline coming soon.",
 };
 
 /* Computes the footer "Buffer" count + label for one platform.
@@ -147,8 +180,27 @@ async function getBufferQueue(
 }
 
 /* Gathers per-platform overview data from Supabase: last cron status for
-   health, and a pipeline-shape-aware count for the Buffer queue pill. */
-async function getPlatformSummary(entry: PlatformEntry) {
+   health, and a pipeline-shape-aware count for the Buffer queue pill.
+   Placeholder entries skip every query and return a synthetic "pending"
+   summary so unwired creators (e.g., Leila's LinkedIn) don't fail on
+   missing platform_enum values. */
+async function getPlatformSummary(entry: PlatformEntry): Promise<PlatformSummary> {
+  if (entry.placeholder) {
+    return {
+      key: entry.key,
+      creator: entry.creator,
+      label: entry.label,
+      description: PLATFORM_SUMMARIES[entry.key] ?? "",
+      status: "pending",
+      scheduleDescription: null,
+      cronExpression: null,
+      paused: false,
+      bufferQueue: null,
+      bufferQueueLabel: undefined,
+      href: entry.href,
+    };
+  }
+
   const supabase = getSupabaseClient();
   const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
 
@@ -166,9 +218,15 @@ async function getPlatformSummary(entry: PlatformEntry) {
 
   const lastRun = cronResult.data?.[0];
   const cronHealthy = !lastRun || lastRun.status !== "failed";
+  const schedule = CRON_SCHEDULES[entry.platform] ?? null;
+  const paused = schedule?.paused === true;
 
   let status: OverviewStatus;
-  if (PAUSED_PLATFORMS.has(entry.platform)) {
+  if (paused) {
+    // Paused trumps health derived from cron_runs — the cron isn't firing,
+    // so an old success/failure row would be misleading.
+    status = "paused";
+  } else if (PAUSED_PLATFORMS.has(entry.platform)) {
     status = "pending";
   } else if (cronHealthy) {
     status = "healthy";
@@ -176,13 +234,17 @@ async function getPlatformSummary(entry: PlatformEntry) {
     status = "failing";
   }
 
-  const schedule = CRON_SCHEDULES[entry.platform] ?? null;
-
   return {
-    ...entry,
+    key: entry.key,
+    creator: entry.creator,
+    label: entry.label,
+    description: PLATFORM_SUMMARIES[entry.key] ?? "",
     status,
     scheduleDescription: schedule?.description ?? null,
-    cronExpression: schedule?.schedule ?? null,
+    // Hide the live countdown when paused — the cron isn't actually due
+    // at that time, and the card's "Paused" pill already conveys why.
+    cronExpression: paused ? null : (schedule?.schedule ?? null),
+    paused,
     bufferQueue: bufferQueue.count,
     bufferQueueLabel: bufferQueue.label,
     href: entry.href,
@@ -191,18 +253,6 @@ async function getPlatformSummary(entry: PlatformEntry) {
 
 export default async function DashboardHome() {
   const summaries = await Promise.all(ACTIVE_PLATFORMS.map(getPlatformSummary));
-
-  const liveCount = summaries.filter((s) => s.status === "healthy").length;
-  const pausedCount = summaries.filter((s) => s.status === "pending").length;
-  const failingCount = summaries.filter((s) => s.status === "failing").length;
-
-  const statusLine = [
-    `${liveCount} live`,
-    pausedCount > 0 ? `${pausedCount} paused` : null,
-    failingCount > 0 ? `${failingCount} failing` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
 
   return (
     <div
@@ -223,62 +273,7 @@ export default async function DashboardHome() {
       />
 
       <div className="max-w-[1100px] mx-auto px-6 py-10">
-        <header className="flex items-start justify-between mb-12">
-          <div>
-            <Link href="/" className="flex items-center gap-2 w-fit">
-              <span className="text-[12px] font-semibold tracking-[0.22em] uppercase text-[var(--overview-fg)]/90">
-                Command Center
-              </span>
-              <span
-                className="h-[5px] w-[5px] rounded-full"
-                style={{ backgroundColor: "var(--terracotta)" }}
-              />
-            </Link>
-            <div className="flex items-center gap-2 mt-2 text-[11px] text-[var(--overview-fg)]/45 font-mono">
-              <span className="inline-block h-[7px] w-[7px] rounded-full relative bg-[var(--overview-fg)]/70">
-                <span
-                  className="anim-heartbeat absolute inset-0 rounded-full bg-[var(--overview-fg)]/70"
-                  style={{ animation: "heartbeat 4.5s ease-out infinite" }}
-                />
-              </span>
-              <span>{statusLine}</span>
-            </div>
-          </div>
-
-          <UserButton />
-        </header>
-
-        <div className="flex items-end justify-between mb-6">
-          <SectionLabel tone="primary">Platforms</SectionLabel>
-          <CronTestRunButton
-            triggerLabel="Run all crons"
-            triggerClassName="gap-1.5 text-white border-0 px-4 py-2 rounded-lg text-[13px] font-medium transition-transform duration-100 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-60"
-            triggerStyle={{
-              backgroundImage:
-                "linear-gradient(180deg, var(--terracotta-hover), var(--terracotta))",
-              boxShadow:
-                "inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.15), 0 6px 16px -8px rgba(174,86,48,0.55), 0 2px 4px -2px rgba(0,0,0,0.3)",
-            }}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {summaries.map((s, i) => (
-            <Link key={s.key} href={s.href ?? `/${s.key}`} className="block">
-              <PlatformOverviewCard
-                platformKey={s.key}
-                label={s.label}
-                description={PLATFORM_SUMMARIES[s.key] ?? ""}
-                status={s.status}
-                scheduleDescription={s.scheduleDescription}
-                cronExpression={s.cronExpression}
-                bufferQueue={s.bufferQueue}
-                bufferQueueLabel={s.bufferQueueLabel}
-                index={i}
-              />
-            </Link>
-          ))}
-        </div>
+        <CreatorTabs summaries={summaries} />
 
         {INACTIVE_PLATFORMS.length > 0 && (
           <div className="mt-12">

@@ -260,3 +260,21 @@ services:
         sync: false
       - key: CONTENT_BANK_COUNT
         sync: false
+
+  - type: cron
+    name: threads-leila-cron
+    runtime: python
+    buildCommand: pip install -r requirements.txt && pip install -e .
+    startCommand: python -m cron.threads_leila_cron
+    schedule: "0 11 * * *"  # Daily at 4am Las Vegas time (PDT = UTC-7)
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: BUFFER_ACCESS_TOKEN
+        sync: false
+      - key: APIFY_API_KEY
+        sync: false
+      - key: APIFY_LEILA_TWITTER_HANDLE  # optional — defaults to LeilaHormozi
+        sync: false

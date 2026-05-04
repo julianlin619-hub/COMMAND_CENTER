@@ -80,6 +80,7 @@ function pythonEnv(projectRoot: string) {
 // The startCommand in render.yaml is `python -m cron.<module>`.
 const CRON_MODULES: Record<string, string> = {
   "threads-cron": "cron.threads_cron",
+  "threads-leila-cron": "cron.threads_leila_cron",
   "tiktok-pipeline": "cron.tiktok_pipeline",
   "tiktok-bank-pipeline": "cron.tiktok_bank_pipeline",
   "facebook-pipeline": "cron.facebook_pipeline",

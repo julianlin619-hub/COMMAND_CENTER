@@ -41,6 +41,17 @@ export function CronCountdown({ platform }: { platform: string }) {
     );
   }
 
+  if (config.paused) {
+    // Cron is intentionally disabled at the infra layer — say so instead
+    // of computing a misleading countdown against a never-fires schedule.
+    return (
+      <div className="text-sm">
+        <span className="text-muted-foreground">Status: </span>
+        <span className="font-medium text-foreground">Paused</span>
+      </div>
+    );
+  }
+
   const remainingMs = nextRun.getTime() - now;
   const { h, m } = formatCountdownParts(remainingMs);
   const urgent = remainingMs < 60 * 60 * 1000; // under 1h → accent color

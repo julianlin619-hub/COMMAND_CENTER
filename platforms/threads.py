@@ -57,10 +57,13 @@ CREATE_POST_MUTATION = """
 class Threads(PlatformBase):
     name = "threads"
 
-    def __init__(self) -> None:
-        # Buffer credentials (for posting)
+    def __init__(self, channel_id: str | None = None) -> None:
+        # Buffer credentials (for posting). channel_id can be passed
+        # explicitly so the same adapter can target different Buffer
+        # channels (e.g., a second creator's Threads account); when
+        # omitted, fall back to the canonical BUFFER_THREADS_CHANNEL_ID.
         self.buffer_token = os.environ.get("BUFFER_ACCESS_TOKEN", "")
-        self.channel_id = os.environ.get("BUFFER_THREADS_CHANNEL_ID", "")
+        self.channel_id = channel_id or os.environ.get("BUFFER_THREADS_CHANNEL_ID", "")
 
     def validate_config(self) -> None:
         """Check that required Buffer env vars are present."""
