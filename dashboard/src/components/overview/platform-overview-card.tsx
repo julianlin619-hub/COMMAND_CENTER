@@ -15,6 +15,7 @@ import { ChevronRight } from "lucide-react";
 import {
   FaFacebookF,
   FaInstagram,
+  FaLinkedinIn,
   FaThreads,
   FaTiktok,
   FaYoutube,
@@ -31,10 +32,12 @@ const ACTIVE_ICONS: Record<
   "instagram-2nd": FaInstagram,
   tiktok: FaTiktok,
   facebook: FaFacebookF,
+  linkedin: FaLinkedinIn,
   instagram: FaInstagram,
   youtube: FaYoutube,
   "youtube-second": FaYoutube,
   "leila-threads": FaThreads,
+  "leila-linkedin": FaLinkedinIn,
 };
 
 interface PlatformOverviewCardProps {

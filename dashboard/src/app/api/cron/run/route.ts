@@ -87,6 +87,7 @@ const CRON_MODULES: Record<string, string> = {
   "instagram-pipeline": "cron.instagram_pipeline",
   "youtube-cron": "cron.youtube_cron",
   "linkedin-pipeline": "cron.linkedin_pipeline",
+  "linkedin-leila-cron": "cron.linkedin_leila_cron",
 };
 
 export async function POST(request: Request) {

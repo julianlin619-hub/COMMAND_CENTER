@@ -274,3 +274,32 @@ services:
         sync: false
       - key: APIFY_LEILA_TWITTER_HANDLE  # optional — defaults to LeilaHormozi
         sync: false
+
+  - type: cron
+    name: linkedin-leila-cron
+    runtime: python
+    buildCommand: pip install -r requirements.txt && pip install -e .
+    startCommand: python -m cron.linkedin_leila_cron
+    # Daily at 11:45 UTC = 4:45 AM PDT. Wedged between the 11:30 slot
+    # (facebook-pipeline + instagram-pipeline both call /api/content-gen
+    # with node-canvas — three concurrent renders on the standard-plan
+    # dashboard would risk OOM) and the 12:00 slot (linkedin-pipeline).
+    # 15 min of headroom on each side is enough for the FB/IG renders to
+    # finish before this cron's render starts.
+    schedule: "45 11 * * *"
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: BUFFER_ACCESS_TOKEN
+        sync: false
+      - key: APIFY_API_KEY
+        sync: false
+      # Calls /api/content-gen/generate on the dashboard for square PNG renders
+      - key: DASHBOARD_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: APIFY_LEILA_TWITTER_HANDLE  # optional — defaults to LeilaHormozi
+        sync: false
