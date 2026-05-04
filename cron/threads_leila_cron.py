@@ -38,10 +38,22 @@ from platforms.threads import Threads
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-# Buffer channel ID for Leila's Threads (org "ACQ", channel "leilahormozi").
+# Buffer channel ID for Leila's Threads.
+#
+#   Buffer org: "ACQ" (id 67dafe21c453882020852a9a)
+#   Channel:    "leilahormozi" (service: threads)
+#
 # Hardcoded because it's stable per-account and the BUFFER_ACCESS_TOKEN it's
 # paired with is what actually gates access — keeping this out of env vars
 # avoids per-environment config drift for a value that never changes.
+#
+# To rotate (or look up another channel in the same org), POST to
+# https://api.buffer.com/graphql with the existing BUFFER_ACCESS_TOKEN:
+#
+#   { account { organizations { id name channels { id name service } } } }
+#
+# Find the entry where service="threads" and name matches the desired
+# Threads handle, then paste its `id` here.
 THREADS_LEILA_CHANNEL_ID = "67dafec61616c536ddd6e02f"
 
 

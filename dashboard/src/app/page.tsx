@@ -116,7 +116,10 @@ const ACTIVE_PLATFORMS: PlatformEntry[] = [
   {
     key: "leila-linkedin",
     creator: "leila",
-    platform: "linkedin",  // unused — placeholder short-circuits queries
+    // Empty platform — placeholder short-circuits all DB queries before
+    // this is read. Using a real enum value (e.g. "linkedin") here would
+    // silently surface Alex's data if the placeholder check ever regressed.
+    platform: "",
     label: "LinkedIn",
     href: "/leila/linkedin",
     bufferMetric: { kind: "hidden" },
@@ -186,15 +189,19 @@ async function getBufferQueue(
    missing platform_enum values. */
 async function getPlatformSummary(entry: PlatformEntry): Promise<PlatformSummary> {
   if (entry.placeholder) {
+    // Treat unwired creator cards as "paused" — semantically distinct from
+    // "pending" (which means "waiting on first cron run"). Reuses the
+    // existing paused styling so the card shows "Paused" in the pill and
+    // skips the countdown; the description carries the "coming soon" copy.
     return {
       key: entry.key,
       creator: entry.creator,
       label: entry.label,
       description: PLATFORM_SUMMARIES[entry.key] ?? "",
-      status: "pending",
+      status: "paused",
       scheduleDescription: null,
       cronExpression: null,
-      paused: false,
+      paused: true,
       bufferQueue: null,
       bufferQueueLabel: undefined,
       href: entry.href,
