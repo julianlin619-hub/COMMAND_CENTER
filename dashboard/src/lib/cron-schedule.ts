@@ -37,6 +37,9 @@ export const CRON_SCHEDULES: Record<string, CronScheduleInfo> = {
   // Leila's LinkedIn — Apify-source pipeline that renders 1080×1080 quote
   // cards from recent @LeilaHormozi tweets and queues them on Buffer.
   linkedin_leila: { schedule: "45 11 * * *", description: "Daily at 4:45 AM PDT" },
+  // Paused 2026-05-05 — cron suspended on Render. Re-enable here when the
+  // youtube-second-cron service is resumed.
+  youtube_second: { schedule: "0 10 * * *",  description: "Daily at 3:00 AM PDT", paused: true },
 };
 
 /** Compute the next UTC run time from a simple cron pattern. */
