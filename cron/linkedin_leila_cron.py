@@ -6,9 +6,12 @@ quote-card PNGs and queues them on Buffer's Leila LinkedIn channel.
 
 Phases (each logged as its own cron_runs row):
   Phase 0 — SOURCE: Apify-scrape recent @LeilaHormozi tweets. Tries a 24-hour
-            window first, falls back to 72 hours if 24h returned nothing —
-            the source repo's behavior was "post when there's content,"
-            and a single dry day shouldn't skip the whole pipeline.
+            window first; if that's empty, fetches the latest 30 tweets
+            ignoring time and posts exactly one fresh (not-yet-queued)
+            tweet from that list. Guarantees a daily LinkedIn post unless
+            every one of Leila's 30 most recent tweets has already been
+            quote-carded — replaces the older 72-hour fallback, which
+            still produced 0 posts on quiet days.
   Phase 1 — GENERATE: hand each tweet to the dashboard's content-gen route
             and get back a Storage path to a rendered 1080×1080 PNG.
             Re-uses Alex's Facebook template config (no Leila-specific
@@ -92,21 +95,34 @@ LINKEDIN_LEILA_CHANNEL_ID = "69f8e8fb5c4c051afa0d487e"
 LINKEDIN_LEILA_CAPTION = "Agree?"
 
 
-def _fetch_with_fallback(twitter_handle: str) -> list[dict]:
-    """Pull recent tweets, falling back to a wider window when the tight one is empty.
+def _fetch_with_fallback(twitter_handle: str) -> tuple[list[dict], bool]:
+    """Pull recent tweets, falling back to "latest 30, pick one" when the tight window is empty.
 
     Try 24h first (matches Threads-Leila and the source repo's "today's
     tweets" intent). If nothing comes back — Leila skipped a day, or the
-    Apify actor was rate-limited and yielded zero — widen to 72h so a
-    single quiet day doesn't lose us a LinkedIn post entirely.
+    Apify actor was rate-limited and yielded zero — fetch the latest 30
+    tweets ignoring time so the caller can post exactly one fresh tweet.
+    A single quiet day shouldn't lose us a LinkedIn post entirely.
+
+    The 1-year lookback on the wide call is a deliberate "effectively no
+    time filter" — the Apify actor is sorted Latest and capped at 30
+    items, so the date filter in core/content_sources.py becomes a no-op
+    for any account that's tweeted within the past year. Done this way to
+    avoid changing fetch_apify_tweets' signature, which Threads-Leila
+    also depends on.
+
+    Returns a (tweets, used_wide_fallback) tuple. When the bool is True,
+    the caller should cap output to a single fresh post.
     """
     tweets = fetch_apify_tweets(twitter_handle, max_items=5, hours_lookback=24)
     if tweets:
-        return tweets
+        return tweets, False
     logger.info(
-        "No tweets in 24h window for @%s — falling back to 72h", twitter_handle,
+        "No tweets in 24h window for @%s — fetching latest 30 to pick one",
+        twitter_handle,
     )
-    return fetch_apify_tweets(twitter_handle, max_items=5, hours_lookback=72)
+    wide = fetch_apify_tweets(twitter_handle, max_items=30, hours_lookback=24 * 365)
+    return wide, True
 
 
 def main() -> None:
@@ -145,21 +161,29 @@ def main() -> None:
     new_tweets: list[dict] = []
     try:
         twitter_handle = os.environ.get("APIFY_LEILA_TWITTER_HANDLE", "LeilaHormozi")
-        tweets = _fetch_with_fallback(twitter_handle)
+        tweets, used_wide_fallback = _fetch_with_fallback(twitter_handle)
         logger.info("Phase 0: fetched %d tweets from @%s", len(tweets), twitter_handle)
 
+        duplicates = 0
         for tweet in tweets:
             text = tweet["text"]
             if post_caption_exists("linkedin_leila", text):
+                duplicates += 1
                 logger.debug("Skipping duplicate: %s...", text[:50])
                 continue
             new_tweets.append(tweet)
+            # Wide-fallback path posts exactly one fresh tweet — the goal is
+            # "one LinkedIn post per day even on quiet days," not "burn down
+            # Leila's entire backlog the next time she goes silent for 24h."
+            if used_wide_fallback:
+                break
 
         log_cron_finish(run_id, status="success", posts_processed=len(new_tweets))
         logger.info(
-            "Phase 0: %d new tweets after dedup (%d filtered)",
+            "Phase 0: %d new tweets after dedup (%d duplicates, wide_fallback=%s)",
             len(new_tweets),
-            len(tweets) - len(new_tweets),
+            duplicates,
+            used_wide_fallback,
         )
     except Exception as e:
         logger.error("Phase 0 failed (Apify source): %s", e, exc_info=True)
