@@ -1,24 +1,27 @@
-"use client";
-
 /**
- * Pathway 3 for the TikTok detail page: user-triggered manual upload.
+ * Pathway 3 card for the TikTok detail page: user-triggered manual upload.
  *
- * Visually mirrors <PathwayCard/> so the three TikTok pathways read as a set,
- * but the Run button opens <TikTokUploadDialog/> (which POSTs to
- * /api/tiktok/manual-upload) instead of firing a cron job.
+ * Visually mirrors <PathwayCard/> so the three TikTok pathways read as a
+ * set. Unlike pathways 1 and 2 (which fire a cron via a Run button), this
+ * card is a navigation entry: the entire card is wrapped in a <Link/> to
+ * /tiktok/manual-upload, where the actual file picker + Upload button
+ * live as an inline form. This keeps the click target large (matches the
+ * platform-card pattern from the home overview in creator-tabs.tsx) and
+ * gives the upload form room to breathe instead of cramming it into a
+ * modal.
+ *
+ * No client state lives here anymore, so this is a server component.
  */
 
-import { useState } from "react";
+import Link from "next/link";
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { UploadIcon } from "lucide-react";
-import { TikTokUploadDialog } from "@/components/tiktok-upload-dialog";
+import { ArrowRightIcon } from "lucide-react";
 
 const STEPS = [
   "Pick mp4 from your computer",
@@ -28,11 +31,13 @@ const STEPS = [
 ];
 
 export function TikTokManualUploadPathway({ number }: { number: number }) {
-  const [open, setOpen] = useState(false);
-
   return (
-    <>
-      <Card className="mb-4">
+    <Link
+      href="/tiktok/manual-upload"
+      className="block group"
+      aria-label="Open manual upload"
+    >
+      <Card className="mb-4 transition-colors group-hover:border-white/20">
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -41,10 +46,10 @@ export function TikTokManualUploadPathway({ number }: { number: number }) {
               </Badge>
               <CardTitle className="text-sm">Manual upload</CardTitle>
             </div>
-            <Button onClick={() => setOpen(true)} size="sm">
-              <UploadIcon />
-              Upload
-            </Button>
+            {/* Right-side affordance hints that the card is a link. We
+                keep it subtle (40% opacity) and brighten on hover to match
+                the rest of the dashboard's link styling. */}
+            <ArrowRightIcon className="size-4 shrink-0 text-[var(--overview-fg)]/40 transition-colors group-hover:text-[var(--overview-fg)]/80" />
           </div>
         </CardHeader>
         <CardContent>
@@ -63,8 +68,6 @@ export function TikTokManualUploadPathway({ number }: { number: number }) {
           </p>
         </CardContent>
       </Card>
-
-      <TikTokUploadDialog open={open} onOpenChange={setOpen} />
-    </>
+    </Link>
   );
 }

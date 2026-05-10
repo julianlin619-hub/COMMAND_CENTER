@@ -41,6 +41,13 @@ const MAX_FILE_BYTES = 250 * 1024 * 1024;
 // TikTok's 150-char truncation, so we override per-call for LinkedIn.
 const LINKEDIN_CAPTION_LIMIT = 3000;
 
+// TEMPORARY KILL-SWITCH for the LinkedIn fan-out. When false, uploads still
+// go to TikTok + YouTube Shorts, but the LinkedIn Buffer send + posts-row
+// insert are skipped and the response returns linkedinBufferId=undefined,
+// linkedinError=undefined (i.e. silent skip — not a failure). Flip back to
+// true to resume LinkedIn fan-out; no other changes needed.
+const LINKEDIN_FANOUT_ENABLED = false;
+
 const PG_UNIQUE_VIOLATION = "23505";
 
 // Defaults applied to every YouTube Shorts upload. Pulled out so they're
@@ -281,20 +288,24 @@ export async function POST(req: NextRequest) {
   // 7. Fan out to Buffer's LinkedIn channel. Same partial-success contract
   //    as YouTube — TikTok is already queued, can't be un-queued, so any
   //    LinkedIn failure is surfaced via linkedinError without rolling back.
+  //    Gated behind LINKEDIN_FANOUT_ENABLED so the entire LinkedIn leg can
+  //    be paused without ripping out the code.
   let linkedinBufferId: string | undefined;
   let linkedinError: string | undefined;
-  try {
-    const liChannelId = await getChannelId(undefined, "linkedin");
-    linkedinBufferId = await sendToBuffer(
-      liChannelId,
-      caption,
-      signed.signedUrl,
-      "video",
-      { captionLimit: LINKEDIN_CAPTION_LIMIT },
-    );
-  } catch (err) {
-    linkedinError = (err as Error).message;
-    console.error("Buffer LinkedIn send failed:", linkedinError);
+  if (LINKEDIN_FANOUT_ENABLED) {
+    try {
+      const liChannelId = await getChannelId(undefined, "linkedin");
+      linkedinBufferId = await sendToBuffer(
+        liChannelId,
+        caption,
+        signed.signedUrl,
+        "video",
+        { captionLimit: LINKEDIN_CAPTION_LIMIT },
+      );
+    } catch (err) {
+      linkedinError = (err as Error).message;
+      console.error("Buffer LinkedIn send failed:", linkedinError);
+    }
   }
 
   // 8. If LinkedIn succeeded, record its posts row too.
