@@ -78,12 +78,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // We previously swallowed the underlying error and returned a generic
+  // "Expected multipart/form-data body" 400. That was useless for debugging:
+  // formData() can throw for many reasons (boundary mismatch, the platform
+  // proxy truncated the body, the stream errored mid-parse for an oversized
+  // file, etc.) and we couldn't tell which from the response alone. Now we
+  // log the real error to Render logs AND return its message in the JSON
+  // response, so the dashboard's error banner shows the actual cause.
   let form: FormData;
   try {
     form = await req.formData();
-  } catch {
+  } catch (err) {
+    const detail = (err as Error)?.message ?? String(err);
+    console.error("manual-upload: failed to parse multipart body:", detail);
     return NextResponse.json(
-      { error: "Expected multipart/form-data body" },
+      {
+        error: `Failed to parse multipart/form-data body: ${detail}`,
+      },
       { status: 400 },
     );
   }
