@@ -1,14 +1,18 @@
 /**
- * POST /api/tiktok/manual-upload
+ * POST /api/tiktok/manual-upload (finalize step)
  *
- * Single user-triggered manual upload entry point. Accepts an mp4, stores
- * it in Supabase Storage, signs a 7-day URL, and fans out the same video
- * to Buffer's TikTok + YouTube Shorts + LinkedIn queues (schedulingType=
- * automatic + mode=addToQueue → Buffer picks the next slot per channel).
- * Records one `posts` row per successful platform, all referencing the
- * same storage path.
+ * Step 3 of the two-step TikTok manual upload flow (Pathway 3). The browser
+ * has already uploaded the mp4 directly to Supabase Storage via TUS using a
+ * token issued by /api/tiktok/manual-upload/sign-url. This endpoint just:
+ *   1. Verifies the storagePath belongs to the calling user.
+ *   2. Confirms the upload actually completed (the object exists).
+ *   3. Signs a 7-day read URL for Buffer to pull from.
+ *   4. Queues the video on Buffer for TikTok, then fans it out to YouTube
+ *      Shorts and (if enabled) LinkedIn.
+ *   5. Writes one `posts` row per successful platform, all referencing the
+ *      same storage path so the cleanup cron can group them.
  *
- * Body: multipart/form-data with `file` (video/mp4), `title`, `caption`.
+ * Body: JSON { storagePath, title, caption }.
  * Title is mandatory because YouTube requires a non-empty video title;
  * LinkedIn ignores it but it's stored on the LinkedIn posts row anyway.
  *
@@ -20,22 +24,20 @@
  * The source mp4 is deleted from Storage 3 days after Buffer publishes
  * every recorded post (via `cron/tiktok_storage_cleanup.py`, which groups
  * by storage path). `metadata.source='manual_upload'` is the flag the
- * cleanup cron scans for.
+ * cleanup cron scans for — DO NOT change that key without updating the
+ * cron and the partial index in
+ * supabase/migrations/20260424120000_tiktok_manual_upload_cleanup.sql.
+ *
+ * Auth: Clerk session only. See sign-url/route.ts for the same rationale.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { randomUUID } from "crypto";
+import { auth } from "@clerk/nextjs/server";
 import { getSupabaseClient } from "@/lib/supabase";
-import { verifyApiAuth } from "@/lib/auth";
 import { getChannelId, sendToBuffer, type YouTubeMetadata } from "@/lib/buffer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-// 250 MB guard — Render doesn't hard-cap this, but a reasonable ceiling
-// protects against accidental multi-gigabyte uploads that would blow the
-// serverless runtime's memory.
-const MAX_FILE_BYTES = 250 * 1024 * 1024;
 
 // LinkedIn allows up to 3000 chars in a post body. sendToBuffer defaults to
 // TikTok's 150-char truncation, so we override per-call for LinkedIn.
@@ -50,8 +52,14 @@ const LINKEDIN_FANOUT_ENABLED = false;
 
 const PG_UNIQUE_VIOLATION = "23505";
 
+const BUCKET = "media";
+
+// 7 days. Buffer may not pull the file for hours or days after we queue it,
+// so short-lived URLs risk expiring before Buffer fetches the video.
+const READ_URL_TTL_SECONDS = 60 * 60 * 24 * 7;
+
 // Defaults applied to every YouTube Shorts upload. Pulled out so they're
-// easy to scan and tweak. `title` is supplied per-upload from the dialog.
+// easy to scan and tweak. `title` is supplied per-upload from the form.
 const YOUTUBE_DEFAULTS: Omit<YouTubeMetadata, "title"> = {
   categoryId: "27", // Education
   privacy: "public",
@@ -73,38 +81,38 @@ function isUniqueViolation(err: unknown): boolean {
   );
 }
 
+type FinalizeBody = {
+  storagePath?: unknown;
+  title?: unknown;
+  caption?: unknown;
+};
+
 export async function POST(req: NextRequest) {
-  if (!(await verifyApiAuth(req))) {
+  // Same auth rationale as sign-url: we need the Clerk userId to verify
+  // the storagePath actually belongs to this user, so verifyApiAuth (which
+  // returns only a boolean and accepts CRON_SECRET) is the wrong tool.
+  const { userId } = await auth();
+  if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // We previously swallowed the underlying error and returned a generic
-  // "Expected multipart/form-data body" 400. That was useless for debugging:
-  // formData() can throw for many reasons (boundary mismatch, the platform
-  // proxy truncated the body, the stream errored mid-parse for an oversized
-  // file, etc.) and we couldn't tell which from the response alone. Now we
-  // log the real error to Render logs AND return its message in the JSON
-  // response, so the dashboard's error banner shows the actual cause.
-  let form: FormData;
+  let body: FinalizeBody;
   try {
-    form = await req.formData();
-  } catch (err) {
-    const detail = (err as Error)?.message ?? String(err);
-    console.error("manual-upload: failed to parse multipart body:", detail);
-    return NextResponse.json(
-      {
-        error: `Failed to parse multipart/form-data body: ${detail}`,
-      },
-      { status: 400 },
-    );
+    body = (await req.json()) as FinalizeBody;
+  } catch {
+    return NextResponse.json({ error: "Expected JSON body" }, { status: 400 });
   }
 
-  const file = form.get("file");
-  const title = String(form.get("title") ?? "").trim();
-  const caption = String(form.get("caption") ?? "").trim();
+  const storagePath =
+    typeof body.storagePath === "string" ? body.storagePath : "";
+  const title = typeof body.title === "string" ? body.title.trim() : "";
+  const caption = typeof body.caption === "string" ? body.caption.trim() : "";
 
-  if (!(file instanceof File)) {
-    return NextResponse.json({ error: "Missing `file` field" }, { status: 400 });
+  if (!storagePath) {
+    return NextResponse.json(
+      { error: "Missing `storagePath` field" },
+      { status: 400 },
+    );
   }
   if (!title) {
     return NextResponse.json(
@@ -113,61 +121,68 @@ export async function POST(req: NextRequest) {
     );
   }
   if (!caption) {
-    return NextResponse.json({ error: "Missing `caption` field" }, { status: 400 });
-  }
-  if (file.size === 0) {
-    return NextResponse.json({ error: "File is empty" }, { status: 400 });
-  }
-  if (file.size > MAX_FILE_BYTES) {
     return NextResponse.json(
-      { error: `File too large (max ${MAX_FILE_BYTES / (1024 * 1024)} MB)` },
-      { status: 413 },
+      { error: "Missing `caption` field" },
+      { status: 400 },
     );
   }
-  const isMp4 =
-    file.type === "video/mp4" || file.name.toLowerCase().endsWith(".mp4");
-  if (!isMp4) {
+
+  // Path-ownership check. The sign-url endpoint always issues paths under
+  // `tiktok/manual/<userId>/`, so any finalize call with a different
+  // prefix is either a bug or an attempt to claim someone else's upload.
+  // Also reject path-traversal segments defensively — Supabase normalises
+  // these but cheap to belt-and-brace here.
+  const expectedPrefix = `tiktok/manual/${userId}/`;
+  if (!storagePath.startsWith(expectedPrefix) || storagePath.includes("..")) {
     return NextResponse.json(
-      { error: "Only video/mp4 files are supported" },
-      { status: 415 },
+      { error: "storagePath does not belong to the authenticated user" },
+      { status: 403 },
     );
   }
 
   const supabase = getSupabaseClient();
-  const storagePath = `tiktok/manual/${randomUUID()}.mp4`;
 
-  // 1. Upload to Supabase Storage. Kept on the "tiktok/manual/" prefix so it
-  //    never collides with the automated "tiktok/tweet-<id>.mp4" path used
-  //    by cron/tiktok_pipeline.py.
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const { error: uploadError } = await supabase.storage
-    .from("media")
-    .upload(storagePath, bytes, { contentType: "video/mp4" });
-  if (uploadError) {
-    console.error("Storage upload failed:", uploadError.message);
+  // Confirm the upload actually finished. If the user submitted the
+  // finalize form before TUS completed (or the browser tab died mid-
+  // upload), the object won't be there and we'd silently sign a URL
+  // to nothing. Cheaper than re-issuing a HEAD request — list() scopes
+  // the query to this user's directory.
+  const basename = storagePath.slice(expectedPrefix.length);
+  const { data: listed, error: listError } = await supabase.storage
+    .from(BUCKET)
+    .list(expectedPrefix.replace(/\/$/, ""), { search: basename });
+  if (listError) {
+    console.error(
+      "manual-upload: storage list failed:",
+      listError.message,
+    );
     return NextResponse.json(
-      { error: `Storage upload failed: ${uploadError.message}` },
+      { error: `Storage check failed: ${listError.message}` },
       { status: 500 },
     );
   }
+  const exists = (listed ?? []).some((entry) => entry.name === basename);
+  if (!exists) {
+    return NextResponse.json(
+      { error: "Upload did not complete — object not found in Storage" },
+      { status: 404 },
+    );
+  }
 
-  // 2. Sign a 7-day URL. Buffer may not pull the file for hours/days, so
-  //    short-lived URLs risk expiring before Buffer fetches the video.
+  // Sign a 7-day read URL for Buffer.
   const { data: signed, error: signError } = await supabase.storage
-    .from("media")
-    .createSignedUrl(storagePath, 604800);
+    .from(BUCKET)
+    .createSignedUrl(storagePath, READ_URL_TTL_SECONDS);
   if (signError || !signed?.signedUrl) {
-    console.error("Signed URL failed:", signError?.message);
-    // Clean up the orphan file so retries aren't blocked by the unique path.
-    await supabase.storage.from("media").remove([storagePath]);
+    console.error("manual-upload: createSignedUrl failed:", signError?.message);
     return NextResponse.json(
       { error: `Failed to sign URL: ${signError?.message}` },
       { status: 500 },
     );
   }
 
-  // 3. Queue the video on Buffer's TikTok channel. sendToBuffer already
-  //    truncates the caption to TikTok's 150-char limit.
+  // Queue the video on Buffer's TikTok channel. sendToBuffer truncates the
+  // caption to TikTok's 150-char limit on its own.
   let tiktokChannelId: string;
   let tiktokBufferId: string;
   try {
@@ -180,17 +195,19 @@ export async function POST(req: NextRequest) {
     );
   } catch (err) {
     console.error("Buffer TikTok send failed:", (err as Error).message);
-    // Orphan file cleanup: we haven't written a posts row yet, so no DB state
-    // to roll back. Removing the Storage file avoids paying for dead bytes.
-    await supabase.storage.from("media").remove([storagePath]);
+    // Nothing to roll back — we haven't written a posts row and the
+    // file already lives in Storage (uploaded by the browser, not by
+    // us). The cleanup cron won't pick it up because no posts row
+    // references it, so we'd leak the bytes. Surface a clear error so
+    // a future TTL job can sweep unclaimed manual/<userId>/* objects.
     return NextResponse.json(
       { error: `Buffer send failed: ${(err as Error).message}` },
       { status: 502 },
     );
   }
 
-  // 4. Record the TikTok post. platform_post_id holds the Buffer ID so the
-  //    cleanup cron can query Buffer for sentAt later.
+  // Record the TikTok post. platform_post_id holds the Buffer ID so the
+  // cleanup cron can query Buffer for sentAt later.
   const { data: tiktokPost, error: tiktokInsertError } = await supabase
     .from("posts")
     .insert({
@@ -211,9 +228,9 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (tiktokInsertError || !tiktokPost) {
-    // Buffer has already accepted the post — rolling back its queue is fiddly
-    // and risky. Better to leave the video queued and surface the Buffer ID
-    // so the user can reconcile manually.
+    // Buffer has already accepted the post — rolling back its queue is
+    // fiddly and risky. Better to leave the video queued and surface
+    // the Buffer ID so the user can reconcile manually.
     if (isUniqueViolation(tiktokInsertError)) {
       return NextResponse.json(
         {
@@ -237,9 +254,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 5. Fan out to Buffer's YouTube channel. Failures here are reported as
-  //    partial success — TikTok is already queued and we can't un-queue it,
-  //    so surface the YouTube error without rolling anything back.
+  // Fan out to Buffer's YouTube channel. Failures here are reported as
+  // partial success — TikTok is already queued and we can't un-queue it,
+  // so surface the YouTube error without rolling anything back.
   let youtubeBufferId: string | undefined;
   let youtubeError: string | undefined;
   try {
@@ -259,31 +276,28 @@ export async function POST(req: NextRequest) {
     console.error("Buffer YouTube send failed:", youtubeError);
   }
 
-  // 6. If YouTube succeeded, record its posts row too. Same storage path so
-  //    the cleanup cron can group all rows and only delete the file after
-  //    every Buffer sentAt window passes.
+  // If YouTube succeeded, record its posts row too. Same storage path so
+  // the cleanup cron groups all rows and only deletes the file after
+  // every Buffer sentAt window passes.
   if (youtubeBufferId) {
-    const { error: ytInsertError } = await supabase
-      .from("posts")
-      .insert({
-        platform: "youtube",
-        status: "sent_to_buffer",
-        title,
-        caption,
-        media_type: "video",
-        media_urls: [storagePath],
-        platform_post_id: youtubeBufferId,
-        metadata: {
-          source: "manual_upload",
-          buffer_post_id: youtubeBufferId,
-          storage_cleanup_status: "pending",
-        },
-      });
+    const { error: ytInsertError } = await supabase.from("posts").insert({
+      platform: "youtube",
+      status: "sent_to_buffer",
+      title,
+      caption,
+      media_type: "video",
+      media_urls: [storagePath],
+      platform_post_id: youtubeBufferId,
+      metadata: {
+        source: "manual_upload",
+        buffer_post_id: youtubeBufferId,
+        storage_cleanup_status: "pending",
+      },
+    });
     if (ytInsertError) {
-      // Buffer accepted the YouTube post but the DB row failed. Treat this
-      // as a YouTube-side partial failure so the user can reconcile.
       if (isUniqueViolation(ytInsertError)) {
-        youtubeError = "A YouTube post with this exact caption already exists.";
+        youtubeError =
+          "A YouTube post with this exact caption already exists.";
       } else {
         youtubeError = `YouTube post insert failed: ${ytInsertError.message}`;
       }
@@ -296,11 +310,9 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 7. Fan out to Buffer's LinkedIn channel. Same partial-success contract
-  //    as YouTube — TikTok is already queued, can't be un-queued, so any
-  //    LinkedIn failure is surfaced via linkedinError without rolling back.
-  //    Gated behind LINKEDIN_FANOUT_ENABLED so the entire LinkedIn leg can
-  //    be paused without ripping out the code.
+  // Fan out to Buffer's LinkedIn channel. Same partial-success contract
+  // as YouTube. Gated behind LINKEDIN_FANOUT_ENABLED so the entire
+  // LinkedIn leg can be paused without ripping out the code.
   let linkedinBufferId: string | undefined;
   let linkedinError: string | undefined;
   if (LINKEDIN_FANOUT_ENABLED) {
@@ -319,27 +331,25 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 8. If LinkedIn succeeded, record its posts row too.
   if (linkedinBufferId) {
-    const { error: liInsertError } = await supabase
-      .from("posts")
-      .insert({
-        platform: "linkedin",
-        status: "sent_to_buffer",
-        title,
-        caption,
-        media_type: "video",
-        media_urls: [storagePath],
-        platform_post_id: linkedinBufferId,
-        metadata: {
-          source: "manual_upload",
-          buffer_post_id: linkedinBufferId,
-          storage_cleanup_status: "pending",
-        },
-      });
+    const { error: liInsertError } = await supabase.from("posts").insert({
+      platform: "linkedin",
+      status: "sent_to_buffer",
+      title,
+      caption,
+      media_type: "video",
+      media_urls: [storagePath],
+      platform_post_id: linkedinBufferId,
+      metadata: {
+        source: "manual_upload",
+        buffer_post_id: linkedinBufferId,
+        storage_cleanup_status: "pending",
+      },
+    });
     if (liInsertError) {
       if (isUniqueViolation(liInsertError)) {
-        linkedinError = "A LinkedIn post with this exact caption already exists.";
+        linkedinError =
+          "A LinkedIn post with this exact caption already exists.";
       } else {
         linkedinError = `LinkedIn post insert failed: ${liInsertError.message}`;
       }
