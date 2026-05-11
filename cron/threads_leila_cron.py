@@ -19,6 +19,7 @@ and its own Render service.
 
 import logging
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -57,6 +58,35 @@ logger = logging.getLogger(__name__)
 THREADS_LEILA_CHANNEL_ID = "67dafec61616c536ddd6e02f"
 
 
+# Regex for detecting hyperlinks in tweet text.
+#
+# Apify returns the raw tweet body, where Twitter rewrites every link as a
+# t.co short URL (e.g. "https://t.co/abc123"). We also want to catch any
+# bare URLs the author typed out (https://, http://, or www.example.com),
+# since reposting a tweet that points at an X-hosted article or external
+# site doesn't make sense on Threads — the link target doesn't carry over
+# and the post reads as a dangling reference.
+#
+# Patterns matched:
+#   - http:// or https:// followed by any non-whitespace
+#   - www. followed by a domain-ish token
+#   - bare t.co/... shortlinks (defensive; t.co text usually arrives with
+#     the https:// prefix, but Apify has occasionally stripped it)
+_HYPERLINK_RE = re.compile(
+    r"(https?://\S+|www\.\S+|\bt\.co/\S+)",
+    re.IGNORECASE,
+)
+
+
+def _contains_hyperlink(text: str) -> bool:
+    """Return True if the tweet text contains any URL-like substring.
+
+    Used to filter out tweets that link off-platform before they're
+    queued for reposting to Threads.
+    """
+    return bool(_HYPERLINK_RE.search(text))
+
+
 def main():
     log_env_diagnostics(
         "threads-leila-cron",
@@ -85,12 +115,26 @@ def main():
     run_id = log_cron_start(platform="threads_leila", job_type="content_apify")
     try:
         apify_sourced = 0
+        skipped_hyperlink = 0
         now = datetime.now(timezone.utc)
 
         twitter_handle = os.environ.get("APIFY_LEILA_TWITTER_HANDLE", "LeilaHormozi")
         tweets = fetch_apify_tweets(twitter_handle, max_items=5, hours_lookback=24)
 
         for tweet in tweets:
+            # Drop tweets that contain a URL — reposting a link-bearing tweet
+            # to Threads strips the link's context (t.co indirection,
+            # quote-tweets, article cards) and leaves a confusing stub. The
+            # source repo doesn't filter on engagement, but it also doesn't
+            # have to deal with hyperlinks since the original tweet lives on
+            # X; we're mirroring to a different network.
+            if _contains_hyperlink(tweet["text"]):
+                skipped_hyperlink += 1
+                logger.info(
+                    "Skipping tweet %s — contains hyperlink",
+                    tweet.get("id", "?"),
+                )
+                continue
             if post_caption_exists("threads_leila", tweet["text"]):
                 continue
             post = Post(platform="threads_leila", caption=tweet["text"], status="scheduled")
@@ -99,7 +143,11 @@ def main():
             apify_sourced += 1
 
         log_cron_finish(run_id, status="success", posts_processed=apify_sourced)
-        logger.info("Apify sourcing complete: %d new posts", apify_sourced)
+        logger.info(
+            "Apify sourcing complete: %d new posts, %d skipped (hyperlink)",
+            apify_sourced,
+            skipped_hyperlink,
+        )
     except Exception as e:
         logger.error("Apify sourcing failed: %s", e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
