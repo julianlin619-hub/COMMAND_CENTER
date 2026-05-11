@@ -138,13 +138,16 @@ export function TikTokManualUploadForm() {
 
       const upload = new tus.Upload(selectedFile, {
         endpoint: `${supabaseUrl}/storage/v1/upload/resumable`,
-        // Supabase docs: signed upload tokens minted by createSignedUploadUrl
-        // can be passed in x-signature for resumable uploads. x-upsert lets
-        // us overwrite if the same path is retried (the path includes a
-        // uuid so collisions are essentially impossible, but the header is
-        // harmless and matches Supabase's example).
+        // Auth: the token from createSignedUploadUrl is a JWT scoped to a
+        // single storage path. It goes in Authorization: Bearer, matching
+        // how Supabase's `uploadToSignedUrl` client method sends it
+        // internally. We previously tried `x-signature` (which Supabase
+        // docs reference for signed-token uploads) but the TUS resumable
+        // endpoint rejected it with "Invalid Compact JWS" — that header
+        // is only honored by the single-PUT signed-URL endpoint, not by
+        // the resumable TUS endpoint. x-upsert is harmless either way.
         headers: {
-          "x-signature": token,
+          authorization: `Bearer ${token}`,
           "x-upsert": "true",
         },
         // Send the first PATCH alongside the creation POST so we don't
