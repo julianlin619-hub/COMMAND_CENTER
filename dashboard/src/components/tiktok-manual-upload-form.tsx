@@ -4,12 +4,10 @@
  * Inline form for TikTok manual upload (Pathway 3). Three-step flow:
  *
  *   1. Sign URL: POST /api/tiktok/manual-upload/sign-url → server mints a
- *      Supabase Storage signed upload token + storage path.
- *   2. Direct TUS upload: tus-js-client uploads the mp4 from the browser
- *      straight to Supabase at /storage/v1/upload/resumable. The signed
- *      token from step 1 goes in the `x-signature` header. Chunked and
- *      resumable — survives flaky networks for the GB-scale videos this
- *      flow needs to support.
+ *      Supabase Storage signed upload URL scoped to a single object path.
+ *   2. Direct PUT upload: the browser XHR-PUTs the mp4 straight to that
+ *      signed URL. Single HTTP request, no Next.js involvement, progress
+ *      tracked via xhr.upload.onprogress.
  *   3. Finalize: POST /api/tiktok/manual-upload with { storagePath, title,
  *      caption } → server signs a 7-day read URL and fans the video out
  *      to Buffer's TikTok / YouTube Shorts / LinkedIn queues.
@@ -20,16 +18,21 @@
  * above ~90 MB ("Failed to parse body as FormData"). For 1–2 GB videos
  * the file must bypass our server entirely.
  *
+ * Why single-PUT and not TUS resumable: tried TUS first; the token from
+ * createSignedUploadUrl isn't honored by /storage/v1/upload/resumable
+ * (RLS on storage.objects rejected the upload). createSignedUploadUrl's
+ * signedUrl is designed for the single-PUT endpoint, which works
+ * out-of-the-box with no RLS setup. Tradeoff: a network drop restarts
+ * from byte zero — for 1–2 GB on a typical home connection (5–20 min
+ * upload) this is acceptable; the signed URL TTL is plenty for retries.
+ *
  * Lives on its own page (/tiktok/manual-upload). Title is required:
  * YouTube rejects video inserts without one. LinkedIn ignores it but
  * the row stores it for record-keeping.
- *
- * Prereq: NEXT_PUBLIC_SUPABASE_URL must be set for the TUS endpoint URL.
  */
 
 import Link from "next/link";
 import { useState } from "react";
-import * as tus from "tus-js-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -46,11 +49,6 @@ import {
 // UX — the server still rejects oversize requests with a 413.
 const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 
-// Supabase's TUS implementation requires chunks of exactly 6 MB (with
-// the last chunk being whatever remainder is left). Smaller chunks get
-// rejected; larger chunks defeat resumability.
-const TUS_CHUNK_SIZE = 6 * 1024 * 1024;
-
 type Phase =
   | "idle"
   | "signing"
@@ -61,8 +59,7 @@ type Phase =
 
 type SignUrlResponse = {
   storagePath: string;
-  token: string;
-  bucket: string;
+  signedUrl: string;
 };
 
 type FinalizeResponse = {
@@ -116,69 +113,62 @@ export function TikTokManualUploadForm() {
     caption.trim().length > 0;
 
   /**
-   * Wrap tus-js-client's callback-based start() in a Promise so the
-   * submit() flow can await it. onSuccess resolves, onError rejects.
+   * Wrap XMLHttpRequest's PUT in a Promise so the submit() flow can
+   * await it. We use XHR (not fetch) because fetch can't report upload
+   * progress in any browser — XHR's upload.onprogress is the only way
+   * to drive a real progress bar for a multi-hundred-MB upload.
+   *
+   * The signedUrl is the complete URL returned by createSignedUploadUrl
+   * server-side; it already encodes the bound token + path, so the
+   * browser just PUTs the raw file bytes to it with the right
+   * Content-Type. No auth header needed.
    */
-  function runTusUpload(
+  function runSignedPut(
     selectedFile: File,
-    storagePath: string,
-    token: string,
-    bucket: string,
+    signedUrl: string,
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      if (!supabaseUrl) {
-        reject(
-          new Error(
-            "NEXT_PUBLIC_SUPABASE_URL is not set — cannot build TUS endpoint",
-          ),
-        );
-        return;
-      }
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", signedUrl);
+      xhr.setRequestHeader(
+        "Content-Type",
+        selectedFile.type || "video/mp4",
+      );
+      // x-upsert lets us retry the same path without a 409 if the user
+      // re-submits the same form (path includes a uuid so collisions are
+      // essentially impossible, but the header is harmless).
+      xhr.setRequestHeader("x-upsert", "true");
 
-      const upload = new tus.Upload(selectedFile, {
-        endpoint: `${supabaseUrl}/storage/v1/upload/resumable`,
-        // Auth: the token from createSignedUploadUrl is a JWT scoped to a
-        // single storage path. It goes in Authorization: Bearer, matching
-        // how Supabase's `uploadToSignedUrl` client method sends it
-        // internally. We previously tried `x-signature` (which Supabase
-        // docs reference for signed-token uploads) but the TUS resumable
-        // endpoint rejected it with "Invalid Compact JWS" — that header
-        // is only honored by the single-PUT signed-URL endpoint, not by
-        // the resumable TUS endpoint. x-upsert is harmless either way.
-        headers: {
-          authorization: `Bearer ${token}`,
-          "x-upsert": "true",
-        },
-        // Send the first PATCH alongside the creation POST so we don't
-        // burn an extra round-trip for tiny videos.
-        uploadDataDuringCreation: true,
-        // Drop the persisted fingerprint after success so the next upload
-        // doesn't accidentally try to resume from a stale URL.
-        removeFingerprintOnSuccess: true,
-        // Supabase requires these metadata keys to land the upload in the
-        // right bucket/path with the right content type.
-        metadata: {
-          bucketName: bucket,
-          objectName: storagePath,
-          contentType: selectedFile.type || "video/mp4",
-          cacheControl: "3600",
-        },
-        chunkSize: TUS_CHUNK_SIZE,
-        retryDelays: [0, 3000, 5000, 10000, 20000],
-        onProgress(uploaded, total) {
-          setBytesUploaded(uploaded);
-          setBytesTotal(total);
-        },
-        onError(err) {
-          reject(err);
-        },
-        onSuccess() {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          setBytesUploaded(event.loaded);
+          setBytesTotal(event.total);
+        }
+      };
+      xhr.onload = () => {
+        // Supabase Storage returns 200 on success. Anything else is an
+        // error — surface the response body so the user can see what
+        // happened (RLS, 413 size limit, etc.).
+        if (xhr.status >= 200 && xhr.status < 300) {
           resolve();
-        },
-      });
+        } else {
+          reject(
+            new Error(
+              `Supabase returned ${xhr.status}: ${xhr.responseText || "no body"}`,
+            ),
+          );
+        }
+      };
+      xhr.onerror = () => {
+        // Network-level failure (DNS, connection drop). The signed URL
+        // is still valid — user can hit Upload again to retry.
+        reject(new Error("Network error during upload"));
+      };
+      xhr.onabort = () => {
+        reject(new Error("Upload aborted"));
+      };
 
-      upload.start();
+      xhr.send(selectedFile);
     });
   }
 
@@ -221,11 +211,12 @@ export function TikTokManualUploadForm() {
       return;
     }
 
-    // Direct browser → Supabase Storage upload via TUS.
+    // Direct browser → Supabase Storage upload via single XHR PUT to the
+    // signed URL.
     setPhase("uploading");
     setMessage("Uploading to Supabase Storage…");
     try {
-      await runTusUpload(file, signed.storagePath, signed.token, signed.bucket);
+      await runSignedPut(file, signed.signedUrl);
     } catch (err) {
       setPhase("error");
       setMessage(`Upload failed: ${(err as Error).message}`);

@@ -11,26 +11,32 @@
  * ever ran. For a target of 1–2 GB videos, the file has to bypass our
  * Next.js server entirely.
  *
- * This endpoint mints a short-lived Supabase Storage signed upload token
- * scoped to a single object path. The browser then uses that token with
- * `tus-js-client` to upload the file directly to Supabase via the TUS
- * resumable protocol (POST to /storage/v1/upload/resumable). Once the
- * upload completes, the browser calls POST /api/tiktok/manual-upload to
- * finalize (sign a read URL + run Buffer fan-out).
+ * This endpoint mints a Supabase Storage signed upload URL scoped to a
+ * single object path. The browser PUTs the mp4 directly to that URL —
+ * a single HTTP request, with progress tracked via XHR. Once the upload
+ * completes, the browser calls POST /api/tiktok/manual-upload to
+ * finalize (sign a 7-day read URL + run Buffer fan-out).
+ *
+ * Why single-PUT and not TUS resumable: we initially tried TUS
+ * (`/storage/v1/upload/resumable`) using the createSignedUploadUrl token
+ * in `x-signature` (failed with "Invalid Compact JWS") and then in
+ * `Authorization: Bearer` (failed with RLS on storage.objects — the
+ * token's role claim doesn't bypass RLS). The signed-URL flow is what
+ * createSignedUploadUrl is actually designed for, and it just works
+ * without RLS or JWT minting. Tradeoff: a network drop restarts the
+ * upload from byte zero. For 1–2 GB on a stable home connection this
+ * is acceptable; the signed URL TTL is plenty for retries.
  *
  * Auth: Clerk session only. We don't use `verifyApiAuth` here because it
  * only returns a boolean and we need the userId for the storage path
  * prefix. Bearer/CRON_SECRET is rejected — manual upload is user-triggered,
  * cron jobs shouldn't be calling this.
  *
- * PREREQUISITES (deploy-time, not enforced in code):
+ * PREREQUISITE (deploy-time, not enforced in code):
  *   - Supabase Dashboard → Storage → Settings → Upload file size limit
  *     must be raised from the default 50 MB to at least 2 GB (or whatever
- *     ceiling MAX_UPLOAD_BYTES below enforces). Otherwise the TUS upload
- *     will succeed for the first 50 MB and then 413 from Supabase.
- *   - NEXT_PUBLIC_SUPABASE_URL must be set on Render and in .env.local.
- *     The browser needs it to build the TUS endpoint URL; the server-side
- *     SUPABASE_URL is invisible to client code.
+ *     ceiling MAX_UPLOAD_BYTES below enforces). Otherwise the PUT will
+ *     succeed for the first 50 MB and then 413 from Supabase.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -141,14 +147,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Return only what the browser needs: the storage path (to round-trip
-  // back to the finalize endpoint) and the signed upload token (passed
-  // to TUS in the x-signature header). We intentionally do NOT return
-  // data.signedUrl — that's for the single-PUT uploadToSignedUrl flow,
-  // which we don't use because it's not resumable.
+  // Return the signed upload URL (the complete URL the browser PUTs to)
+  // and the storage path (round-tripped back to the finalize endpoint
+  // so the server can sign a 7-day read URL and confirm the object
+  // exists). data.signedUrl is fully-formed including the bound token —
+  // the browser doesn't need to know the bucket name or assemble
+  // anything; it just XHR-PUTs the file to signedUrl.
   return NextResponse.json({
     storagePath,
-    token: data.token,
-    bucket: BUCKET,
+    signedUrl: data.signedUrl,
   });
 }
