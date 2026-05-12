@@ -277,16 +277,20 @@ export function TikTokManualUploadForm() {
 
   return (
     <div className="max-w-xl space-y-5">
-      {/* File picker — accept attribute restricts to mp4 in the OS dialog,
-          but we still validate the size client-side so the user gets
-          immediate feedback rather than waiting for a 413 from the API. */}
+      {/* File picker — accept attribute filters the OS dialog to the
+          formats Buffer can ingest. Must stay in sync with the
+          ACCEPTED_VIDEO_TYPES whitelist in
+          /api/tiktok/manual-upload/sign-url; the server is the
+          authoritative gate, this is just OS-level UX. We also validate
+          size client-side so the user gets immediate feedback rather
+          than waiting for a 413 from the API. */}
       <div className="space-y-1.5">
         <label className="text-[11px] font-medium tracking-[0.14em] uppercase text-[var(--overview-fg)]/55">
-          Video (mp4)
+          Video (mp4, mov, webm, m4v)
         </label>
         <input
           type="file"
-          accept="video/mp4"
+          accept="video/mp4,video/quicktime,video/webm,video/x-m4v"
           disabled={busy}
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           className="block w-full text-sm text-[var(--overview-fg)]/80 file:mr-3 file:rounded-md file:border-0 file:bg-white/[0.06] file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-[var(--overview-fg)] hover:file:bg-white/[0.1]"

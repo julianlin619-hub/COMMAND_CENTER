@@ -24,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { ArrowRightIcon } from "lucide-react";
 
 const STEPS = [
-  "Pick mp4 from your computer",
+  "Pick a video file (mp4, mov, webm, m4v) from your computer",
   "Upload to Supabase Storage",
   "Queue on Buffer: TikTok + YouTube Shorts + LinkedIn (next open slot each)",
   "Auto-delete storage file 3 days after all three publish",

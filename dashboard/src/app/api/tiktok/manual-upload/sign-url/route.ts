@@ -57,6 +57,23 @@ const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 
 const BUCKET = "media";
 
+// Whitelist of accepted video content types and the file extension we'll
+// persist them under in Storage. The map serves two purposes:
+//   1. Gate the upload — anything not in the map is rejected with 415,
+//      so we never sign URLs for formats Buffer can't ingest.
+//   2. Derive a known-safe extension from the content type instead of
+//      trusting the client's filename (which could carry traversal
+//      segments, weird unicode, or a misleading extension).
+// All four formats listed are accepted by Buffer's TikTok / YouTube Shorts
+// / LinkedIn video endpoints. Add more entries here if Buffer gains
+// support for additional formats — no other code needs to change.
+const ACCEPTED_VIDEO_TYPES: Record<string, string> = {
+  "video/mp4": ".mp4",
+  "video/quicktime": ".mov", // .mov from macOS / iOS exports
+  "video/webm": ".webm",
+  "video/x-m4v": ".m4v",
+};
+
 type SignUrlBody = {
   filename?: unknown;
   contentType?: unknown;
@@ -98,13 +115,19 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  // Loose video check — we want to allow video/mp4, video/quicktime
-  // (some browsers report .mov as that), etc. The form's <input
-  // accept="video/mp4"> already filters at the OS level; this is a
-  // backstop, not a strict gate.
-  if (!contentType.startsWith("video/")) {
+  // Strict whitelist — the content type must be one we know Buffer can
+  // ingest and that we have a canonical extension for. The form's
+  // <input accept="..."> filters most of these at the OS level; this is
+  // the authoritative gate. Anything outside the map gets 415 here so
+  // we don't sign upload URLs for formats Buffer would later reject.
+  const fileExt = ACCEPTED_VIDEO_TYPES[contentType];
+  if (!fileExt) {
     return NextResponse.json(
-      { error: "Only video/* uploads are supported" },
+      {
+        error: `Unsupported video format "${contentType}". Accepted: ${Object.keys(
+          ACCEPTED_VIDEO_TYPES,
+        ).join(", ")}`,
+      },
       { status: 415 },
     );
   }
@@ -123,13 +146,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Storage path: tiktok/manual/<userId>/<uuid>.mp4
+  // Storage path: tiktok/manual/<userId>/<uuid><ext>
   // We deliberately do NOT trust the client's filename — using a uuid as
   // the basename prevents path-traversal tricks and collisions. The
-  // userId prefix lets the finalize endpoint verify ownership by
+  // extension is derived from the validated content type (not the
+  // filename) so we never let a client-controlled string into the path.
+  // The userId prefix lets the finalize endpoint verify ownership by
   // checking startsWith(`tiktok/manual/${userId}/`) before signing a
   // read URL.
-  const storagePath = `tiktok/manual/${userId}/${randomUUID()}.mp4`;
+  const storagePath = `tiktok/manual/${userId}/${randomUUID()}${fileExt}`;
 
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.storage
