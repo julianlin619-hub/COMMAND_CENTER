@@ -60,6 +60,9 @@ export interface AutomationStep {
   title: string;
   description?: string;
   group?: FormatGroup;
+  // WARNING: not rendered — the UI reads from show.distribution[step.group]
+  // as the single source of truth for the pill on a distribution card.
+  // Kept on the type for forward-compat (future overrides, migrations).
   status?: Status;
 }
 

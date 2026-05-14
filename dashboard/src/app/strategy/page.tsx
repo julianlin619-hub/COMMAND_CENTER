@@ -1462,13 +1462,16 @@ function NotesTab({
   // the buffer when a different show's drawer is opened.
   const [value, setValue] = useState(show.notes ?? "");
 
-  // Reset local buffer if the show identity changes (e.g. user closes
-  // and re-opens for a different show). Without this, the previous
-  // show's draft would leak into the new show's textarea.
+  // Reset local buffer ONLY when the drawer switches to a different
+  // show. The textarea is the source of truth during an edit session,
+  // so we deliberately do not depend on `show.notes` — if anything
+  // external mutates it (future backend sync, import action, optimistic
+  // update), we don't want to clobber in-progress typing. Re-hydration
+  // happens only on show-identity change.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setValue(show.notes ?? "");
-  }, [show.id, show.notes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [show.id]);
 
   return (
     <div className="p-6">
