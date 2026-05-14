@@ -62,15 +62,27 @@ export function CreatorTabs({
     <>
       <header className="flex items-start justify-between mb-12">
         <div>
-          <Link href="/" className="flex items-center gap-2 w-fit">
-            <span className="text-[12px] font-semibold tracking-[0.22em] uppercase text-[var(--overview-fg)]/90">
-              Command Center
-            </span>
-            <span
-              className="h-[5px] w-[5px] rounded-full"
-              style={{ backgroundColor: "var(--terracotta)" }}
-            />
-          </Link>
+          {/* Top row: Command Center brand mark + Strategy peer-nav link
+              sitting tightly to its right. The status subtitle below is
+              intentionally attached to Command Center only — Strategy is
+              a separate destination, not a status target. */}
+          <div className="flex items-center gap-6">
+            <Link href="/" className="flex items-center gap-2 w-fit">
+              <span className="text-[12px] font-semibold tracking-[0.22em] uppercase text-[var(--overview-fg)]/90">
+                Command Center
+              </span>
+              <span
+                className="h-[5px] w-[5px] rounded-full"
+                style={{ backgroundColor: "var(--terracotta)" }}
+              />
+            </Link>
+            <Link
+              href="/strategy"
+              className="text-[12px] font-semibold tracking-[0.22em] uppercase text-[var(--overview-fg)]/55 hover:text-[var(--overview-fg)] transition-colors"
+            >
+              Strategy →
+            </Link>
+          </div>
           <div className="flex items-center gap-2 mt-2 text-[11px] text-[var(--overview-fg)]/45 font-mono">
             <span className="inline-block h-[7px] w-[7px] rounded-full relative bg-[var(--overview-fg)]/70">
               <span
