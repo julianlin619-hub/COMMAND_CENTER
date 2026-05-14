@@ -48,6 +48,12 @@ const LINKEDIN_CAPTION_LIMIT = 3000;
 // X posts aren't truncated unnecessarily.
 const X_CAPTION_LIMIT = 280;
 
+// Buffer's channels API can report multiple service="twitter" channels in
+// the same org (a stale/disconnected legacy Twitter plus the live X one).
+// Disambiguate by channel name so getChannelId always returns acq_official
+// regardless of channel order. Matched case-insensitively in getChannelId.
+const X_CHANNEL_NAME = "acq_official";
+
 // TEMPORARY KILL-SWITCH for the LinkedIn fan-out. When false, uploads still
 // go to TikTok + YouTube Shorts, but the LinkedIn Buffer send + posts-row
 // insert are skipped and the response returns linkedinBufferId=undefined,
@@ -338,11 +344,13 @@ export async function POST(req: NextRequest) {
   // not roll back what already succeeded. Buffer's GraphQL channels API
   // still reports the X channel under service="twitter" (legacy string,
   // not "x") even though Twitter rebranded to X; verified by the live
-  // "No x channel connected" error when we previously tried "x".
+  // "No x channel connected" error when we previously tried "x". Pass
+  // X_CHANNEL_NAME so we hit the live acq_official channel and not a
+  // stale/legacy twitter channel that's still listed in the org.
   let xBufferId: string | undefined;
   let xError: string | undefined;
   try {
-    const xChannelId = await getChannelId(undefined, "twitter");
+    const xChannelId = await getChannelId(undefined, "twitter", X_CHANNEL_NAME);
     xBufferId = await sendToBuffer(
       xChannelId,
       caption,
