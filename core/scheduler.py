@@ -20,12 +20,21 @@ post can be manually retried, but a double-published post can't be undone.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 
 from core.database import get_due_schedules, mark_schedule_picked_up, update_post
 from core.models import Post
 
 logger = logging.getLogger(__name__)
+
+# Seconds to wait between consecutive Buffer sends. Bank sourcing inserts
+# 20+ posts all scheduled for "now"; without pacing the scheduler bursts
+# them in <100ms each and trips Buffer's per-second rate limit, failing
+# every post in the batch. 2s × 22 posts ≈ 44s — comfortably within
+# Render's cron runtime budget while spreading load enough that the
+# retry-with-backoff in core/buffer.py rarely needs to fire.
+INTER_SEND_SLEEP_SECONDS = 2.0
 
 
 def process_due_posts(platform_client, platform: str) -> int:
@@ -110,5 +119,11 @@ def process_due_posts(platform_client, platform: str) -> int:
                     "Also failed to mark post %s as failed: %s — will be retried after stale-pickup reset",
                     post_id, db_err,
                 )
+        finally:
+            # Pace consecutive Buffer sends so a 20+ post bank-batch doesn't
+            # trip Buffer's per-second rate limit. Runs whether the send
+            # succeeded or failed — even failed sends "count" toward the
+            # quota at Buffer's end, so we want spacing after errors too.
+            time.sleep(INTER_SEND_SLEEP_SECONDS)
 
     return processed

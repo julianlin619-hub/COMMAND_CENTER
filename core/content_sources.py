@@ -106,16 +106,40 @@ def fetch_apify_tweets(
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_lookback)
     tweets = []
 
+    # Diagnostic counters — we silently dropped items before, which made it
+    # impossible to tell "Apify returned 0 items" from "Apify returned items
+    # but all parsing failed (schema drift)". The summary log line at the
+    # bottom prints raw vs kept counts plus drop reasons so the next failing
+    # run is debuggable from logs alone, without re-running with extra prints.
+    raw_count = len(items)
+    drop_empty_text = 0
+    drop_bad_date = 0
+    drop_out_of_window = 0
+    drop_low_likes = 0
+
+    # If Apify returned anything, log the keys of the first item once per
+    # call. This catches schema drift cheaply — e.g. if Apify renames
+    # `createdAt` to `created_at` we'll see it immediately rather than
+    # silently dropping every tweet on a `datetime.fromisoformat` failure.
+    if raw_count > 0:
+        logger.info(
+            "Apify first item keys for @%s: %s",
+            twitter_handle, sorted(items[0].keys()),
+        )
+
     for item in items:
         text = _decode_html(str(item.get("text", "")))
         created_at = str(item.get("createdAt", ""))
         if not text.strip():
+            drop_empty_text += 1
             continue
         try:
             tweet_time = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            if tweet_time < cutoff:
-                continue
         except (ValueError, TypeError):
+            drop_bad_date += 1
+            continue
+        if tweet_time < cutoff:
+            drop_out_of_window += 1
             continue
 
         like_count = int(item.get("likeCount", 0))
@@ -124,6 +148,7 @@ def fetch_apify_tweets(
         # below the threshold. The Apify actor does server-side filtering
         # too, but we double-check here in case it returns borderline results.
         if min_favorites is not None and like_count < min_favorites:
+            drop_low_likes += 1
             continue
 
         tweets.append({
@@ -135,6 +160,16 @@ def fetch_apify_tweets(
         })
 
     tweets.sort(key=lambda t: t["created_at"], reverse=True)
+
+    # Diagnostic summary — emit even when raw_count==0 so we can see Apify
+    # returned an empty dataset rather than a parsing failure.
+    logger.info(
+        "Apify raw=%d kept=%d (empty_text=%d, bad_date=%d, out_of_window=%d, low_likes=%d) handle=@%s window=%dh",
+        raw_count, len(tweets),
+        drop_empty_text, drop_bad_date, drop_out_of_window, drop_low_likes,
+        twitter_handle, hours_lookback,
+    )
+    # Kept for backwards-compat with anything grepping the old phrasing.
     logger.info(
         "Fetched %d new tweets from @%s (past %dh)",
         len(tweets), twitter_handle, hours_lookback,

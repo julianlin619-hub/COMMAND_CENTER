@@ -18,6 +18,7 @@ Required env vars:
 
 import logging
 import os
+import time
 
 import httpx
 
@@ -114,22 +115,48 @@ class Threads(PlatformBase):
             raise PlatformAPIError("Post has no text content", status_code=400)
 
         # Send to Buffer — mirrors the postToBuffer() function from the
-        # original lib/buffer.ts
-        resp = httpx.post(
-            BUFFER_GRAPHQL_URL,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.buffer_token}",
-            },
-            json={
-                "query": CREATE_POST_MUTATION,
-                "variables": {"channelId": self.channel_id, "text": text},
-            },
-            timeout=30,
-        )
+        # original lib/buffer.ts.
+        #
+        # On HTTP 429 we honor Retry-After and retry up to 2 times before
+        # giving up. Mirrors the retry block in core/buffer.py:_buffer_request
+        # — kept inline (not refactored to share) to avoid bigger churn while
+        # absorbing the bank-burst 429 storm that was failing every post in
+        # a batch with no recovery.
+        max_attempts = 3  # 1 initial try + up to 2 retries on 429
+        resp: httpx.Response | None = None
+        for attempt in range(1, max_attempts + 1):
+            resp = httpx.post(
+                BUFFER_GRAPHQL_URL,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.buffer_token}",
+                },
+                json={
+                    "query": CREATE_POST_MUTATION,
+                    "variables": {"channelId": self.channel_id, "text": text},
+                },
+                timeout=30,
+            )
+            if resp.status_code != 429 or attempt == max_attempts:
+                break
+            try:
+                retry_after = float(resp.headers.get("Retry-After", "5"))
+            except (TypeError, ValueError):
+                retry_after = 5.0
+            logger.warning(
+                "Buffer 429 on attempt %d/%d — sleeping %.1fs before retry",
+                attempt, max_attempts, retry_after,
+            )
+            time.sleep(retry_after)
 
+        assert resp is not None  # loop runs at least once
         if resp.status_code == 429:
-            retry_after = float(resp.headers.get("Retry-After", 60))
+            # Exhausted retries — surface to scheduler as PlatformRateLimitError
+            # so this stays distinguishable from generic API failures in logs.
+            try:
+                retry_after = float(resp.headers.get("Retry-After", "60"))
+            except (TypeError, ValueError):
+                retry_after = 60.0
             raise PlatformRateLimitError(
                 "Buffer rate limit exceeded", retry_after=retry_after
             )

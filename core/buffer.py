@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from datetime import datetime
 
 import httpx
@@ -38,23 +39,50 @@ def _buffer_request(query: str, variables: dict | None = None) -> dict:
     """Send a GraphQL request to Buffer and return the data payload.
 
     Raises on HTTP errors, auth errors, or GraphQL-level errors.
+
+    On HTTP 429 (rate-limited) we honor the `Retry-After` header and retry
+    up to 2 times before giving up. Bank-sourced bursts (e.g. threads_cron
+    inserting 20+ posts scheduled for "now" and the scheduler firing them
+    in tight succession) were nuking entire batches because every send hit
+    429 and the post got marked `failed` with no retry. Absorbing transient
+    429s here means callers don't need their own retry logic.
     """
     token = os.environ.get("BUFFER_ACCESS_TOKEN", "")
     if not token:
         raise RuntimeError("BUFFER_ACCESS_TOKEN env var not set")
 
-    resp = httpx.post(
-        BUFFER_GRAPHQL_URL,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        },
-        json={"query": query, "variables": variables or {}},
-        # createPost with a video asset is slow: Buffer downloads the file
-        # from our signed URL before responding, which can exceed 30s.
-        timeout=120,
-    )
+    max_attempts = 3  # 1 initial try + up to 2 retries on 429
+    resp: httpx.Response | None = None
+    for attempt in range(1, max_attempts + 1):
+        resp = httpx.post(
+            BUFFER_GRAPHQL_URL,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+            json={"query": query, "variables": variables or {}},
+            # createPost with a video asset is slow: Buffer downloads the file
+            # from our signed URL before responding, which can exceed 30s.
+            timeout=120,
+        )
 
+        if resp.status_code != 429 or attempt == max_attempts:
+            break
+
+        # Buffer's Retry-After is usually seconds. If missing or unparseable,
+        # fall back to 5s — short enough that retries don't blow the cron's
+        # runtime budget, long enough to clear a typical per-second quota.
+        try:
+            retry_after = float(resp.headers.get("Retry-After", "5"))
+        except (TypeError, ValueError):
+            retry_after = 5.0
+        logger.warning(
+            "Buffer 429 on attempt %d/%d — sleeping %.1fs before retry",
+            attempt, max_attempts, retry_after,
+        )
+        time.sleep(retry_after)
+
+    assert resp is not None  # loop runs at least once
     if resp.status_code == 401:
         raise RuntimeError("Buffer token is invalid or expired (401)")
     if not resp.is_success:
