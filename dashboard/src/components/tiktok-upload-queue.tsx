@@ -627,11 +627,11 @@ export function TikTokUploadQueue() {
             </p>
           )}
           <Link
-            href="/tiktok"
+            href="/"
             className="ml-auto inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeftIcon className="size-3.5" />
-            Back to TikTok
+            Back to Overview
           </Link>
         </div>
       </div>

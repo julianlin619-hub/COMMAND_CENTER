@@ -18,20 +18,32 @@ export const dynamic = "force-dynamic";
 
 async function getLatestRun(): Promise<PathwayLastRun | null> {
   const supabase = getSupabaseClient();
-  // Latest run regardless of job_type — content_apify, content_generate,
-  // and buffer_send all fire sequentially in one cron invocation, and a
-  // failure in any of the three should surface here.
-  const { data } = await supabase
-    .from("cron_runs")
-    .select("status, started_at")
-    .eq("platform", "linkedin_leila")
-    .order("started_at", { ascending: false })
-    .limit(1);
-  const row = data?.[0];
+  // Status: latest run regardless of job_type — content_apify,
+  // content_generate, and buffer_send all fire sequentially in one cron
+  // invocation, and a failure in any of the three should surface here.
+  // Count: from buffer_send only, the phase that actually queues posts.
+  const [latest, final] = await Promise.all([
+    supabase
+      .from("cron_runs")
+      .select("status, started_at")
+      .eq("platform", "linkedin_leila")
+      .order("started_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("cron_runs")
+      .select("posts_processed")
+      .eq("platform", "linkedin_leila")
+      .eq("job_type", "buffer_send")
+      .order("started_at", { ascending: false })
+      .limit(1),
+  ]);
+  const row = latest.data?.[0];
   if (!row) return null;
+  const finalRow = final.data?.[0];
   return {
     status: row.status as PathwayLastRun["status"],
     startedAt: row.started_at as string,
+    count: (finalRow?.posts_processed as number | null) ?? null,
   };
 }
 
@@ -59,14 +71,39 @@ export default async function LeilaLinkedInPage() {
         </div>
       </div>
 
+      {/* Run cadence + flow notes — kept inline (not split into its own
+          component) because nothing else on the page needs them. */}
+      <div className="mb-5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-xs text-[var(--overview-fg)]/65">
+        <div className="flex flex-wrap gap-x-6 gap-y-1.5">
+          <span>
+            <span className="text-[var(--overview-fg)]/40">Schedule</span>{" "}
+            <span className="font-mono">Daily · 11:45 UTC (4:45 AM PDT)</span>
+          </span>
+          <span>
+            <span className="text-[var(--overview-fg)]/40">Source</span>{" "}
+            <span className="font-mono">@LeilaHormozi via Apify</span>
+          </span>
+          <span>
+            <span className="text-[var(--overview-fg)]/40">Channel</span>{" "}
+            <span className="font-mono">Buffer · LinkedIn (Leila)</span>
+          </span>
+        </div>
+        <p className="mt-2 text-[var(--overview-fg)]/45">
+          Three sequential phases in one cron invocation (<code className="font-mono">content_apify</code>,{" "}
+          <code className="font-mono">content_generate</code>, <code className="font-mono">buffer_send</code>).
+          Renders 1080×1080 quote cards using Alex&apos;s Facebook template — no Leila-specific template yet.
+        </p>
+      </div>
+
       <PathwayCard
         number={1}
-        title="Apify → Render → LinkedIn"
+        title="X → LinkedIn Quote Card"
         steps={[
-          "Fetch up to 5 recent @LeilaHormozi tweets via Apify (24h window, 72h fallback)",
-          "Dedupe against existing posts (platform=linkedin_leila)",
-          "Render each tweet into a 1080×1080 quote card (Alex's template) and upload to Storage",
-          'Send each image to Buffer\'s Leila LinkedIn channel with caption "Agree?"',
+          "Primary: scrape up to 5 recent @LeilaHormozi tweets from past 24h via Apify",
+          "Wide fallback (only when primary returns 0): scrape up to 30 tweets ignoring time window (1-year lookback), pick exactly 1 fresh tweet — guarantees a post on quiet days",
+          "Skip any whose source tweet text already exists in linkedin_leila posts (dedup)",
+          "Render each as a 1080×1080 PNG quote card via /api/content-gen and upload to linkedin_leila/tweet-{uuid}.png",
+          "Queue to Buffer's Leila LinkedIn channel with caption \"Agree?\"",
         ]}
         actions={[{ url: "/api/cron/run", body: { job: "linkedin-leila-cron" } }]}
         lastRun={lastRun}

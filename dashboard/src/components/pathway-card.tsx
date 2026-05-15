@@ -28,10 +28,20 @@ export interface PathwayAction {
 export interface PathwayLastRun {
   status: "success" | "failed" | "running";
   startedAt: string;
+  /** posts_processed from the cron_runs row that drives this pathway's
+   *  final phase (e.g. buffer_send, content_apify). Renders inline next
+   *  to the "Last run" timestamp so the operator can see "did the last
+   *  run actually produce anything?" at a glance. null means we don't
+   *  have a count to show — render is suppressed. */
+  count?: number | null;
 }
 
 export interface PathwayCardProps {
-  number: number;
+  // Optional — when this card is the *only* pathway on its page (e.g. the
+  // Command Center filtered view), the "Pathway 1" badge is redundant and
+  // we omit it. Pages that show multiple pathways still pass a number so
+  // operators can refer to them ordinally.
+  number?: number;
   title: string;
   steps: string[];
   actions: PathwayAction[];
@@ -99,6 +109,20 @@ class ActionError extends Error {
 
 function LastRunLine({ lastRun }: { lastRun: PathwayLastRun }) {
   const relative = formatTimeAgo(lastRun.startedAt);
+
+  // Append "· N posts" when we have a count from the underlying cron_run.
+  // Use singular "post" for 1, plural "posts" otherwise — small detail but
+  // the page reads weird without it.
+  const countNode =
+    typeof lastRun.count === "number" ? (
+      <>
+        <span>·</span>
+        <span>
+          {lastRun.count} {lastRun.count === 1 ? "post" : "posts"}
+        </span>
+      </>
+    ) : null;
+
   if (lastRun.status === "success") {
     return (
       <div className="flex items-center gap-1.5 text-xs text-[var(--overview-fg)]/55">
@@ -106,6 +130,7 @@ function LastRunLine({ lastRun }: { lastRun: PathwayLastRun }) {
         <span>Last run: {relative}</span>
         <span>·</span>
         <span className="text-[#8ca082]">Success</span>
+        {countNode}
       </div>
     );
   }
@@ -116,6 +141,7 @@ function LastRunLine({ lastRun }: { lastRun: PathwayLastRun }) {
         <span>Last run: {relative}</span>
         <span>·</span>
         <span className="text-red-500">Failed</span>
+        {countNode}
       </div>
     );
   }
@@ -172,9 +198,13 @@ export function PathwayCard({
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Badge className="bg-white/[0.08] text-[var(--overview-fg)]/80 border-white/10 text-[11px]">
-              Pathway {number}
-            </Badge>
+            {/* Ordinal badge only renders when the page is showing more than
+                one pathway. See PathwayCardProps.number for rationale. */}
+            {number !== undefined && (
+              <Badge className="bg-white/[0.08] text-[var(--overview-fg)]/80 border-white/10 text-[11px]">
+                Pathway {number}
+              </Badge>
+            )}
             <CardTitle className="text-sm">{title}</CardTitle>
           </div>
           <Button onClick={handleRun} disabled={running} size="sm">

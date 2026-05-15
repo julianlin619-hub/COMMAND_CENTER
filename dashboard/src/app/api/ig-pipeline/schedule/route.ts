@@ -29,7 +29,7 @@ const BUFFER_IG_2ND_NAME =
   process.env.BUFFER_INSTAGRAM_2ND_NAME ?? 'alexhighlights2026';
 
 // Buffer may not pull the file for hours/days, so use a 7-day signed URL.
-// Same expiry as cron/instagram_pipeline.py:176.
+// Same expiry as SIGNED_URL_EXPIRES_IN in cron/_tweet_card_legs.py.
 const SIGNED_URL_EXPIRY_SECONDS = 604800;
 
 export async function POST(req: NextRequest) {

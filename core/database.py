@@ -258,6 +258,49 @@ def mark_schedule_picked_up(schedule_id: str) -> bool:
     return len(result.data) > 0
 
 
+def list_post_captions(platform: str) -> set[str]:
+    """Return the set of all captions for a platform that count as 'already posted'.
+
+    Used by content-bank pickers to filter out previously-posted captions
+    BEFORE random selection — without this the picker takes a random N from
+    the whole CSV and any collisions with existing captions are dropped by
+    the caller's per-item post_caption_exists() check, leaving the daily
+    yield below the configured count.
+
+    Status filter mirrors post_caption_exists(): rows with status 'failed'
+    or 'buffer_error' are excluded so a caption that failed to send can be
+    retried by a future cron run.
+
+    Paginates in chunks of 1000 because Supabase enforces a max page size
+    on selects; we keep pulling until a page returns < page_size, which
+    means we've drained the result set. Memory cost is negligible —
+    captions are short strings and a year of threads at 30/day is ~11k
+    entries, well under any practical limit.
+    """
+    client = get_client()
+    captions: set[str] = set()
+    page_size = 1000
+    offset = 0
+    while True:
+        result = (
+            client.table("posts")
+            .select("caption")
+            .eq("platform", platform)
+            .not_.in_("status", ["failed", "buffer_error"])
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        rows = result.data or []
+        for row in rows:
+            cap = row.get("caption")
+            if cap:
+                captions.add(cap)
+        if len(rows) < page_size:
+            break
+        offset += page_size
+    return captions
+
+
 def post_caption_exists(platform: str, caption: str) -> bool:
     """Check if a post with this exact caption already exists for a platform.
 

@@ -41,15 +41,13 @@ interface CronJobDef {
 const CRON_JOBS: CronJobDef[] = [
   { name: "threads-cron", label: "Threads (Alex)", schedule: "0 11 * * *" },
   { name: "threads-leila-cron", label: "Threads (Leila)", schedule: "0 11 * * *" },
-  { name: "tiktok-pipeline", label: "TikTok Pipeline", schedule: "0 12 * * *" },
-  { name: "tiktok-bank-pipeline", label: "TikTok Bank", schedule: "0 14 * * *" },
-  { name: "facebook-pipeline", label: "Facebook Pipeline", schedule: "0 13 * * *" },
-  { name: "instagram-pipeline", label: "Instagram Pipeline", schedule: "30 11 * * *" },
+  // tiktok-pipeline and tiktok-bank-pipeline are the unified Tweet Card
+  // pathways — each fans out in-process to TikTok + Facebook + LinkedIn +
+  // Instagram (feed post). No separate facebook-* / linkedin-* /
+  // instagram-pipeline entries anymore.
+  { name: "tiktok-pipeline", label: "Tweet Card Outlier", schedule: "0 11 * * *" },
+  { name: "tiktok-bank-pipeline", label: "Tweet Card Bank", schedule: "15 11 * * *" },
   { name: "youtube-cron", label: "YouTube", schedule: "0 */4 * * *" },
-  // name MUST match render.yaml + CRON_MODULES in /api/cron/run.
-  // Schedule below is the original 4am UTC slot — render.yaml currently
-  // uses a leap-day pause expression, but this list shows operator intent.
-  { name: "linkedin-pipeline", label: "LinkedIn (Alex)", schedule: "0 12 * * *" },
   { name: "linkedin-leila-cron", label: "LinkedIn (Leila)", schedule: "45 11 * * *" },
 ];
 

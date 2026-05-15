@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 def fetch_apify_tweets(
     twitter_handle: str,
     max_items: int = 50,
-    hours_lookback: int = 24,
+    hours_lookback: int | None = 24,
     min_favorites: int | None = None,
 ) -> list[dict]:
     """Scrape recent tweets from a Twitter account via Apify.
@@ -49,6 +49,12 @@ def fetch_apify_tweets(
         twitter_handle: Twitter username without the @ (e.g. "AlexHormozi").
         max_items: Max tweets to request from the scraper.
         hours_lookback: Only return tweets from the past N hours.
+            Pass None to disable the time-window filter entirely — Apify
+            still returns the latest `max_items` tweets, but no tweets
+            are dropped for being older than the cutoff. Downstream
+            dedup (post_caption_exists) is the real "already posted"
+            guard, so disabling the window is safe when a pipeline
+            cares about engagement quality more than recency.
         min_favorites: If set, passed as minimumFavorites to the Apify actor
             AND used for post-fetch filtering. The TikTok pipeline uses this
             to only grab high-engagement "outlier" tweets (e.g. 4000+ likes).
@@ -103,8 +109,13 @@ def fetch_apify_tweets(
         logger.error("Apify request failed: %s", e)
         return []
 
-    # Filter to tweets within the lookback window
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours_lookback)
+    # Filter to tweets within the lookback window. cutoff=None disables
+    # the filter entirely — the loop below skips the time check when so.
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(hours=hours_lookback)
+        if hours_lookback is not None
+        else None
+    )
     tweets = []
 
     # Diagnostic counters — we silently dropped items before, which made it
@@ -144,7 +155,7 @@ def fetch_apify_tweets(
             if sample_bad_date is None:
                 sample_bad_date = created_at
             continue
-        if tweet_time < cutoff:
+        if cutoff is not None and tweet_time < cutoff:
             drop_out_of_window += 1
             continue
 
@@ -182,16 +193,19 @@ def fetch_apify_tweets(
     sample_suffix = (
         f" sample_bad_date={sample_bad_date!r}" if sample_bad_date is not None else ""
     )
+    # window=Xh when bounded; window=unbounded when the caller disabled
+    # the time filter by passing hours_lookback=None.
+    window_desc = f"{hours_lookback}h" if hours_lookback is not None else "unbounded"
     logger.info(
-        "Apify raw=%d kept=%d (empty_text=%d, bad_date=%d, out_of_window=%d, low_likes=%d) handle=@%s window=%dh%s",
+        "Apify raw=%d kept=%d (empty_text=%d, bad_date=%d, out_of_window=%d, low_likes=%d) handle=@%s window=%s%s",
         raw_count, len(tweets),
         drop_empty_text, drop_bad_date, drop_out_of_window, drop_low_likes,
-        twitter_handle, hours_lookback, sample_suffix,
+        twitter_handle, window_desc, sample_suffix,
     )
     # Kept for backwards-compat with anything grepping the old phrasing.
     logger.info(
-        "Fetched %d new tweets from @%s (past %dh)",
-        len(tweets), twitter_handle, hours_lookback,
+        "Fetched %d new tweets from @%s (window=%s)",
+        len(tweets), twitter_handle, window_desc,
     )
     return tweets
 

@@ -1,12 +1,12 @@
 # TODO
 
 ## Next Steps
-
+ 
 - Highlights channel - RAG title generation
 
 - TikTok Carousels with tweets automation
 
-- [ ] YouTube community post automation
+- [ ] YouTube community post automation (playwright)
 
 - [ ] YT long form video editor - adds CTA (pre edited) + banner 
 
@@ -30,3 +30,5 @@
 - Playwright MCP server to control mouse and schedule instagram
 - Explore Resolve MCP to directly edit on Davinci
 - For highlights channel chop Q&A down into segments 
+- Repost automation (download every into big backlog -> then randomly pick)
+- Statics carousels - Reformat high QA performers and rescript them

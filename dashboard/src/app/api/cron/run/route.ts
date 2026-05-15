@@ -78,15 +78,16 @@ function pythonEnv(projectRoot: string) {
 
 // Maps cron job names (from render.yaml) to their Python module paths.
 // The startCommand in render.yaml is `python -m cron.<module>`.
+//
+// tiktok-pipeline + tiktok-bank-pipeline are the two unified Tweet Card
+// crons — each fans out to TikTok + Facebook + LinkedIn in-process, so
+// there are no separate facebook-*/linkedin-* entries anymore.
 const CRON_MODULES: Record<string, string> = {
   "threads-cron": "cron.threads_cron",
   "threads-leila-cron": "cron.threads_leila_cron",
   "tiktok-pipeline": "cron.tiktok_pipeline",
   "tiktok-bank-pipeline": "cron.tiktok_bank_pipeline",
-  "facebook-pipeline": "cron.facebook_pipeline",
-  "instagram-pipeline": "cron.instagram_pipeline",
   "youtube-cron": "cron.youtube_cron",
-  "linkedin-pipeline": "cron.linkedin_pipeline",
   "linkedin-leila-cron": "cron.linkedin_leila_cron",
 };
 

@@ -34,6 +34,7 @@ from core.content_sources import fetch_apify_tweets, select_bank_content
 from core.database import (
     insert_post,
     insert_schedule,
+    list_post_captions,
     log_cron_finish,
     log_cron_start,
     post_caption_exists,
@@ -120,10 +121,26 @@ def main():
         bank_path = os.environ.get("CONTENT_BANK_PATH", "data/TweetMasterBank.csv")
         bank_count = int(os.environ.get("CONTENT_BANK_COUNT", "24"))
 
-        bank_items = select_bank_content(bank_path, count=bank_count)
+        # Load all already-posted threads captions up-front so the bank
+        # picker filters them OUT *before* taking its random sample. The
+        # previous behaviour was to pick 24 random rows from the whole CSV
+        # and then skip collisions in the loop below — once the threads
+        # table accumulated overlap with the bank, the actual daily yield
+        # drifted below 24. Pre-filtering guarantees the random sample is
+        # drawn only from unposted captions.
+        #
+        # Built here (after Phase 0a) so any captions just inserted by the
+        # scraper are included; the bank picker won't re-pick them.
+        already_used_threads = list_post_captions("threads")
+
+        bank_items = select_bank_content(
+            bank_path, count=bank_count, already_used=already_used_threads
+        )
         for text in bank_items:
-            # Per-item dedup check — consistent with TikTok/Facebook pipelines
-            # and avoids loading thousands of posts into memory.
+            # Per-item dedup check kept as defense-in-depth — covers the
+            # tiny race between list_post_captions() above and the insert
+            # below if another writer (e.g. a manual /api/threads/bank
+            # call) lands in between.
             if post_caption_exists("threads", text):
                 continue
             post = Post(platform="threads", caption=text, status="scheduled")

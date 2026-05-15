@@ -1,18 +1,30 @@
-"""TikTok Bank Reel pipeline — daily cron job.
+"""Tweet Card Bank pipeline — daily cron job.
 
-Runs daily (2 PM UTC / 7 AM PDT) to pick 1 high-performing tweet from
-the TweetMasterBank CSV, generate a branded quote-card video, and queue
-it to TikTok via Buffer.
+Runs daily at 11:15 UTC (4:15 AM PDT) to pick 1 high-performing tweet
+from the TweetMasterBank CSV and fan it out as quote-card content across
+three platforms:
 
-This is a SEPARATE pipeline from cron/tiktok_pipeline.py (which sources
-from live Apify-scraped outlier tweets). Both write to the same `posts`
-table with platform='tiktok', so the partial unique index on
-(platform, md5(caption)) prevents cross-pipeline duplicates.
+  * TikTok    — 1080×1920 MP4 video
+  * Facebook  — 1080×1080 PNG image
+  * LinkedIn  — 1080×1080 PNG image (LinkedIn color overrides)
 
-The pipeline has 3 phases, each logged as a separate cron_runs entry:
-  Phase 1 — Pick: select 1 random tweet from the bank (>= min likes)
-  Phase 2 — Generate: call the dashboard API to render PNG + MP4 video
-  Phase 3 — Buffer: insert post, get signed URL, send to Buffer queue
+Companion to cron/tiktok_pipeline.py — same fan-out shape but sources
+from the CSV bank instead of Apify. Both write to the same `posts` table
+with platform values "tiktok" / "facebook" / "linkedin" and rely on the
+partial unique index on (platform, md5(caption)) to prevent
+cross-pipeline duplicates.
+
+Three cron_runs phases are preserved so the dashboard's getLastRun()
+query keeps working without schema changes:
+
+  Phase 1 — bank_pick:     pick 1 random unposted bank tweet
+  Phase 2 — bank_generate: render TikTok MP4 + Facebook PNG + LinkedIn PNG
+  Phase 3 — bank_send:     TikTok → FB → LI fan-out
+
+cron_runs.platform stays "tiktok" because it's the orchestrator's
+identity. Per-leg outcomes land in the `posts` table. See
+cron/tiktok_pipeline.py's module docstring for the partial-failure
+semantics — identical here for the single-tweet case.
 """
 
 import logging
@@ -33,17 +45,15 @@ from core.env_diag import log_env_diagnostics
 from core.media import get_signed_url
 from core.models import Post
 from core.text_utils import normalize_tweet_text
-
-# Postgres unique-constraint violation code. Raised by postgrest as APIError.code
-# when the dedup index from migration 004_rls_and_dedup.sql fires.
-_PG_UNIQUE_VIOLATION = "23505"
-
-
-def _is_unique_violation(exc: Exception) -> bool:
-    """Check if an exception from Supabase is a unique-constraint violation."""
-    code = getattr(exc, "code", "") or ""
-    message = str(exc).lower()
-    return _PG_UNIQUE_VIOLATION in code or _PG_UNIQUE_VIOLATION in message or "duplicate key" in message
+from cron._tweet_card_legs import (
+    BUFFER_CAPTION,
+    SIGNED_URL_EXPIRES_IN,
+    _is_unique_violation,
+    fanout_extra_legs_for_one_tweet,
+    render_extra_platforms,
+    resolve_extra_channel_ids,
+    summarize_leg_failures,
+)
 
 
 logging.basicConfig(
@@ -52,11 +62,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Bank rows carry source="bank" so the dashboard can filter outlier vs
+# bank traffic. Nothing downstream reads it anymore (the chain to FB/LI
+# is gone) but it's cheap to keep.
+SOURCE_TAG = "bank"
+
 
 def main():
-    # Log env-var presence first so the UI output pane shows whether the
-    # subprocess inherited every var this pipeline depends on. See
-    # core/env_diag.py for rationale.
     log_env_diagnostics(
         "tiktok-bank-pipeline",
         required=[
@@ -70,129 +82,131 @@ def main():
         optional=["CONTENT_BANK_PATH", "TIKTOK_BANK_MIN_LIKES"],
     )
 
-    # Read config from environment
     bank_path = os.environ.get("CONTENT_BANK_PATH", "data/TweetMasterBank.csv")
     min_likes = int(os.environ.get("TIKTOK_BANK_MIN_LIKES", "6500"))
     dashboard_url = os.environ.get("DASHBOARD_URL", "")
     cron_secret = os.environ.get("CRON_SECRET", "")
 
     if not dashboard_url:
-        logger.error("DASHBOARD_URL not set — cannot call dashboard API for video generation")
+        logger.error("DASHBOARD_URL not set — cannot call dashboard API for content generation")
         sys.exit(1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # PHASE 1: Pick 1 tweet from the bank
+    # PHASE 1: Pick 1 bank tweet (TikTok-dedup against posts)
     # ─────────────────────────────────────────────────────────────────────
-    # Select a random high-performing tweet from the CSV, then check it
-    # against existing TikTok posts in the DB to avoid duplicates.
     run_id = log_cron_start(platform="tiktok", job_type="bank_pick")
     try:
-        # Pull more candidates than we need so we have room after dedup.
-        # The bank has ~18K tweets; with a 6500-like filter we get a few
-        # thousand candidates, so pulling 20 is cheap and gives us plenty
-        # of fallbacks if most are already posted.
+        # Pull more candidates than we need so we have room after TikTok
+        # dedup. The bank has ~18K tweets; with the 6500-like filter we
+        # have several thousand candidates, so 20 is cheap and gives
+        # plenty of fallback when the top picks are already posted.
         candidates = select_bank_content_with_likes(
             bank_path, count=20, min_likes=min_likes,
         )
 
-        # Normalize and dedup against existing TikTok posts
         picked = None
         for candidate in candidates:
             normalized = normalize_tweet_text(candidate["text"])
             if post_caption_exists("tiktok", normalized):
-                logger.debug("Skipping duplicate: %s...", normalized[:50])
+                logger.debug("Skipping duplicate (tiktok): %s...", normalized[:50])
                 continue
-            # Attach normalized text for later phases
             candidate["normalized"] = normalized
             picked = candidate
             break
 
         if not picked:
-            logger.info("No usable bank tweet found (all duplicates or bank exhausted). Exiting.")
+            logger.info("No usable bank tweet (all TikTok-duplicates or bank exhausted). Exiting.")
             log_cron_finish(run_id, status="success", posts_processed=0)
             return
 
         log_cron_finish(run_id, status="success", posts_processed=1)
-        logger.info("Phase 1: picked bank tweet (id=%s, %d likes): %s...",
-                     picked["tweet_id"], picked["favorite_count"], picked["normalized"][:60])
+        logger.info(
+            "Phase 1: picked bank tweet (id=%s, %d likes): %s...",
+            picked["tweet_id"], picked["favorite_count"], picked["normalized"][:60],
+        )
     except Exception as e:
         logger.error("Phase 1 failed (bank pick): %s", e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
 
+    # Shape the picked tweet to match the {'id', 'text'} contract
+    # render_extra_platforms expects (it pulls 'id' as the result key).
+    tweet_for_render = {"id": picked["tweet_id"], "text": picked["normalized"]}
+
     # ─────────────────────────────────────────────────────────────────────
-    # PHASE 2: Generate video via dashboard API
+    # PHASE 2: Render TikTok MP4, then Facebook PNG, then LinkedIn PNG
     # ─────────────────────────────────────────────────────────────────────
-    # The dashboard's /api/content-gen/generate route handles canvas
-    # rendering, ffmpeg conversion, Supabase Storage upload, and cleanup.
-    # Retries on 5xx / network errors are handled inside generate_content.
     run_id = log_cron_start(platform="tiktok", job_type="bank_generate")
     try:
         data = generate_content(
             dashboard_url=dashboard_url,
             cron_secret=cron_secret,
-            tweets=[{"id": picked["tweet_id"], "text": picked["normalized"]}],
+            tweets=[tweet_for_render],
             platform="tiktok",
         )
-
         if data.get("error"):
             raise RuntimeError(data["error"])
 
-        # Log per-item errors from the API so we can see exactly why
-        # individual items failed (e.g. ffmpeg crash, storage upload error).
-        api_errors = data.get("errors", [])
-        if api_errors:
-            logger.warning("Generate API returned %d error(s):", len(api_errors))
-            for i, err in enumerate(api_errors):
-                logger.warning("  error[%d]: %s", i, err)
+        for i, err in enumerate(data.get("errors", []) or []):
+            logger.warning("  tiktok render error[%d]: %s", i, err)
 
-        generated = data.get("generated", [])
+        generated = data.get("generated", []) or []
         if not generated:
             raise RuntimeError(
-                f"Generate API returned empty results. API errors: {api_errors}"
+                f"TikTok render returned no items (API errors: {data.get('errors', [])})"
             )
+        logger.info("Phase 2a: generated %d TikTok video(s)", len(generated))
 
-        log_cron_finish(run_id, status="success", posts_processed=len(generated))
-        logger.info("Phase 2: generated %d video(s)", len(generated))
+        # FB + LI renders are best-effort — an empty result for either
+        # just means the fan-out will skip that leg.
+        extra_paths = render_extra_platforms(
+            dashboard_url=dashboard_url,
+            cron_secret=cron_secret,
+            tweets=[tweet_for_render],
+        )
+
+        log_cron_finish(
+            run_id,
+            status="success",
+            posts_processed=len(generated),
+            error_message=_render_summary(extra_paths),
+        )
     except Exception as e:
         logger.error("Phase 2 failed (generate): %s", e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # PHASE 3: Send video to Buffer's TikTok queue
+    # PHASE 3: Send TikTok video, then fan out to FB + LI
     # ─────────────────────────────────────────────────────────────────────
     run_id = log_cron_start(platform="tiktok", job_type="bank_send")
 
     try:
-        channel_id = get_channel_id(service="tiktok")
+        tiktok_channel_id = get_channel_id(service="tiktok")
     except Exception as e:
         logger.error("Phase 3 failed — could not get TikTok channel ID: %s", e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
 
+    fb_channel_id, li_channel_id, ig_channel_id = resolve_extra_channel_ids()
+
     item = generated[0]
     storage_path = item["storagePath"]
     caption = item["text"]
-    # Hardcoded TikTok caption — short engagement hook for quote-card videos
-    tiktok_caption = "Agree?"
 
     if not caption or not caption.strip():
         logger.warning("Skipping tweet with empty caption (storage: %s)", storage_path)
         log_cron_finish(run_id, status="failed", error_message="Empty caption after generation")
         sys.exit(1)
 
-    # ─── INSERT FIRST, THEN SEND TO BUFFER ───────────────────────────
-    # Same insert-before-send dedup pattern as tiktok_pipeline.py Phase 4.
-    # The partial unique index on (platform, md5(caption)) is the source
-    # of truth — attempt the insert first, and if the DB rejects it, another
-    # run already claimed this caption.
+    # ─── TIKTOK LEG (insert first, then send) ────────────────────────────
     post = Post(
         platform="tiktok",
         status="sent_to_buffer",
         media_type="video",
         media_urls=[storage_path],
         caption=caption,
+        metadata={"source": SOURCE_TAG},
     )
     try:
         post_id = insert_post(post)
@@ -201,34 +215,66 @@ def main():
             logger.info("Skipping duplicate (DB constraint): %s...", caption[:50])
             log_cron_finish(run_id, status="success", posts_processed=0)
             return
-        logger.error("Insert failed for %s: %s", storage_path, e, exc_info=True)
+        logger.error("TikTok insert failed for %s: %s", storage_path, e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
 
     try:
-        # 7-day signed URL — Buffer queues videos and may not download
-        # them for hours or days.
-        video_url = get_signed_url(storage_path, expires_in=604800)
-
-        buffer_post_id = send_to_buffer(channel_id, tiktok_caption, video_url, media_type="video")
-
+        video_url = get_signed_url(storage_path, expires_in=SIGNED_URL_EXPIRES_IN)
+        buffer_post_id = send_to_buffer(
+            tiktok_channel_id, BUFFER_CAPTION, video_url, media_type="video",
+        )
         update_post(post_id, platform_post_id=buffer_post_id)
-        logger.info("Sent to Buffer: %s (Buffer post %s)", storage_path, buffer_post_id)
-        log_cron_finish(run_id, status="success", posts_processed=1)
-
+        logger.info("[tiktok] sent to Buffer: %s (Buffer post %s)", storage_path, buffer_post_id)
     except Exception as e:
-        # Flip to buffer_error so the row drops out of the dedup index
-        # and a future run can retry this caption.
-        logger.error("Buffer send failed for %s: %s", storage_path, e, exc_info=True)
-        # Nested try: update_post now raises on no-match. If the DB write
-        # fails here we still need to run log_cron_finish below so the
-        # cron_runs row doesn't stay "running" forever — catch and log.
+        logger.error("[tiktok] Buffer send failed for %s: %s", storage_path, e, exc_info=True)
         try:
             update_post(post_id, status="buffer_error", error_message=str(e)[:500])
         except Exception as db_err:
-            logger.error("Also failed to mark post %s as buffer_error: %s", post_id, db_err)
+            logger.error("[tiktok] also failed to mark buffer_error: %s", db_err)
+        # TikTok failed — skip the fan-out and end the run as a failure.
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
+
+    # ─── FACEBOOK + LINKEDIN + INSTAGRAM FAN-OUT ─────────────────────────
+    # Instagram reuses the Facebook 1:1 PNG (no separate IG render call).
+    tweet_id = str(item.get("id", ""))
+    fb_path = extra_paths["facebook"].get(tweet_id)
+    li_path = extra_paths["linkedin"].get(tweet_id)
+    leg_result = fanout_extra_legs_for_one_tweet(
+        tweet_caption=caption,
+        fb_storage_path=fb_path,
+        li_storage_path=li_path,
+        fb_channel_id=fb_channel_id,
+        li_channel_id=li_channel_id,
+        ig_channel_id=ig_channel_id,
+        source_tag=SOURCE_TAG,
+    )
+
+    leg_summary = summarize_leg_failures([leg_result])
+    log_cron_finish(
+        run_id, status="success", posts_processed=1, error_message=leg_summary,
+    )
+    logger.info(
+        "Phase 3 complete: tiktok sent + fan-out summary: %s",
+        leg_summary or "all legs OK",
+    )
+
+
+def _render_summary(extra_paths: dict[str, dict[str, str]]) -> str | None:
+    """One-line description of FB/LI render results for the bank run.
+
+    Used as the Phase-2 error_message when one or both extra-platform
+    renders came back empty. Helps operators tell "render dropped a leg"
+    from "render succeeded but Buffer rejected everything." Returns None
+    when both legs rendered something so the success record stays clean.
+    """
+    parts: list[str] = []
+    if not extra_paths["facebook"]:
+        parts.append("no facebook renders")
+    if not extra_paths["linkedin"]:
+        parts.append("no linkedin renders")
+    return ", ".join(parts) or None
 
 
 if __name__ == "__main__":

@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
     // The storage path is also interpolated from `platform` directly for
     // the square-template branch; keeping this list authoritative prevents
     // anything from sneaking into a path it shouldn't.
-    const VALID_PLATFORMS = ["tiktok", "facebook", "linkedin_leila"] as const;
+    const VALID_PLATFORMS = ["tiktok", "facebook", "linkedin", "linkedin_leila"] as const;
     if (!(VALID_PLATFORMS as readonly string[]).includes(rawPlatform)) {
       return NextResponse.json(
         { error: `Unknown platform: ${rawPlatform}` },
@@ -87,13 +87,16 @@ export async function POST(req: NextRequest) {
     // on based on errors.length vs generated.length.
     const errors: { id: string; error: string }[] = [];
 
-    // Both Facebook and Leila-LinkedIn render the same square 1080×1080
-    // quote card from the Facebook template config. Leila's pipeline will
-    // eventually want its own template, but per the linkedin_leila plan
-    // we explicitly reuse Alex's template for now and just namespace the
-    // storage path so generated images don't collide with the Facebook
-    // pipeline's outputs.
-    const usesSquareTemplate = platform === "facebook" || platform === "linkedin_leila";
+    // Facebook, Leila-LinkedIn, and Alex-LinkedIn all render a square
+    // 1080×1080 quote card from the Facebook template config. Each gets
+    // its own storage path namespace so the renders don't collide, and
+    // each can layer per-platform color overrides on top (see below).
+    // None of them currently have a dedicated template row — they all
+    // read Alex's Facebook template and diverge via in-code overrides.
+    const usesSquareTemplate =
+      platform === "facebook" ||
+      platform === "linkedin" ||
+      platform === "linkedin_leila";
     let fbTemplateConfig: TemplateConfig | null = null;
     if (usesSquareTemplate) {
       const { data: template, error: tmplError } = await supabase
@@ -114,17 +117,29 @@ export async function POST(req: NextRequest) {
       // single "padding") fall back to the locked-in values.
       fbTemplateConfig = { ...DEFAULT_TEMPLATE_CONFIG, ...validateTemplateConfig(template.config as Record<string, unknown>) };
 
-      // Per-creator overrides on top of Alex's Facebook template. These
+      // Per-platform overrides on top of Alex's Facebook template. These
       // are the *locked-in* deltas — the operator decided on them in the
       // design sandbox and they stay constant regardless of any future
       // edits to Alex's Facebook template config. Anything else (padding,
       // typography, alignment) keeps inheriting from FB so that broad
-      // layout changes apply to both creators by default.
+      // layout changes apply to every platform by default.
       if (platform === "linkedin_leila") {
         fbTemplateConfig = {
           ...fbTemplateConfig,
           backgroundColor: "#000000",
           textColor: "#ffffff",
+        };
+      } else if (platform === "linkedin") {
+        // Alex's LinkedIn — clean white card with dark text, matching
+        // LinkedIn's professional aesthetic. Distinct from Facebook (which
+        // typically renders dark-mode) so the same source tweet reads
+        // differently per platform. Tweak via the design sandbox once a
+        // dedicated LinkedIn template row exists; until then these
+        // overrides are the source of truth.
+        fbTemplateConfig = {
+          ...fbTemplateConfig,
+          backgroundColor: "#ffffff",
+          textColor: "#0a1f33",
         };
       }
     }

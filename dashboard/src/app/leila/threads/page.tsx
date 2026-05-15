@@ -18,20 +18,33 @@ export const dynamic = "force-dynamic";
 
 async function getLatestRun(): Promise<PathwayLastRun | null> {
   const supabase = getSupabaseClient();
-  // Latest run regardless of job_type — both content_apify and post fire
-  // sequentially in one cron invocation, and a failure in either phase
-  // should surface here.
-  const { data } = await supabase
-    .from("cron_runs")
-    .select("status, started_at")
-    .eq("platform", "threads_leila")
-    .order("started_at", { ascending: false })
-    .limit(1);
-  const row = data?.[0];
+  // Status comes from whichever phase ran last (content_apify or post) so
+  // any failure surfaces. Count comes from `post` — the publish phase —
+  // since content_apify's posts_processed counts "tweets inserted" and post
+  // counts "tweets published". Either is defensible; published is what the
+  // operator most wants to see.
+  const [latest, final] = await Promise.all([
+    supabase
+      .from("cron_runs")
+      .select("status, started_at")
+      .eq("platform", "threads_leila")
+      .order("started_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("cron_runs")
+      .select("posts_processed")
+      .eq("platform", "threads_leila")
+      .eq("job_type", "post")
+      .order("started_at", { ascending: false })
+      .limit(1),
+  ]);
+  const row = latest.data?.[0];
   if (!row) return null;
+  const finalRow = final.data?.[0];
   return {
     status: row.status as PathwayLastRun["status"],
     startedAt: row.started_at as string,
+    count: (finalRow?.posts_processed as number | null) ?? null,
   };
 }
 
@@ -59,13 +72,37 @@ export default async function LeilaThreadsPage() {
         </div>
       </div>
 
+      {/* Run cadence + dedup notes — kept inline (not split into its own
+          component) because nothing else on the page needs them. */}
+      <div className="mb-5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-xs text-[var(--overview-fg)]/65">
+        <div className="flex flex-wrap gap-x-6 gap-y-1.5">
+          <span>
+            <span className="text-[var(--overview-fg)]/40">Schedule</span>{" "}
+            <span className="font-mono">Daily · 11:00 UTC (4:00 AM PDT)</span>
+          </span>
+          <span>
+            <span className="text-[var(--overview-fg)]/40">Source</span>{" "}
+            <span className="font-mono">@LeilaHormozi via Apify</span>
+          </span>
+          <span>
+            <span className="text-[var(--overview-fg)]/40">Channel</span>{" "}
+            <span className="font-mono">Buffer · Threads (Leila)</span>
+          </span>
+        </div>
+        <p className="mt-2 text-[var(--overview-fg)]/45">
+          Single-pathway pipeline — Apify-only, no content bank. Dedup by caption against{" "}
+          <code className="font-mono">threads_leila</code> posts. Tweets containing hyperlinks are filtered out before insert.
+        </p>
+      </div>
+
       <PathwayCard
         number={1}
-        title="Apify → Publish"
+        title="X Cross-Post"
         steps={[
-          "Fetch up to 5 recent @LeilaHormozi tweets via Apify (24h window)",
-          "Dedupe against existing posts (platform=threads_leila)",
-          "Queue verbatim on Buffer's Leila Threads channel",
+          "Scrape up to 5 recent @LeilaHormozi tweets from the past 24h via Apify (no engagement filter)",
+          "Skip tweets containing hyperlinks (cron-side filter, not on the X side)",
+          "Skip any whose source tweet text already exists in threads_leila posts (dedup)",
+          "Queue verbatim to Buffer's Leila Threads channel",
         ]}
         actions={[{ url: "/api/cron/run", body: { job: "threads-leila-cron" } }]}
         lastRun={lastRun}

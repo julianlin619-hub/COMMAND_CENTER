@@ -1,7 +1,7 @@
 /**
  * YouTube Platform Detail Page
  *
- * YouTube posts originate from the TikTok manual-upload dialog on /tiktok —
+ * YouTube posts originate from the TikTok manual-upload dialog on /manual-upload —
  * the same mp4 fans out to Buffer's TikTok and YouTube Shorts channels in
  * the same request. This page describes that flow and routes the user to
  * the dialog; no run button because there's no separate YouTube pipeline.
@@ -23,7 +23,7 @@ import { ArrowLeftIcon, UploadIcon } from "lucide-react";
 export const dynamic = "force-dynamic";
 
 const STEPS = [
-  "Open the Manual Upload dialog on /tiktok",
+  "Open the Manual Upload dialog on /manual-upload",
   "Same mp4 is queued on Buffer's TikTok + YouTube Shorts channels",
   "Buffer auto-schedules each into its next open slot",
 ];
@@ -50,6 +50,29 @@ export default function YouTubePage() {
         </div>
       </div>
 
+      {/* Run cadence + flow notes — matches the layout used on /threads,
+          /manual-upload, etc. so the page reads consistently across platforms. */}
+      <div className="mb-5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-xs text-[var(--overview-fg)]/65">
+        <div className="flex flex-wrap gap-x-6 gap-y-1.5">
+          <span>
+            <span className="text-[var(--overview-fg)]/40">Trigger</span>{" "}
+            <span className="font-mono">Manual · /manual-upload upload dialog</span>
+          </span>
+          <span>
+            <span className="text-[var(--overview-fg)]/40">Source</span>{" "}
+            <span className="font-mono">User-picked MP4</span>
+          </span>
+          <span>
+            <span className="text-[var(--overview-fg)]/40">Channel</span>{" "}
+            <span className="font-mono">Buffer · YouTube Shorts</span>
+          </span>
+        </div>
+        <p className="mt-2 text-[var(--overview-fg)]/45">
+          No cron — YouTube Shorts are queued only when the operator uses the TikTok manual-upload dialog,
+          which fans out the same MP4 to Buffer&apos;s TikTok + YouTube Shorts channels in one request.
+        </p>
+      </div>
+
       <Card className="mb-4">
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
@@ -59,10 +82,10 @@ export default function YouTubePage() {
               </Badge>
               <CardTitle className="text-sm">Manual upload fan-out</CardTitle>
             </div>
-            <Link href="/tiktok">
+            <Link href="/manual-upload">
               <Button size="sm">
                 <UploadIcon />
-                Open TikTok upload
+                Open Manual Upload
               </Button>
             </Link>
           </div>

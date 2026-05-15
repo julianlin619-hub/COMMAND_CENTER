@@ -207,16 +207,19 @@ def send_to_buffer(
                 "assets": assets,
                 # Buffer nests platform-specific fields under metadata.
                 # Facebook requires metadata.facebook.type (post/reel/story);
-                # Instagram requires metadata.instagram.type (post/reel/story).
-                # Instagram reels also require shouldShareToFeed — true so
-                # the reel surfaces in the main feed, not just the Reels tab.
+                # Instagram requires metadata.instagram.type (post/reel/story) AND
+                # metadata.instagram.shouldShareToFeed (Boolean!) — marked
+                # required in Buffer's GraphQL schema for every IG type, even
+                # "post". For both "post" and "reel" we want True (the post
+                # lands in the feed; the reel cross-posts to the feed). Story
+                # support, if ever added, should set False here.
                 **(
                     {"metadata": {
                         **({"facebook": {"type": facebook_post_type}} if facebook_post_type else {}),
                         **(
                             {"instagram": {
                                 "type": instagram_post_type,
-                                **({"shouldShareToFeed": True} if instagram_post_type == "reel" else {}),
+                                "shouldShareToFeed": True,
                             }}
                             if instagram_post_type else {}
                         ),

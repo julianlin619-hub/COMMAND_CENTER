@@ -161,13 +161,50 @@
   100% { box-shadow: 0 0 0 12px rgba(174, 86, 48, 0); }
 }
 
+/* Command Center pulse bar.
+   Slow, subtle left-to-right glow on a 6s cycle. The visible bar at rest
+   is a faint tint of the category color (~12%); the sweep is a soft
+   highlight (~45% peak) that drifts across to suggest "this is live"
+   without grabbing attention. The category color is passed in via
+   `--pulse-color` (set inline on the element). */
+@keyframes pulse-sweep {
+  0%   { background-position: -100% 0; }
+  100% { background-position: 200% 0; }
+}
+.pulse-sweep {
+  background-color: color-mix(in srgb, var(--pulse-color) 12%, transparent);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--pulse-color) 45%, transparent) 45%,
+    color-mix(in srgb, var(--pulse-color) 45%, transparent) 55%,
+    transparent 100%
+  );
+  background-size: 60% 100%;
+  background-repeat: no-repeat;
+  animation: pulse-sweep 6s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .anim-heartbeat,
   .anim-pending-pulse,
   .anim-pending-dot,
   .anim-accent-draw,
-  .anim-cta-commit {
+  .anim-cta-commit,
+  .pulse-sweep {
     animation: none !important;
+  }
+  /* Without the sweep animation, fall back to a static muted bar so the
+     category color still reads at a glance. */
+  .pulse-sweep {
+    background-image: none;
+    background-color: color-mix(in srgb, var(--pulse-color) 40%, transparent);
+  }
+  /* Shorten hover transitions on Command Center cards — instant feedback
+     without motion. The card stays interactive; only the animation goes. */
+  .format-card,
+  .format-card * {
+    transition-duration: 0ms !important;
   }
 }
 

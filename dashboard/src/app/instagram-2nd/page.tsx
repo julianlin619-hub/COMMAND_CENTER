@@ -27,9 +27,12 @@ interface PipelineStats {
 
 async function getLatestRun(): Promise<PathwayLastRun | null> {
   const supabase = getSupabaseClient();
+  // /api/ig-pipeline logs a single `post` job_type row per invocation
+  // with posts_processed = number of reels scheduled to Buffer, so a
+  // single query covers both status and count.
   const { data } = await supabase
     .from("cron_runs")
-    .select("status, started_at")
+    .select("status, started_at, posts_processed")
     .eq("platform", "instagram_2nd")
     .order("started_at", { ascending: false })
     .limit(1);
@@ -38,6 +41,7 @@ async function getLatestRun(): Promise<PathwayLastRun | null> {
   return {
     status: row.status as PathwayLastRun["status"],
     startedAt: row.started_at as string,
+    count: (row.posts_processed as number | null) ?? 0,
   };
 }
 
@@ -164,13 +168,38 @@ export default async function InstagramSecondPage() {
         />
       </div>
 
+      {/* Run cadence + flow notes — kept inline (not split into its own
+          component) because nothing else on the page needs them. */}
+      <div className="mb-5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-4 py-3 text-xs text-[var(--overview-fg)]/65">
+        <div className="flex flex-wrap gap-x-6 gap-y-1.5">
+          <span>
+            <span className="text-[var(--overview-fg)]/40">Schedule</span>{" "}
+            <span className="font-mono">Paused — manual via workflow_dispatch</span>
+          </span>
+          <span>
+            <span className="text-[var(--overview-fg)]/40">Source</span>{" "}
+            <span className="font-mono">data/TweetMasterBank.csv</span>
+          </span>
+          <span>
+            <span className="text-[var(--overview-fg)]/40">Channel</span>{" "}
+            <span className="font-mono">Buffer · Instagram (alexhighlights2026)</span>
+          </span>
+        </div>
+        <p className="mt-2 text-[var(--overview-fg)]/45">
+          GitHub Actions schedule is commented out (<code className="font-mono">.github/workflows/ig-pipeline.yml</code>);
+          the dashboard <code className="font-mono">/api/ig-pipeline</code> route orchestrates pick → generate → schedule in-process on manual trigger.
+          Per-item commit (marks each tweet used right after Buffer accepts) so a mid-batch failure can&apos;t cause reposts.
+        </p>
+      </div>
+
       <PathwayCard
         number={1}
-        title="Bank → Instagram reel"
+        title="X Bank Reel (paused — manual)"
         steps={[
-          "Pick tweets from the CSV bank",
-          "Generate PNG images and MP4 videos",
-          "Schedule to Instagram via Buffer (alexhighlights2026)",
+          "Pick up to 10 random unused tweets from data/TweetMasterBank.csv (configurable via BATCH_SIZE; usage tracked in data/ig-bank-history.json)",
+          "Render each tweet onto the branded canvas (PNG → MP4, 5s loop, 1080×1920) via /api/content-gen",
+          "Upload MP4 to Supabase Storage at instagram_2nd/tweet-{hash}.mp4 (7-day signed URL)",
+          "Queue to Buffer's IG channel (BUFFER_INSTAGRAM_2ND_NAME, default \"alexhighlights2026\") as a reel",
         ]}
         // Single end-to-end orchestrator. The /pick, /generate, /schedule
         // sub-routes still exist for cron-driven step-by-step use, but the

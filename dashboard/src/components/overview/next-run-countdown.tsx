@@ -29,7 +29,7 @@ export function NextRunCountdown({ cronExpression }: { cronExpression: string })
 
   if (now === null || target === null) {
     // Placeholder keeps card layout stable during SSR → client hydration.
-    return <span className="text-[15px] font-medium tabular-nums opacity-0">—</span>;
+    return <span className="text-[13px] font-medium tabular-nums opacity-0">—</span>;
   }
 
   const diff = Math.max(0, target - now);
@@ -39,7 +39,7 @@ export function NextRunCountdown({ cronExpression }: { cronExpression: string })
 
   return (
     <span className="flex items-baseline gap-1">
-      <span className="text-[11px] text-[var(--overview-fg)]/40">in</span>
+      <span className="text-[11px] text-[var(--muted-foreground)]">in</span>
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.span
           key={text}
@@ -47,8 +47,11 @@ export function NextRunCountdown({ cronExpression }: { cronExpression: string })
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 2 }}
           transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-          className="text-[15px] font-medium tabular-nums"
-          style={{ color: "var(--terracotta)" }}
+          // Monochrome to match the Strategy page — terracotta was the
+          // home page's old single accent, dropped during the redesign so
+          // the two pages read in the same calm vocabulary.
+          className="text-[13px] font-medium tabular-nums"
+          style={{ color: "var(--foreground)" }}
         >
           {text}
         </motion.span>

@@ -40,3 +40,17 @@ dashboard/exports/
 # Supabase local
 supabase/.temp/
 supabase/.branches/
+
+# Playwright MCP server scratch dir (console logs + page snapshots auto-
+# generated when Claude drives the browser; safe to ignore).
+.playwright-mcp/
+
+# Local working artifacts at the repo root — screenshots used while
+# iterating on UI mocks, and one-off CSV/JSON exports from Buffer or
+# YouTube Studio. Source code lives in dashboard/, cron/, core/ — root
+# PNG/CSV/JSON files are always scratch. The leading `/` keeps the
+# match anchored to the repo root so package.json / tsconfig.json files
+# in subdirectories stay tracked.
+/*.png
+/*.csv
+/*.json

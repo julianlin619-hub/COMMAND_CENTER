@@ -22,9 +22,16 @@ import { verifyApiAuth } from "@/lib/auth";
 
 // One entry per cron job defined in render.yaml. The `kind` drives which
 // read-only checks we run in the simulation:
-//   - "publish":    cron just publishes due posts (youtube/linkedin/instagram/tiktok_cron)
-//   - "source_publish": content sourcing + publish (threads_cron)
-//   - "pipeline":   scrape → generate → send to Buffer (tiktok_pipeline, facebook_pipeline)
+//   - "publish":         cron just publishes due posts (youtube/instagram/tiktok_cron)
+//   - "source_publish":  content sourcing + publish (threads_cron)
+//   - "pipeline":        scrape/pick → render → multi-channel fan-out
+//
+// tiktok-pipeline and tiktok-bank-pipeline are the unified Tweet Card
+// pathways: each one renders TikTok MP4 + Facebook PNG + LinkedIn PNG
+// in-process and queues four Buffer channels (TikTok, Facebook,
+// LinkedIn, and Instagram — Instagram reuses the Facebook PNG and
+// queues as instagram_post_type='post'). There are no separate
+// facebook-* or linkedin-* pipeline entries.
 interface CronJob {
   platform: string;     // display key used on the home page
   dbPlatform: string;   // value stored in posts.platform / cron_runs.platform
@@ -46,33 +53,17 @@ const CRON_JOBS: CronJob[] = [
   {
     platform: "tiktok",
     dbPlatform: "tiktok",
-    label: "TikTok Pipeline",
+    label: "Tweet Card Outlier",
     cronName: "tiktok-pipeline",
-    schedule: "0 12 * * *",
+    schedule: "0 11 * * *",
     kind: "pipeline",
   },
   {
     platform: "tiktok",
     dbPlatform: "tiktok",
-    label: "TikTok Bank",
+    label: "Tweet Card Bank",
     cronName: "tiktok-bank-pipeline",
-    schedule: "0 14 * * *",
-    kind: "pipeline",
-  },
-  {
-    platform: "facebook",
-    dbPlatform: "facebook",
-    label: "Facebook Pipeline",
-    cronName: "facebook-pipeline",
-    schedule: "0 13 * * *",
-    kind: "pipeline",
-  },
-  {
-    platform: "instagram",
-    dbPlatform: "instagram",
-    label: "Instagram Pipeline",
-    cronName: "instagram-pipeline",
-    schedule: "30 13 * * *",
+    schedule: "15 11 * * *",
     kind: "pipeline",
   },
   {
@@ -82,14 +73,6 @@ const CRON_JOBS: CronJob[] = [
     cronName: "youtube-cron",
     schedule: "0 */4 * * *",
     kind: "publish",
-  },
-  {
-    platform: "linkedin",
-    dbPlatform: "linkedin",
-    label: "LinkedIn Pipeline",
-    cronName: "linkedin-pipeline",
-    schedule: "0 12 * * *",
-    kind: "pipeline",
   },
 ];
 
@@ -120,8 +103,6 @@ export async function POST(request: Request) {
 
   const supabase = getSupabaseClient();
   const nowIso = new Date().toISOString();
-  // 48-hour window matches facebook_pipeline.py's recent-TikTok lookback
-  const cutoff48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
 
   const results: SimulatedCron[] = [];
 
@@ -145,7 +126,7 @@ export async function POST(request: Request) {
     }
 
     if (job.kind === "publish") {
-      // youtube/instagram/linkedin/tiktok_cron flow:
+      // youtube/instagram flow:
       //   refresh_credentials() → process_due_posts() publishes each due schedule.
       steps.push({
         name: "Refresh credentials",
@@ -195,123 +176,48 @@ export async function POST(request: Request) {
       });
       wouldPublish = dueCount ?? 0;
     } else {
-      // pipeline (tiktok_pipeline, facebook_pipeline)
-      if (job.platform === "tiktok") {
-        // Phase 1: fetch_apify_tweets (skipped)
-        // Phase 2: dedup against existing tiktok posts
-        // Phase 3: POST /api/content-gen/generate → PNG + MP4 (skipped)
-        // Phase 4: send_to_buffer (skipped)
-        steps.push({
-          name: "Phase 1 — Fetch outlier tweets (Apify)",
-          description: "Scrape viral tweets above the like threshold.",
-          detail: "Skipped (dry run) — would call Apify with TIKTOK_MIN_LIKES filter.",
-        });
-        steps.push({
-          name: "Phase 2 — Dedup",
-          description: "Filter out tweets already present as TikTok posts.",
-          detail: "Skipped (dry run) — runs in-memory against the scraped batch.",
-        });
-        steps.push({
-          name: "Phase 3 — Generate videos",
-          description: "Render PNG + MP4 via the dashboard's /api/content-gen/generate route.",
-          detail: "Skipped (dry run) — would write files to exports/ and Supabase Storage.",
-        });
-        steps.push({
-          name: "Phase 4 — Send to Buffer",
-          description: "Queue each video on the TikTok channel.",
-          detail: "Skipped (dry run) — would call Buffer and insert posts with status=sent_to_buffer.",
-        });
-      } else if (job.platform === "linkedin") {
-        // linkedin_pipeline: read recent Facebook posts (last 48h,
-        // status=sent_to_buffer), dedup against LinkedIn, requeue same
-        // media on Buffer's LinkedIn channel. No content-gen call.
-        const { data: recentFb } = await supabase
-          .from("posts")
-          .select("id, caption")
-          .eq("platform", "facebook")
-          .eq("status", "sent_to_buffer")
-          .gte("created_at", cutoff48h);
-
-        let candidateCount = 0;
-        if (recentFb && recentFb.length > 0) {
-          const captions = recentFb
-            .map((p) => p.caption)
-            .filter((c): c is string => !!c);
-          if (captions.length > 0) {
-            const { data: existingLi } = await supabase
-              .from("posts")
-              .select("caption")
-              .eq("platform", "linkedin")
-              .in("caption", captions);
-            const existing = new Set(
-              (existingLi ?? [])
-                .map((p) => p.caption)
-                .filter((c): c is string => !!c),
-            );
-            candidateCount = captions.filter((c) => !existing.has(c)).length;
-          }
-        }
-
-        steps.push({
-          name: "Phase 1 — Read recent Facebook posts",
-          description: "Pull posts.platform=facebook from the last 48h, dedup against LinkedIn.",
-          detail: `${recentFb?.length ?? 0} recent Facebook post(s) found; ${candidateCount} would become LinkedIn candidates after dedup.`,
-        });
-        steps.push({
-          name: "Phase 2 — Send to Buffer",
-          description: "Queue each image on the LinkedIn channel with caption='Agree?' — reuses the Facebook storage path, no re-render.",
-          detail: "Skipped (dry run) — would call Buffer and insert posts with status=sent_to_buffer.",
-        });
-        wouldPublish = candidateCount;
-      } else {
-        // facebook_pipeline
-        // Phase 1: read recent TikTok posts from DB (last 48h, status=sent_to_buffer),
-        //          then filter out any caption already on facebook
-        const { data: recentTiktok } = await supabase
-          .from("posts")
-          .select("id, caption")
-          .eq("platform", "tiktok")
-          .eq("status", "sent_to_buffer")
-          .gte("created_at", cutoff48h);
-
-        let candidateCount = 0;
-        if (recentTiktok && recentTiktok.length > 0) {
-          // Mirror post_caption_exists dedup: skip anything already on facebook
-          const captions = recentTiktok
-            .map((p) => p.caption)
-            .filter((c): c is string => !!c);
-          if (captions.length > 0) {
-            const { data: existingFb } = await supabase
-              .from("posts")
-              .select("caption")
-              .eq("platform", "facebook")
-              .in("caption", captions);
-            const existing = new Set(
-              (existingFb ?? [])
-                .map((p) => p.caption)
-                .filter((c): c is string => !!c),
-            );
-            candidateCount = captions.filter((c) => !existing.has(c)).length;
-          }
-        }
-
-        steps.push({
-          name: "Phase 1 — Read recent TikTok posts",
-          description: "Pull posts.platform=tiktok posted in the last 48h, dedup against Facebook.",
-          detail: `${recentTiktok?.length ?? 0} recent TikTok post(s) found; ${candidateCount} would become Facebook candidates after dedup.`,
-        });
-        steps.push({
-          name: "Phase 2 — Generate square images",
-          description: "POST to /api/content-gen/generate with platform=facebook for 1080x1080 PNGs.",
-          detail: "Skipped (dry run) — would CPU-render PNGs and upload to Supabase Storage.",
-        });
-        steps.push({
-          name: "Phase 3 — Send to Buffer",
-          description: "Queue each image on the Facebook channel with caption='Agree?'.",
-          detail: "Skipped (dry run) — would call Buffer and insert posts with status=sent_to_buffer.",
-        });
-        wouldPublish = candidateCount;
-      }
+      // pipeline (tiktok-pipeline, tiktok-bank-pipeline) — unified Tweet
+      // Card fan-out. Both pathways now render three variants and queue
+      // three Buffer channels in one process; only the source step
+      // differs (Apify scrape vs. CSV bank pick).
+      const sourceStep =
+        job.cronName === "tiktok-bank-pipeline"
+          ? {
+              name: "Phase 1 — Pick bank tweet",
+              description: "Select 1 random unposted tweet from data/TweetMasterBank.csv (≥ TIKTOK_BANK_MIN_LIKES).",
+              detail: "Skipped (dry run) — would read the CSV in-process; no external API calls.",
+            }
+          : {
+              name: "Phase 1 — Fetch outlier tweets (Apify)",
+              description: "Scrape latest TIKTOK_MAX_ITEMS @AlexHormozi tweets above TIKTOK_MIN_LIKES.",
+              detail: "Skipped (dry run) — would call Apify, which consumes API credits.",
+            };
+      steps.push(sourceStep);
+      steps.push({
+        name: "Phase 2 — Per-platform dedup",
+        description: "Filter out captions already present as TikTok posts.",
+        detail: "Skipped (dry run) — runs in-memory against the scraped/picked batch.",
+      });
+      steps.push({
+        name: "Phase 3a — Render TikTok MP4",
+        description: "POST /api/content-gen/generate with platform=tiktok for 1080×1920 MP4 videos.",
+        detail: "Skipped (dry run) — would CPU-render and upload to Supabase Storage.",
+      });
+      steps.push({
+        name: "Phase 3b — Render Facebook PNG",
+        description: "POST /api/content-gen/generate with platform=facebook for 1080×1080 PNG quote cards.",
+        detail: "Skipped (dry run) — non-fatal: empty result skips the FB leg per tweet.",
+      });
+      steps.push({
+        name: "Phase 3c — Render LinkedIn PNG",
+        description: "POST /api/content-gen/generate with platform=linkedin (LinkedIn color overrides).",
+        detail: "Skipped (dry run) — non-fatal: empty result skips the LI leg per tweet.",
+      });
+      steps.push({
+        name: "Phase 4 — Fan out to Buffer",
+        description: "Per tweet: send TikTok video, then Facebook PNG, then LinkedIn PNG, then Instagram feed post (reuses the FB PNG). Caption: 'Agree?'.",
+        detail: "Skipped (dry run) — would call Buffer up to 4× per tweet and insert posts with status=sent_to_buffer.",
+      });
     }
 
     results.push({
