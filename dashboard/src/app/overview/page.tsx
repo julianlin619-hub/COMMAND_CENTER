@@ -26,13 +26,17 @@ interface PlatformEntry {
   placeholder?: boolean;
 }
 
+// TikTok / Facebook / LinkedIn / Instagram (main) used to be standalone
+// platforms here, each with its own detail page and cron. They were
+// consolidated into the Tweet Cards fan-out (`/tweet-cards`) and their
+// detail pages + crons were removed — listing them here would render
+// dead links (no `href` override → falls back to `/${key}` → 404) and
+// phantom countdowns (CRON_SCHEDULES still has stale facebook/instagram
+// entries). They're omitted on purpose; users find them via the
+// `Tweet Cards` card on the new Command Center home.
 const ACTIVE_PLATFORMS: PlatformEntry[] = [
   { key: "threads", creator: "alex", platform: "threads", label: "Threads" },
   { key: "instagram-2nd", creator: "alex", platform: "instagram_2nd", label: "Instagram (2nd)" },
-  { key: "tiktok", creator: "alex", platform: "tiktok", label: "TikTok" },
-  { key: "facebook", creator: "alex", platform: "facebook", label: "Facebook" },
-  { key: "linkedin", creator: "alex", platform: "linkedin", label: "LinkedIn" },
-  { key: "instagram", creator: "alex", platform: "instagram", label: "Instagram (main)" },
   { key: "youtube", creator: "alex", platform: "youtube", label: "YouTube" },
   {
     key: "youtube-second",
@@ -63,10 +67,6 @@ const INACTIVE_PLATFORMS: { key: string; label: string; icon: typeof FaYoutube }
 const PLATFORM_SUMMARIES: Record<string, string> = {
   threads: "",
   "instagram-2nd": "",
-  tiktok: "",
-  facebook: "",
-  linkedin: "",
-  instagram: "",
   "youtube-second": "",
   youtube: "",
   "leila-threads": "",

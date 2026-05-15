@@ -159,6 +159,15 @@ def send_leg(
 ) -> dict[str, Any]:
     """Insert posts row, signed-URL, Buffer-send, stamp the post.
 
+    The `caption` argument here is the tweet text — that's what `Post.caption`
+    stores (for dedup against the partial-unique index on
+    (platform, md5(caption))). What Buffer actually publishes is always
+    BUFFER_CAPTION ("Agree?"), the short engagement hook — every legacy
+    per-platform cron used a separate constant for the Buffer body, and
+    this helper preserves that behavior. Treating `caption` as the post
+    body would publish a truncated tweet excerpt that duplicates text
+    already burned into the rendered image.
+
     Mirrors the insert-first-then-send pattern that the deleted FB/LI
     pipelines used: we attempt the DB insert first so the partial-unique
     index in migration 004_rls_and_dedup.sql can arbitrate concurrent
@@ -182,6 +191,9 @@ def send_leg(
         status="sent_to_buffer",
         media_type=media_type,
         media_urls=[storage_path],
+        # posts.caption stores the *tweet text* because that's what
+        # the dedup partial-unique index keys on. The Buffer-side
+        # post body (BUFFER_CAPTION) is sent below, not stored.
         caption=caption,
         # Preserve outlier/bank classification on the row even though
         # no downstream cron reads it anymore — useful for audit and
@@ -213,8 +225,11 @@ def send_leg(
 
     try:
         media_url = get_signed_url(storage_path, expires_in=SIGNED_URL_EXPIRES_IN)
+        # BUFFER_CAPTION ("Agree?") is what Buffer publishes — never
+        # the tweet text. The tweet text is already rendered onto the
+        # image and would duplicate visually if sent again.
         buffer_post_id = send_to_buffer(
-            channel_id, caption, media_url,
+            channel_id, BUFFER_CAPTION, media_url,
             media_type=media_type,
             **extra_send_kwargs,
         )

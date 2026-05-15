@@ -39,8 +39,9 @@ export default function ManualUploadPage() {
         <div>
           <h1 className="text-xl font-semibold">Manual upload</h1>
           <p className="text-sm text-muted-foreground">
-            TikTok + YouTube Shorts + LinkedIn — fan out the same mp4 to all
-            three Buffer channels. Queue up to 30 uploads in parallel.
+            TikTok + YouTube Shorts + LinkedIn + X (via Twitter bridge) — fan
+            out the same mp4 to all four Buffer channels. Queue up to 30
+            uploads in parallel.
           </p>
         </div>
       </div>

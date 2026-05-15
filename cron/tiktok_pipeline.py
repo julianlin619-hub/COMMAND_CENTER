@@ -290,19 +290,35 @@ def main():
         # Look up the per-platform storage paths from the Phase-3 result.
         # `id` here is the Apify tweet id we passed into generate_content.
         # Instagram reuses the Facebook 1:1 PNG (no separate IG render).
+        #
+        # The whole fan-out call is wrapped in try/except because
+        # `_send_or_skip` calls `post_caption_exists()` (a bare Supabase
+        # query) BEFORE the protected `send_leg()` body — a transient
+        # Supabase blip on any of the three legs would otherwise unwind
+        # out of the for-loop and skip `log_cron_finish` below, leaving
+        # `cron_runs.status='running'` permanently. Catching here lets
+        # the loop continue to the next tweet and lets the final
+        # `log_cron_finish` always run.
         tweet_id = str(item.get("id", ""))
         fb_path = extra_paths["facebook"].get(tweet_id)
         li_path = extra_paths["linkedin"].get(tweet_id)
-        leg_result = fanout_extra_legs_for_one_tweet(
-            tweet_caption=caption,
-            fb_storage_path=fb_path,
-            li_storage_path=li_path,
-            fb_channel_id=fb_channel_id,
-            li_channel_id=li_channel_id,
-            ig_channel_id=ig_channel_id,
-            source_tag=SOURCE_TAG,
-        )
-        leg_results.append(leg_result)
+        try:
+            leg_result = fanout_extra_legs_for_one_tweet(
+                tweet_caption=caption,
+                fb_storage_path=fb_path,
+                li_storage_path=li_path,
+                fb_channel_id=fb_channel_id,
+                li_channel_id=li_channel_id,
+                ig_channel_id=ig_channel_id,
+                source_tag=SOURCE_TAG,
+            )
+            leg_results.append(leg_result)
+        except Exception as e:
+            logger.error(
+                "fan-out raised for tweet %s (continuing): %s",
+                tweet_id, e, exc_info=True,
+            )
+            error_count += 1
 
     # Cron-run status mirrors today's TikTok-only rule: success if any
     # TikTok tweet shipped. FB/LI leg failures surface via error_message

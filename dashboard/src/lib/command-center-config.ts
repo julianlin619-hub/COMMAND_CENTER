@@ -111,11 +111,14 @@ export const FORMATS: Format[] = [
     name: "Reposts",
     subtitle: "Auto-recycle top performers",
     category: "short",
-    status: "live",
+    // Paused until the automation lands (see TODO.md). The card still
+    // renders for visibility but doesn't run the animated pulse, isn't
+    // counted in the header's "N live" tally, and has no href — clicking
+    // it is a no-op. Flip back to "live" and add an href when the
+    // auto-recycle workflow ships.
+    status: "paused",
     creator: "alex",
     platforms: [{ id: "youtube", name: "YouTube" }],
-    // No href yet — the "auto-recycle top performers" workflow doesn't
-    // have a detail page. Clicking the card is a no-op until one exists.
   },
   {
     id: "crosspost-short",
@@ -124,10 +127,16 @@ export const FORMATS: Format[] = [
     category: "short",
     status: "live",
     creator: "alex",
+    // Matches the actual fan-out in /api/tiktok/manual-upload: TikTok,
+    // YouTube Shorts, LinkedIn (gated by LINKEDIN_FANOUT_ENABLED but
+    // listed because the gate is expected to flip back on), and X via
+    // the Twitter bridge (service="twitter", channel="acq_official").
+    // Instagram is NOT a destination of this workflow — the previous
+    // entry had it listed in error.
     platforms: [
-      { id: "instagram", name: "Instagram" },
       { id: "tiktok", name: "TikTok" },
       { id: "youtube", name: "YouTube" },
+      { id: "linkedin", name: "LinkedIn" },
       { id: "x", name: "X" },
     ],
     // Links to the manual-upload page — user-triggered form that fans the

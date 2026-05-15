@@ -631,7 +631,7 @@ export function TikTokUploadQueue() {
             className="ml-auto inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
             <ArrowLeftIcon className="size-3.5" />
-            Back to Overview
+            Back to Command Center
           </Link>
         </div>
       </div>

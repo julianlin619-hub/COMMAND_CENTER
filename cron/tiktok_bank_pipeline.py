@@ -238,20 +238,29 @@ def main():
 
     # ─── FACEBOOK + LINKEDIN + INSTAGRAM FAN-OUT ─────────────────────────
     # Instagram reuses the Facebook 1:1 PNG (no separate IG render call).
+    # Wrapped in try/except because `_send_or_skip` calls
+    # `post_caption_exists()` (an unwrapped Supabase query) before the
+    # protected `send_leg()` body — a transient Supabase blip would
+    # otherwise unwind out and skip `log_cron_finish`, orphaning the
+    # cron_runs row at status='running'.
     tweet_id = str(item.get("id", ""))
     fb_path = extra_paths["facebook"].get(tweet_id)
     li_path = extra_paths["linkedin"].get(tweet_id)
-    leg_result = fanout_extra_legs_for_one_tweet(
-        tweet_caption=caption,
-        fb_storage_path=fb_path,
-        li_storage_path=li_path,
-        fb_channel_id=fb_channel_id,
-        li_channel_id=li_channel_id,
-        ig_channel_id=ig_channel_id,
-        source_tag=SOURCE_TAG,
-    )
+    try:
+        leg_result = fanout_extra_legs_for_one_tweet(
+            tweet_caption=caption,
+            fb_storage_path=fb_path,
+            li_storage_path=li_path,
+            fb_channel_id=fb_channel_id,
+            li_channel_id=li_channel_id,
+            ig_channel_id=ig_channel_id,
+            source_tag=SOURCE_TAG,
+        )
+        leg_summary = summarize_leg_failures([leg_result])
+    except Exception as e:
+        logger.error("fan-out raised for tweet %s: %s", tweet_id, e, exc_info=True)
+        leg_summary = f"fan-out raised: {e!s}"
 
-    leg_summary = summarize_leg_failures([leg_result])
     log_cron_finish(
         run_id, status="success", posts_processed=1, error_message=leg_summary,
     )
