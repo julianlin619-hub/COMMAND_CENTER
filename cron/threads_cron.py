@@ -92,7 +92,7 @@ def main():
         now = datetime.now(timezone.utc)
 
         twitter_handle = os.environ.get("APIFY_TWITTER_HANDLE", "AlexHormozi")
-        tweets = fetch_apify_tweets(twitter_handle)
+        tweets = fetch_apify_tweets(twitter_handle, max_items=10)
 
         for tweet in tweets:
             if post_caption_exists("threads", tweet["text"]):

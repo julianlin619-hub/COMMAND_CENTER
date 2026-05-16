@@ -157,8 +157,9 @@ def main():
             )
         logger.info("Phase 2a: generated %d TikTok video(s)", len(generated))
 
-        # FB + LI renders are best-effort — an empty result for either
-        # just means the fan-out will skip that leg.
+        # Facebook render is best-effort. The same 1:1 PNG is reused
+        # for the LinkedIn and Instagram legs downstream — an empty
+        # facebook result means all three fan-out legs skip for this run.
         extra_paths = render_extra_platforms(
             dashboard_url=dashboard_url,
             cron_secret=cron_secret,
@@ -237,20 +238,18 @@ def main():
         sys.exit(1)
 
     # ─── FACEBOOK + LINKEDIN + INSTAGRAM FAN-OUT ─────────────────────────
-    # Instagram reuses the Facebook 1:1 PNG (no separate IG render call).
-    # Wrapped in try/except because `_send_or_skip` calls
-    # `post_caption_exists()` (an unwrapped Supabase query) before the
-    # protected `send_leg()` body — a transient Supabase blip would
-    # otherwise unwind out and skip `log_cron_finish`, orphaning the
-    # cron_runs row at status='running'.
+    # LinkedIn and Instagram both reuse the Facebook 1:1 PNG — no
+    # separate render call for either. Wrapped in try/except because
+    # `_send_or_skip` calls `post_caption_exists()` (an unwrapped
+    # Supabase query) before the protected `send_leg()` body — a
+    # transient Supabase blip would otherwise unwind out and skip
+    # `log_cron_finish`, orphaning the cron_runs row at status='running'.
     tweet_id = str(item.get("id", ""))
     fb_path = extra_paths["facebook"].get(tweet_id)
-    li_path = extra_paths["linkedin"].get(tweet_id)
     try:
         leg_result = fanout_extra_legs_for_one_tweet(
             tweet_caption=caption,
             fb_storage_path=fb_path,
-            li_storage_path=li_path,
             fb_channel_id=fb_channel_id,
             li_channel_id=li_channel_id,
             ig_channel_id=ig_channel_id,
@@ -271,19 +270,17 @@ def main():
 
 
 def _render_summary(extra_paths: dict[str, dict[str, str]]) -> str | None:
-    """One-line description of FB/LI render results for the bank run.
+    """One-line description of the Facebook render result for the bank run.
 
-    Used as the Phase-2 error_message when one or both extra-platform
-    renders came back empty. Helps operators tell "render dropped a leg"
-    from "render succeeded but Buffer rejected everything." Returns None
-    when both legs rendered something so the success record stays clean.
+    Used as the Phase-2 error_message when the FB render came back empty.
+    Helps operators tell "render dropped the leg" from "render succeeded
+    but Buffer rejected everything." LI and IG legs reuse the FB bytes,
+    so an empty result here means all three fan-out legs will skip.
+    Returns None when the render succeeded so the success record stays clean.
     """
-    parts: list[str] = []
     if not extra_paths["facebook"]:
-        parts.append("no facebook renders")
-    if not extra_paths["linkedin"]:
-        parts.append("no linkedin renders")
-    return ", ".join(parts) or None
+        return "no facebook renders"
+    return None
 
 
 if __name__ == "__main__":

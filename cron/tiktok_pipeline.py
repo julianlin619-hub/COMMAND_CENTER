@@ -187,18 +187,19 @@ def main():
             )
         logger.info("Phase 3a: generated %d TikTok videos", len(generated))
 
-        # 3b + 3c. Facebook + LinkedIn renders. The helper never raises;
-        # a fully-failed platform yields an empty dict and the fan-out
-        # skips it per tweet.
+        # 3b. Facebook render — also reused for LinkedIn and Instagram
+        # fan-out legs (single render, three queues). The helper never
+        # raises; a failed render yields an empty dict and the fan-out
+        # skips every per-tweet leg that lacks a storage path.
         extra_paths = render_extra_platforms(
             dashboard_url=dashboard_url,
             cron_secret=cron_secret,
             tweets=new_tweets,
         )
 
-        # Phase succeeded as long as TikTok rendered something — FB/LI
-        # are best-effort. Surface the FB/LI render counts in the
-        # success record for observability.
+        # Phase succeeded as long as TikTok rendered something — the FB
+        # render (which doubles as LI+IG bytes) is best-effort. Surface
+        # the FB render count in the success record for observability.
         log_cron_finish(
             run_id,
             status="success",
@@ -287,9 +288,10 @@ def main():
             continue
 
         # ─── FACEBOOK + LINKEDIN + INSTAGRAM FAN-OUT ─────────────────────
-        # Look up the per-platform storage paths from the Phase-3 result.
+        # Look up the Facebook storage path from the Phase-3 result.
         # `id` here is the Apify tweet id we passed into generate_content.
-        # Instagram reuses the Facebook 1:1 PNG (no separate IG render).
+        # LinkedIn and Instagram both reuse the Facebook 1:1 PNG — there
+        # is no separate LI or IG render call anymore.
         #
         # The whole fan-out call is wrapped in try/except because
         # `_send_or_skip` calls `post_caption_exists()` (a bare Supabase
@@ -301,12 +303,10 @@ def main():
         # `log_cron_finish` always run.
         tweet_id = str(item.get("id", ""))
         fb_path = extra_paths["facebook"].get(tweet_id)
-        li_path = extra_paths["linkedin"].get(tweet_id)
         try:
             leg_result = fanout_extra_legs_for_one_tweet(
                 tweet_caption=caption,
                 fb_storage_path=fb_path,
-                li_storage_path=li_path,
                 fb_channel_id=fb_channel_id,
                 li_channel_id=li_channel_id,
                 ig_channel_id=ig_channel_id,
@@ -343,18 +343,16 @@ def main():
 
 
 def _render_summary(extra_paths: dict[str, dict[str, str]]) -> str | None:
-    """Compact one-line description of the FB/LI render outcome.
+    """Compact one-line description of the Facebook render outcome.
 
-    Used as the Phase-3 error_message when one or both extra-platform
-    renders came back empty. Helps operators tell "render dropped a leg"
-    from "render succeeded but Buffer rejected everything."
+    Used as the Phase-3 error_message when the FB render came back empty.
+    Helps operators tell "render dropped the leg" from "render succeeded
+    but Buffer rejected everything." Since LI and IG reuse the FB bytes,
+    an empty FB result short-circuits all three legs downstream.
     """
-    parts: list[str] = []
     if not extra_paths["facebook"]:
-        parts.append("no facebook renders")
-    if not extra_paths["linkedin"]:
-        parts.append("no linkedin renders")
-    return ", ".join(parts) or None
+        return "no facebook renders"
+    return None
 
 
 if __name__ == "__main__":
