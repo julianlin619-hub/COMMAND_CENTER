@@ -106,20 +106,11 @@ export const CATEGORY_ORDER: FormatGroup[] = [
 
 export const FORMATS: Format[] = [
   // ──────────────────────────── Alex ────────────────────────────
-  {
-    id: "reposts",
-    name: "Reposts",
-    subtitle: "Auto-recycle top performers",
-    category: "short",
-    // Paused until the automation lands (see TODO.md). The card still
-    // renders for visibility but doesn't run the animated pulse, isn't
-    // counted in the header's "N live" tally, and has no href — clicking
-    // it is a no-op. Flip back to "live" and add an href when the
-    // auto-recycle workflow ships.
-    status: "paused",
-    creator: "alex",
-    platforms: [{ id: "youtube", name: "YouTube" }],
-  },
+  // Order within each category drives left-to-right placement in the
+  // home page's CategorySection grid. For "short" we keep the two live
+  // formats first (Crosspost, Tweet Cards) and the paused Reposts card
+  // last so it sits on the right edge — a visual cue that it's the
+  // odd-one-out until the auto-recycle workflow ships.
   {
     id: "crosspost-short",
     name: "Crosspost",
@@ -169,6 +160,20 @@ export const FORMATS: Format[] = [
     // PNG byte-for-byte and queues as instagram_post_type='post' (feed
     // post — no Reel cross-post anymore).
     href: "/tweet-cards",
+  },
+  {
+    id: "reposts",
+    name: "Reposts",
+    subtitle: "Auto-recycle top performers",
+    category: "short",
+    // Paused until the automation lands (see TODO.md). The card still
+    // renders for visibility but doesn't run the animated pulse, isn't
+    // counted in the header's "N live" tally, and has no href — clicking
+    // it is a no-op. Flip back to "live" and add an href when the
+    // auto-recycle workflow ships.
+    status: "paused",
+    creator: "alex",
+    platforms: [{ id: "youtube", name: "YouTube" }],
   },
   {
     id: "crosspost-written",
