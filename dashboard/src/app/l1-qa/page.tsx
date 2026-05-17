@@ -40,10 +40,6 @@ const ACCENT = "#16B68A";
 
 interface Stage {
   id: string;
-  // Eyebrow label rendered above the title — kept generic ("Step 1")
-  // rather than hard-coded titles so reordering the array doesn't strand
-  // a wrong number on the wrong card.
-  step: number;
   title: string;
   icon: LucideIcon;
   // Bullet copy inside the stage card. Plain strings — no links, no
@@ -52,10 +48,11 @@ interface Stage {
   steps: string[];
 }
 
+// Step numbers are derived from array index at render time, so reordering
+// or inserting a stage never strands a wrong number on the wrong card.
 const STAGES: Stage[] = [
   {
     id: "segment",
-    step: 1,
     title: "Segment",
     icon: ScissorsIcon,
     steps: [
@@ -68,7 +65,6 @@ const STAGES: Stage[] = [
   },
   {
     id: "syncer",
-    step: 2,
     title: "Syncer",
     icon: AudioWaveformIcon,
     steps: [
@@ -80,7 +76,6 @@ const STAGES: Stage[] = [
   },
   {
     id: "editor",
-    step: 3,
     title: "Editor",
     icon: ClapperboardIcon,
     steps: [
@@ -155,11 +150,15 @@ export default function L1QAPage() {
       >
         <div className="flex flex-col items-stretch gap-4 md:flex-row md:items-stretch md:gap-2">
           {STAGES.map((stage, i) => (
-            <Stage key={stage.id} stage={stage} isLast={i === STAGES.length - 1} />
+            <Stage
+              key={stage.id}
+              stage={stage}
+              step={i + 1}
+              isLast={i === STAGES.length - 1}
+            />
           ))}
         </div>
       </section>
-
     </AppShell>
   );
 }
@@ -169,7 +168,15 @@ export default function L1QAPage() {
 // further-nested JSX so the parent `STAGES.map(...)` stays readable.
 // ---------------------------------------------------------------------------
 
-function Stage({ stage, isLast }: { stage: Stage; isLast: boolean }) {
+function Stage({
+  stage,
+  step,
+  isLast,
+}: {
+  stage: Stage;
+  step: number;
+  isLast: boolean;
+}) {
   const Icon = stage.icon;
 
   // flex-1 so all stages share width equally on wide screens; on narrow
@@ -190,7 +197,7 @@ function Stage({ stage, isLast }: { stage: Stage; isLast: boolean }) {
             className="text-[10px] font-medium uppercase tracking-[0.2em]"
             style={{ color: ACCENT }}
           >
-            Step {stage.step}
+            Step {step}
           </span>
           {/* Icon ring — the tinted backdrop ties the icon to the stage
               accent without making the whole card teal. */}
