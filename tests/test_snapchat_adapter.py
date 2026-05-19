@@ -163,7 +163,7 @@ def test_create_post_call_order(monkeypatch, tmp_path):
         sequence.append("stealth")
 
     # The adapter does `from playwright.sync_api import sync_playwright` and
-    # `from playwright_stealth import stealth_sync` lazily inside create_post.
+    # `from playwright_stealth import Stealth` lazily inside create_post.
     # Playwright isn't installed in the test env (it's a 400 MB browser bundle
     # we don't want in CI). Inject mock modules into sys.modules BEFORE the
     # lazy import fires so the import resolves to our fakes instead of raising
@@ -171,8 +171,16 @@ def test_create_post_call_order(monkeypatch, tmp_path):
     # that lazy-imports a heavy optional dependency.
     fake_playwright_module = MagicMock()
     fake_playwright_module.sync_playwright.return_value = mock_pw_cm
+
+    # playwright-stealth >= 2.0 exposes a `Stealth` class with an
+    # `apply_stealth_sync(page)` method instead of the 1.x top-level
+    # `stealth_sync` function. Mock that shape: `Stealth()` returns an
+    # instance whose `apply_stealth_sync` method records into the sequence.
+    fake_stealth_instance = MagicMock()
+    fake_stealth_instance.apply_stealth_sync.side_effect = fake_stealth
+    fake_stealth_class = MagicMock(return_value=fake_stealth_instance)
     fake_stealth_module = MagicMock()
-    fake_stealth_module.stealth_sync.side_effect = fake_stealth
+    fake_stealth_module.Stealth = fake_stealth_class
 
     # Patch everything inside the snapchat module's namespace. Use
     # `patch.dict` for env, `patch` for the imports — we patch the

@@ -136,6 +136,15 @@ export async function POST(req: NextRequest) {
 
         // 3a. Insert the posts row. status='scheduled' is what
         //     core/scheduler.py::process_due_posts expects to claim.
+        //     hashtags is set to [] explicitly: the column is non-null on
+        //     the Python side (Post.hashtags: list[str]) and Pydantic
+        //     rejects DB-returned NULL on hydration. /api/ig-pipeline omits
+        //     this and gets away with it because that route hands off to
+        //     Buffer rather than going through the Pydantic-backed
+        //     process_due_posts publisher. core/models.py now has a
+        //     defensive field_validator that coerces None → [], but
+        //     setting the column explicitly here is cheaper than relying
+        //     on the validator.
         const { data: postRow, error: postError } = await supabase
           .from('posts')
           .insert({
@@ -144,6 +153,7 @@ export async function POST(req: NextRequest) {
             caption,
             media_type: 'video',
             media_urls: [storagePath],
+            hashtags: [],
           })
           .select('id')
           .single();

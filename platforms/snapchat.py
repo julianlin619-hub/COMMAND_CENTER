@@ -252,13 +252,16 @@ class Snapchat(PlatformBase):
 
             # Lazy imports keep the module importable in test environments
             # where Playwright isn't installed yet. The unit tests mock these.
+            # `Stealth` is the playwright-stealth >= 2.0 entry point — the
+            # old top-level `stealth_sync` function was removed in 2.0;
+            # the class API replaced it.
             from playwright.sync_api import sync_playwright
-            from playwright_stealth import stealth_sync
+            from playwright_stealth import Stealth
 
             caption = post.caption or post.title or ""
 
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
+                browser = pw.chromium.launch(headless=False, slow_mo=500)
                 context = browser.new_context(
                     storage_state=state, viewport=VIEWPORT
                 )
@@ -266,7 +269,10 @@ class Snapchat(PlatformBase):
                 # Apply stealth patches (navigator.webdriver fixes, plugin
                 # spoofing, etc.). Python's playwright-stealth is weaker than
                 # the Node equivalent — flagged in the plan's "Known limitations".
-                stealth_sync(page)
+                # 2.0+ moved to a class API: instantiate Stealth() with default
+                # evasions and call apply_stealth_sync(page). The 1.x
+                # top-level stealth_sync function no longer exists.
+                Stealth().apply_stealth_sync(page)
 
                 try:
                     # Step 4: navigate and assert auth.

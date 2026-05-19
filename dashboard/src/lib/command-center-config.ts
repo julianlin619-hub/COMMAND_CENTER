@@ -270,7 +270,7 @@ export const FORMATS: Format[] = [
     category: "short",
     status: "live",
     creator: "alex",
-    subgroup: "creation",
+    subgroup: "distribution",
     platforms: [{ id: "snapchat", name: "Snapchat" }],
     href: "/snapchat",
     // The publisher cron writes posts under platform="snapchat" and flips

@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 # ── Post ────────────────────────────────────────────────────────────────
@@ -87,6 +87,25 @@ class Post(BaseModel):
     # "fallback_skip_count": int (only on fallback rows, records how many
     # consecutive "transcript unavailable" skips occurred before fallback)}.
     metadata: dict = {}
+
+    # Coerce a DB-returned NULL for hashtags into an empty list.
+    #
+    # The hashtags column is nullable in Postgres, so any route that inserts
+    # a posts row without setting it (e.g. /api/ig-pipeline, and previously
+    # /api/snapchat-pipeline) leaves the column as NULL. process_due_posts
+    # then hydrates the row into Post() and Pydantic v2 rejects None for a
+    # `list[str]` field with a type_error. That crashes the publisher cron
+    # before it can even attempt the platform call.
+    #
+    # mode='before' runs prior to type validation, so None gets rewritten to
+    # [] before Pydantic checks the type. The cron-side fix is here (defense
+    # in depth); the route-side fix is to insert hashtags=[] explicitly so
+    # the column never goes NULL in the first place. Both are cheap, and
+    # the model-side belt catches anything a future route forgets.
+    @field_validator("hashtags", mode="before")
+    @classmethod
+    def _coerce_none_hashtags(cls, v: list[str] | None) -> list[str]:
+        return [] if v is None else v
 
 
 # ── ScheduledPost ───────────────────────────────────────────────────────
