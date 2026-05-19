@@ -26,7 +26,8 @@ export type PlatformId =
   | "x"
   | "linkedin"
   | "threads"
-  | "facebook";
+  | "facebook"
+  | "snapchat";
 
 export interface FormatPlatform {
   id: PlatformId;
@@ -253,6 +254,30 @@ export const FORMATS: Format[] = [
     // even though status is currently "paused" so the count appears
     // immediately when the GitHub Actions trigger is re-enabled.
     healthPlatforms: ["instagram_2nd"],
+  },
+  {
+    // Snapchat Spotlight via Playwright. Hourly: /api/snapchat-pipeline
+    // (Next.js route) picks a tweet, renders MP4, and inserts posts +
+    // schedules rows. Five minutes later, cron/snapchat_pipeline.py claims
+    // the schedule and drives headless Chromium against Snap's Web
+    // Uploader. Distinct from every other format because the publish
+    // path is browser automation, not an HTTP API — there's no Buffer in
+    // the loop. See /snapchat for the full flow + AUTH_EXPIRED recovery
+    // instructions.
+    id: "snapchat-playwright",
+    name: "Playwright",
+    subtitle: "Snapchat Spotlight via headless Chromium",
+    category: "short",
+    status: "live",
+    creator: "alex",
+    subgroup: "creation",
+    platforms: [{ id: "snapchat", name: "Snapchat" }],
+    href: "/snapchat",
+    // The publisher cron writes posts under platform="snapchat" and flips
+    // them to status='published' only when Snap's success indicator
+    // confirms the post landed — so a healthy pill here means real
+    // publishes, not just "we queued something".
+    healthPlatforms: ["snapchat"],
   },
   {
     // L1 Q&A — pipeline doesn't exist yet, but /l1-qa hosts a static

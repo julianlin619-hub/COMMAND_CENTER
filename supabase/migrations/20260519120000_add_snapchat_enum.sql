@@ -1,0 +1,15 @@
+-- Snapchat platform: enum addition.
+--
+-- Mirrors the precedent set by 20260514120000_x_acq_official_enum.sql for
+-- x_acq_official and 20260505000000_linkedin_leila_enum.sql for linkedin_leila.
+-- The Snapchat publisher cron (`cron/snapchat_pipeline.py`) and the dashboard
+-- content-gen route (`/api/snapchat-pipeline`) both write posts rows with
+-- platform='snapchat'; without this enum value, those inserts fail with
+-- invalid_text_representation.
+--
+-- Postgres rule: an enum value added in a transaction can't be used in the
+-- same transaction. This migration runs a single ALTER TYPE in its own
+-- transaction; the next migration (platform_session_state, which references
+-- the enum value in its PRIMARY KEY) and runtime inserts are what consume
+-- the new value, so this is safe.
+ALTER TYPE platform_enum ADD VALUE IF NOT EXISTS 'snapchat';

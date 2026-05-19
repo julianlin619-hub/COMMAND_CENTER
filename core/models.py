@@ -44,6 +44,11 @@ class Post(BaseModel):
         # X queue under the acq_official channel. Added in migration
         # 20260514120000_x_acq_official_enum.sql.
         "x_acq_official",
+        # Snapchat Spotlight. Published via headless Chromium (Playwright)
+        # against the Public Profile Web Uploader — no upload API exists for
+        # unattended posting. Session cookies live in the platform_session_state
+        # table. Added in migration 20260519120000_add_snapchat_enum.sql.
+        "snapchat",
     ]
     # The ID the platform gives back after publishing (e.g. a YouTube video ID).
     # None until the post is actually published.
