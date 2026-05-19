@@ -3,3 +3,23 @@ pydantic>=2.0
 supabase>=2.0
 python-dotenv>=1.0
 anthropic>=0.40
+# Playwright drives the Snapchat publisher (cron/snapchat_pipeline.py) —
+# no upload API exists for unattended posting, so we automate the Web
+# Uploader with headless Chromium. playwright-stealth applies fingerprint
+# patches to evade basic bot detection. Browser binaries themselves are
+# installed via `playwright install --with-deps chromium` in the
+# snapchat-pipeline Render cron's buildCommand.
+#
+# Pinned to exact versions after end-to-end testing (two real Spotlight
+# publishes + failure-path verification) succeeded against 1.60.0 / 2.0.3.
+# Bumping playwright requires a matching `playwright install` in the
+# Render buildCommand to pull the chromium binary for the new minor.
+# Bumping playwright-stealth has historically broken our import surface
+# (1.x exposed `stealth_sync`; 2.0 moved to a `Stealth` class) — re-run
+# the local publish test after any bump.
+playwright==1.60.0
+playwright-stealth==2.0.3
+# Used by cron/snapchat_trigger.py to POST to /api/snapchat-pipeline on
+# the dashboard. httpx (already above) would work too, but requests is
+# the standard for three-line trigger scripts.
+requests>=2.31

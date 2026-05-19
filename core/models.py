@@ -9,10 +9,13 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+logger = logging.getLogger(__name__)
 
 
 # ── Post ────────────────────────────────────────────────────────────────
@@ -44,6 +47,11 @@ class Post(BaseModel):
         # X queue under the acq_official channel. Added in migration
         # 20260514120000_x_acq_official_enum.sql.
         "x_acq_official",
+        # Snapchat Spotlight. Published via headless Chromium (Playwright)
+        # against the Public Profile Web Uploader — no upload API exists for
+        # unattended posting. Session cookies live in the platform_session_state
+        # table. Added in migration 20260519120000_add_snapchat_enum.sql.
+        "snapchat",
     ]
     # The ID the platform gives back after publishing (e.g. a YouTube video ID).
     # None until the post is actually published.
@@ -82,6 +90,38 @@ class Post(BaseModel):
     # "fallback_skip_count": int (only on fallback rows, records how many
     # consecutive "transcript unavailable" skips occurred before fallback)}.
     metadata: dict = {}
+
+    # Coerce a DB-returned NULL for hashtags into an empty list.
+    #
+    # The hashtags column is nullable in Postgres, so any route that inserts
+    # a posts row without setting it (e.g. /api/ig-pipeline, and previously
+    # /api/snapchat-pipeline) leaves the column as NULL. process_due_posts
+    # then hydrates the row into Post() and Pydantic v2 rejects None for a
+    # `list[str]` field with a type_error. That crashes the publisher cron
+    # before it can even attempt the platform call.
+    #
+    # mode='before' runs prior to type validation, so None gets rewritten to
+    # [] before Pydantic checks the type. The cron-side fix is here (defense
+    # in depth); the route-side fix is to insert hashtags=[] explicitly so
+    # the column never goes NULL in the first place. Both are cheap, and
+    # the model-side belt catches anything a future route forgets.
+    @field_validator("hashtags", mode="before")
+    @classmethod
+    def _coerce_none_hashtags(cls, v: list[str] | None) -> list[str]:
+        if v is None:
+            # DEBUG (not WARNING) because this is the validator catching
+            # the bug, not the bug itself — INFO/WARNING would noise up the
+            # cron logs every time we hydrate a Buffer-era posts row that
+            # legitimately has NULL hashtags. Grep this string when a
+            # specific route is suspected of forgetting hashtags=[] on
+            # insert; the column is non-null in the Pydantic contract so
+            # an explicit [] from the caller is the long-term fix.
+            logger.debug(
+                "Post.hashtags coerced from NULL — caller should pass [] "
+                "explicitly on insert"
+            )
+            return []
+        return v
 
 
 # ── ScheduledPost ───────────────────────────────────────────────────────

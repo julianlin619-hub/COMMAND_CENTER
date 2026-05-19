@@ -1,0 +1,585 @@
+"""Snapchat platform adapter — publishes via headless Chromium (Playwright).
+
+Why Playwright and not an API?
+    Snapchat has no usable upload API for unattended posting:
+      - Snap Kit / Creative Kit require a user-tap confirmation flow.
+      - The Marketing API is ads-only.
+      - The public Stories API is invite-only.
+    Browser automation against the Public Profile Web Uploader
+    (profile.snapchat.com/<biz>/profiles/<profile>/web-uploader) is the only
+    path for unattended posting to a creator's own Spotlight surface.
+
+Session persistence:
+    Playwright's BrowserContext is serialised to a JSON blob via
+    `context.storage_state()` and stashed in the `platform_session_state`
+    Supabase table. The operator seeds the row by running
+    `scripts/capture_snapchat_auth.py` once (headed browser, manual login).
+    Every successful publish refreshes the row so cookies stay rotated
+    organically. If auth ever expires we screenshot the failure page,
+    raise PlatformAuthError("AUTH_EXPIRED ..."), and the operator re-runs
+    the capture script.
+
+Required env vars:
+    SNAPCHAT_PROFILE_URL — full URL of the creator's Web Uploader page,
+        e.g. https://profile.snapchat.com/<biz>/profiles/<profile>/web-uploader.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import time
+
+from core.database import get_client
+from core.exceptions import PlatformAPIError, PlatformAuthError
+from core.models import MediaUploadResult, Post
+from platforms._snapchat_session import (
+    StorageStateMissing,
+    load_storage_state,
+    save_storage_state,
+)
+from platforms.base import PlatformBase
+
+logger = logging.getLogger(__name__)
+
+
+# ── Selectors ──────────────────────────────────────────────────────────────
+# Locked values from selector-discovery against the live Web Uploader DOM.
+# Prefer Snap's data-testid attributes where they exist — they're stable
+# across React class-name churn. Where there's no testid we use a
+# semantic attribute selector (input type, placeholder substring) rather
+# than a CSS class hash that changes every deploy.
+#
+# If a future Snap redesign breaks the publish path, re-run a Playwright
+# Inspector session against the profile URL with saved storage state and
+# update these constants. The first selector that fails will surface as a
+# TimeoutError in process_due_posts and mark the affected post as failed
+# without silently mis-clicking elsewhere.
+
+# Left-rail nav element only rendered for an authenticated brand profile.
+# Missing after page load = storage_state is expired → AUTH_EXPIRED.
+SELECTOR_LOGGED_IN = '[data-testid="app.manageBrandProfile.sideNav"]'
+
+# The <input type="file"> the page exposes for video selection. Targeted via
+# locator(SELECTOR_FILE_INPUT).set_input_files(path) — Playwright handles the
+# OS-level file picker automatically.
+SELECTOR_FILE_INPUT = 'input[type="file"]'
+
+# Destination checkbox: "Spotlight". Discovered during selector hunt — the
+# Web Uploader requires at least one destination (Spotlight / Public Story /
+# Save to Profile) to be ticked before the Post button enables. We check it
+# pre-upload so SELECTOR_UPLOAD_READY (Post button enabled) implicitly waits
+# for both upload completion AND a checked destination.
+SELECTOR_SPOTLIGHT_CHECKBOX = 'input#spotlight'
+
+# The Post button in its enabled state. Becomes non-disabled once the video
+# upload finishes AND a destination checkbox is ticked — so waiting for this
+# selector is a clean "ready to publish" signal that doesn't need a separate
+# "upload progress" probe. Timeout is generous (120s) because Snap's
+# server-side processing dominates on cold uploads.
+SELECTOR_UPLOAD_READY = '[data-testid="app.profileMgr.snapPoster.postSnap"]:not([disabled])'
+
+# Caption textarea. Placeholder text includes the word "description" — the
+# DOM has no maxlength attribute (selector hunt confirmed maxLength = -1,
+# meaning unenforced client-side), so caption truncation lives at the route
+# layer instead. See SNAPCHAT_CAPTION_LIMIT in
+# dashboard/src/app/api/snapchat-pipeline/route.ts.
+SELECTOR_CAPTION = 'textarea[placeholder*="description"]'
+
+# The Post / Publish button. Click triggers the actual server-side publish.
+# Same testid as SELECTOR_UPLOAD_READY but without the :not([disabled])
+# qualifier — we use the enabled-state probe to know when to click, and the
+# bare selector for the click itself.
+SELECTOR_POST_BUTTON = '[data-testid="app.profileMgr.snapPoster.postSnap"]'
+
+# Confirmation that the post landed — Snap renders a transient toast that
+# reads "Your Snap is now live" after a successful publish.
+#
+# Two subtleties make this selector tricky and they're the reason for the
+# fallback logic below:
+#   1. CSS `:has-text()` matches any ancestor whose subtree contains the
+#      string. Against Snap's nested toast wrapper that yielded 7 elements
+#      and a noisy "resolved to 7 elements; using the first" warning every
+#      run. Playwright's text engine with quoted exact match (`text="..."`)
+#      pins to a single node whose visible text equals the literal string.
+#   2. The toast auto-dismisses inside Snap's React tree. With slow_mo or
+#      a slow network we can race past it — the publish actually succeeded
+#      but wait_for_selector times out, we mark the post `failed`, and the
+#      next cron tick could re-publish the same content as a duplicate.
+#
+# `create_post` uses this selector with a SHORTENED 15s timeout and falls
+# back to `_publish_form_was_cleared()` (which checks for composer reset:
+# empty file input, disabled Post button, empty caption) before giving up.
+# If you're tempted to simplify back to a single wait — don't. The fallback
+# is here because the toast is racy in practice, not in theory.
+SELECTOR_PUBLISH_SUCCESS = 'text="Your Snap is now live"'
+
+
+# ── Constraints ────────────────────────────────────────────────────────────
+# Snapchat Spotlight limits as of plan time. Captured here for the dashboard
+# to validate uploads up-front; the publish path doesn't re-validate.
+SPOTLIGHT_MAX_DURATION_SEC = 60
+SPOTLIGHT_MAX_FILE_MB = 500
+SPOTLIGHT_ASPECT_RATIOS = ["9:16"]
+
+
+# ── Browser knobs ──────────────────────────────────────────────────────────
+# 1440×900 because the Web Uploader's layout is tuned for laptop viewports
+# and a 1920×1080 viewport surfaces a different DOM tree (different selectors).
+# Pinning to match the captured session keeps selectors stable.
+VIEWPORT = {"width": 1440, "height": 900}
+
+# 30ms per keystroke for the caption — fast enough to finish a long caption
+# inside the publish timeout, slow enough to clear Snap's anti-bot floor.
+CAPTION_TYPE_DELAY_MS = 30
+
+# The "media" bucket in Supabase Storage. Matches the IG / TikTok pipelines.
+MEDIA_BUCKET = "media"
+
+# Screenshots of auth failures land under this prefix in the same bucket.
+# The publisher's failure path uploads here so the operator can open the
+# saved screenshot from the dashboard's storage browser when debugging
+# a flap.
+AUTH_DEBUG_PREFIX = "snapchat-debug"
+
+
+class Snapchat(PlatformBase):
+    name = "snapchat"
+
+    def __init__(self) -> None:
+        # Read the env var eagerly so an obvious-misconfig surfaces during
+        # adapter construction, not deep in the publish path. We still call
+        # validate_config() from the cron explicitly for the env-diagnostic
+        # log line, but the attribute access here also serves as a sanity check.
+        self.profile_url = os.environ.get("SNAPCHAT_PROFILE_URL", "")
+
+    # ── Configuration ────────────────────────────────────────────
+
+    def validate_config(self) -> None:
+        """Check that the Snapchat publisher's required env vars are set."""
+        self._check_env_vars("SNAPCHAT_PROFILE_URL")
+
+    # ── Authentication ───────────────────────────────────────────
+
+    def refresh_credentials(self) -> None:
+        """No-op — Playwright cookies refresh organically after each publish.
+
+        See `create_post`: on a successful run we call `save_storage_state()`
+        with the post-publish context, which rotates whatever cookies Snap
+        updated during the session. There is no token-style refresh; auth
+        either still works (cookies valid) or it doesn't (operator must
+        re-run scripts/capture_snapchat_auth.py).
+        """
+        return
+
+    def validate_credentials(self) -> bool:
+        """Headless probe: can we still see the logged-in selector?
+
+        Read-only by design — we deliberately do NOT call save_storage_state
+        from this path. If a future operator triggers validate_credentials
+        from the dashboard at the same time process_due_posts is publishing,
+        two writers racing on the same row would land an older snapshot
+        on top of the newer one. Only the publish path writes back.
+        """
+        if not self.profile_url:
+            return False
+        try:
+            state = load_storage_state()
+        except StorageStateMissing:
+            return False
+
+        # Lazy import — Playwright is heavy and the unit tests mock it out.
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            context = browser.new_context(
+                storage_state=state, viewport=VIEWPORT
+            )
+            page = context.new_page()
+            try:
+                page.goto(self.profile_url, wait_until="domcontentloaded")
+                page.wait_for_selector(SELECTOR_LOGGED_IN, timeout=10_000)
+                return True
+            except Exception:
+                return False
+            finally:
+                context.close()
+                browser.close()
+
+    # ── Posting ──────────────────────────────────────────────────
+
+    def create_post(self, post: Post) -> str:
+        """Publish a single post to Snapchat Spotlight via headless Chromium.
+
+        Flow:
+          1. Download the mp4 from Supabase Storage to /tmp.
+          2. Load the saved storage_state from platform_session_state.
+          3. Launch headless Chromium with playwright_stealth applied.
+          4. Goto the profile URL; assert the logged-in selector.
+          5. setInputFiles → wait for upload-ready → type caption → click Post.
+          6. Wait for the success indicator. ONLY then save_storage_state.
+          7. Return a synthetic platform_post_id (Snap doesn't surface one).
+
+        Errors:
+          - StorageStateMissing or missing logged-in selector → PlatformAuthError
+            ("AUTH_EXPIRED — re-run scripts/capture_snapchat_auth.py"). The
+            scheduler catches this and marks the post 'failed'; the operator
+            re-runs the capture script to recover.
+          - Any other Playwright/network error → PlatformAPIError, which the
+            scheduler also marks 'failed'.
+
+        The local mp4 is always cleaned up via try/finally, even if publish
+        succeeds — /tmp is process-local but on Render's persistent disk we
+        don't want to accumulate gigabytes of past videos.
+        """
+        if not post.id:
+            # Defensive: process_due_posts sets post.id from the DB row before
+            # calling us, but a future caller might forget. Without an id we
+            # can't name the /tmp file or the debug screenshot.
+            raise PlatformAPIError("Post missing id — required for /tmp filename")
+        if not post.media_urls:
+            raise PlatformAPIError("Post has no media_urls", status_code=400)
+
+        local_path = f"/tmp/{post.id}.mp4"
+        storage_path = post.media_urls[0]
+
+        # Step 1: download mp4 from Supabase Storage. Use the service-key client
+        # — same pattern as every other cron-side Supabase access in this repo.
+        client = get_client()
+        try:
+            mp4_bytes = client.storage.from_(MEDIA_BUCKET).download(storage_path)
+        except Exception as e:
+            raise PlatformAPIError(
+                f"Failed to download {storage_path} from Storage: {e}"
+            ) from e
+        with open(local_path, "wb") as f:
+            f.write(mp4_bytes)
+
+        try:
+            # Step 2: load storage_state. Missing row = AUTH_EXPIRED — operator
+            # never ran the capture script, or the row was wiped.
+            try:
+                state = load_storage_state()
+            except StorageStateMissing as e:
+                raise PlatformAuthError(
+                    "AUTH_EXPIRED — re-run scripts/capture_snapchat_auth.py"
+                ) from e
+
+            # Lazy imports keep the module importable in test environments
+            # where Playwright isn't installed yet. The unit tests mock these.
+            # `Stealth` is the playwright-stealth >= 2.0 entry point — the
+            # old top-level `stealth_sync` function was removed in 2.0;
+            # the class API replaced it.
+            from playwright.sync_api import sync_playwright
+            from playwright_stealth import Stealth
+
+            caption = post.caption or post.title or ""
+
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=True)
+                context = browser.new_context(
+                    storage_state=state, viewport=VIEWPORT
+                )
+                page = context.new_page()
+                # Apply stealth patches (navigator.webdriver fixes, plugin
+                # spoofing, etc.). Python's playwright-stealth is weaker than
+                # the Node equivalent — flagged in the plan's "Known limitations".
+                # 2.0+ moved to a class API: instantiate Stealth() with default
+                # evasions and call apply_stealth_sync(page). The 1.x
+                # top-level stealth_sync function no longer exists.
+                Stealth().apply_stealth_sync(page)
+
+                try:
+                    # Step 4: navigate and assert auth.
+                    page.goto(self.profile_url, wait_until="domcontentloaded")
+                    try:
+                        page.wait_for_selector(
+                            SELECTOR_LOGGED_IN, timeout=15_000
+                        )
+                    except Exception as e:
+                        # Auth probe failed — screenshot the page so the
+                        # operator can see exactly what Snap served (login
+                        # wall, captcha challenge, redirect, etc.). Then raise
+                        # AUTH_EXPIRED so the scheduler marks the post failed
+                        # without retrying.
+                        self._save_auth_failure_screenshot(page, post.id)
+                        raise PlatformAuthError(
+                            "AUTH_EXPIRED — re-run scripts/capture_snapchat_auth.py"
+                        ) from e
+
+                    # Step 4b: tick the Spotlight destination checkbox. Snap
+                    # requires at least one destination ticked before the Post
+                    # button enables — discovered during selector hunt. The
+                    # checkbox is interactive pre-upload, and ticking it here
+                    # (rather than after setInputFiles) means SELECTOR_UPLOAD_READY
+                    # serves as a unified "upload done AND destination chosen"
+                    # signal in step 5.
+                    page.check(SELECTOR_SPOTLIGHT_CHECKBOX)
+
+                    # Step 5: upload + caption + click.
+                    page.locator(SELECTOR_FILE_INPUT).set_input_files(local_path)
+                    page.wait_for_selector(
+                        SELECTOR_UPLOAD_READY, timeout=120_000
+                    )
+                    if caption:
+                        page.locator(SELECTOR_CAPTION).type(
+                            caption, delay=CAPTION_TYPE_DELAY_MS
+                        )
+                    page.locator(SELECTOR_POST_BUTTON).click()
+
+                    # Step 6: confirm the post actually landed. Without
+                    # SOME confirmation, a click intercepted by a captcha
+                    # or a server error would silently mark the post
+                    # published in our DB. But the toast itself is racy
+                    # (see SELECTOR_PUBLISH_SUCCESS comment), so we use a
+                    # two-tier check:
+                    #   Primary (15s): toast appears → success.
+                    #   Fallback: composer form was reset (file input
+                    #     cleared, Post button disabled, caption empty) →
+                    #     also success, with a warn-log so we have
+                    #     telemetry on toast misses.
+                    # Only if BOTH miss do we treat the publish as failed.
+                    # That keeps duplicate-publish risk near zero — we'd
+                    # rather log a false-positive that we can sanity-check
+                    # in the Snap UI than re-publish content.
+                    try:
+                        page.wait_for_selector(
+                            SELECTOR_PUBLISH_SUCCESS, timeout=15_000
+                        )
+                    except Exception as toast_exc:
+                        signals = self._publish_form_was_cleared(page)
+                        if signals:
+                            logger.warning(
+                                "Snapchat publish: success toast not observed "
+                                "for post %s, but composer reset (signals: %s) — "
+                                "treating as successful. Tune "
+                                "SELECTOR_PUBLISH_SUCCESS or its timeout if "
+                                "this recurs.",
+                                post.id, signals,
+                            )
+                        else:
+                            # Neither signal fired — publish likely did not
+                            # land. Re-raise so the scheduler marks the
+                            # post failed and we DON'T save_storage_state
+                            # (which lives below this block).
+                            raise toast_exc
+
+                    # Step 6b: persist refreshed cookies BEFORE returning so
+                    # next run starts with the most recent session state.
+                    # Wrapped — we'd rather log a save_storage_state failure
+                    # than turn a successful Snap publish into a failed post.
+                    try:
+                        save_storage_state(context.storage_state())
+                    except Exception as e:
+                        logger.warning(
+                            "save_storage_state failed after successful publish "
+                            "(post=%s) — next run will use stale cookies: %s",
+                            post.id, self.sanitize_error(e),
+                        )
+
+                    # Step 7: synthetic id. Snap's Web Uploader doesn't return
+                    # a public post ID we can store. The timestamp suffix keeps
+                    # the id unique across same-post retries — though v1 has
+                    # no retry policy, future v2 retries shouldn't collide.
+                    return f"snap-{post.id}-{int(time.time())}"
+                finally:
+                    context.close()
+                    browser.close()
+        finally:
+            # Always clean up the local mp4. os.unlink raises if the file
+            # never landed (e.g. download failed mid-write), so we swallow
+            # FileNotFoundError to keep cleanup idempotent. Other OSErrors
+            # bubble — they signal a real disk problem worth surfacing.
+            try:
+                os.unlink(local_path)
+            except FileNotFoundError:
+                pass
+
+    def _publish_form_was_cleared(self, page) -> list[str]:
+        """Return secondary success signals: which composer fields were reset.
+
+        Called after `wait_for_selector(SELECTOR_PUBLISH_SUCCESS)` times out.
+        Snap resets the composer to its empty initial state on a successful
+        publish — so even if we missed the toast, observing the reset is
+        strong evidence the publish landed. We return the list of signal
+        names that fired (rather than just a bool) so the warn-log can
+        record which one(s) saved the run, for later tuning.
+
+        URL gate (added after PR review): a captcha challenge screen also
+        has no file input, a disabled Post button, and an empty caption —
+        the exact same three signals as a successful publish. To avoid
+        that false positive we first check we're still on the uploader
+        URL. If the page navigated away (captcha redirect, login wall, an
+        interstitial), we reject the fallback regardless of what the form
+        probes say, and the caller re-raises the toast timeout so the
+        scheduler marks the post failed. Cheap additional positive signal.
+
+        Each probe is wrapped because Playwright can raise locator errors
+        (element detached, stale handle) mid-check and one such error
+        shouldn't short-circuit the other probes.
+
+        Signals (any non-empty subset → treat as success, but only after
+        the URL gate passes):
+          - file_input_cleared: <input type="file"> .value is ""
+          - post_button_disabled: Post button re-disabled (no destination
+            checked → form invalid → button disabled, mirroring the
+            initial-page state)
+          - caption_empty: caption textarea .value is ""
+
+        Both accept and reject paths log at INFO with the current URL so
+        post-mortem reviews can tell at a glance which branch fired.
+        """
+        # URL gate first — cheapest probe, and the captcha-false-positive
+        # case is exactly when this should bail out before reading the form.
+        try:
+            current_url = page.url
+        except Exception:
+            current_url = "<unknown>"
+        # rstrip("/") so the gate doesn't break on trailing-slash mismatches
+        # between the env var and the actual URL the page settled on after
+        # Snap's own redirects.
+        if not current_url.startswith(self.profile_url.rstrip("/")):
+            logger.info(
+                "Snapchat fallback REJECTED — page navigated off uploader "
+                "(current_url=%s) — likely captcha or session break.",
+                current_url,
+            )
+            return []
+
+        signals: list[str] = []
+        try:
+            if page.locator(SELECTOR_FILE_INPUT).input_value() == "":
+                signals.append("file_input_cleared")
+        except Exception:
+            pass
+        try:
+            if page.locator(SELECTOR_POST_BUTTON).is_disabled():
+                signals.append("post_button_disabled")
+        except Exception:
+            pass
+        try:
+            if page.locator(SELECTOR_CAPTION).input_value() == "":
+                signals.append("caption_empty")
+        except Exception:
+            pass
+
+        if signals:
+            logger.info(
+                "Snapchat fallback ACCEPTED — composer reset on %s "
+                "(signals: %s).",
+                current_url, signals,
+            )
+        else:
+            logger.info(
+                "Snapchat fallback REJECTED — on uploader (%s) but no "
+                "form-reset signals fired.",
+                current_url,
+            )
+        return signals
+
+    def _save_auth_failure_screenshot(self, page, post_id: str) -> None:
+        """Upload a debug screenshot of the failed auth page to Storage.
+
+        Lands at media/snapchat-debug/<post_id>-auth-fail.png. The operator
+        can open it from the dashboard's storage browser to see whether Snap
+        served a login wall, a captcha, a region block, etc. — much faster
+        than scraping Render logs for the same signal.
+
+        Wrapped so a screenshot save failure can't shadow the AUTH_EXPIRED
+        exception that's about to be raised by the caller.
+        """
+        try:
+            png = page.screenshot(full_page=True)
+            client = get_client()
+            client.storage.from_(MEDIA_BUCKET).upload(
+                f"{AUTH_DEBUG_PREFIX}/{post_id}-auth-fail.png",
+                png,
+                {"content-type": "image/png", "upsert": "true"},
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to save auth-failure screenshot for post %s: %s",
+                post_id, self.sanitize_error(e),
+            )
+
+    # ── Media ────────────────────────────────────────────────────
+
+    def upload_media(self, local_path: str, media_type: str) -> MediaUploadResult:
+        """No-op — Snapchat takes the file inline via setInputFiles.
+
+        There's no pre-upload step; the DOM <input type="file"> consumes the
+        local mp4 directly when create_post runs. We return platform_media_id
+        = None to signal that to any caller checking the result.
+        """
+        return MediaUploadResult(
+            platform_media_id=None,
+            metadata={"note": "Snapchat takes media inline via setInputFiles"},
+        )
+
+    def get_media_constraints(self) -> dict:
+        """Snapchat Spotlight limits — used by the dashboard for pre-upload checks."""
+        return {
+            "max_video_duration_sec": SPOTLIGHT_MAX_DURATION_SEC,
+            "max_file_size_mb": SPOTLIGHT_MAX_FILE_MB,
+            "aspect_ratios": SPOTLIGHT_ASPECT_RATIOS,
+            "supported_video_formats": ["mp4", "mov"],
+        }
+
+    # ── Error sanitisation ───────────────────────────────────────
+
+    def sanitize_error(self, error: Exception) -> str:
+        """Strip Snap-specific cookie names on top of the base redactor.
+
+        Snap session cookies (sc-a-token, sc-a-session) sometimes appear in
+        Playwright errors verbatim — e.g. when a goto() fails mid-redirect
+        and the error includes the Cookie request header. The base regex
+        catches 64+ char alphanumerics, which covers most Snap tokens, but
+        an `sc-a-session=<short-value>` pair would slip through. Scrub the
+        cookie *names* too so the surrounding `=<value>` portion gets
+        redacted by the trailing `[^\\s;]+` capture group.
+        """
+        import re
+
+        # Run the base sanitiser first — handles Bearer tokens, query-param
+        # secrets, and long alphanumerics.
+        msg = super().sanitize_error(error)
+        # Redact Snap session cookie names + their values. The value capture
+        # accepts anything up to a whitespace or semicolon (the cookie-string
+        # delimiter), which is a superset of base64url-safe chars.
+        msg = re.sub(
+            r"(sc-a-(?:token|session)=)[^\s;]+",
+            r"\1[REDACTED]",
+            msg,
+            flags=re.IGNORECASE,
+        )
+        return msg
+
+
+# ── v2 candidates ──────────────────────────────────────────────────────────
+# Surfaced during selector discovery against the live Web Uploader DOM but
+# deliberately not implemented in v1. Captured here so a future maintainer
+# doesn't have to re-discover them from scratch.
+#
+# 1. Native scheduling — the composer has a "Schedule" affordance under the
+#    testid `app.profileMgr.snapPoster.schedulePost`. v2 could collapse 24
+#    hourly publisher cron ticks into 1 daily session that queues all 24
+#    posts via Snap's own scheduler. Significant architectural win: one
+#    headless-browser session per day instead of 24, fewer auth-expiry
+#    failure windows, and we'd lean on Snap's clock instead of Render's.
+#
+# 2. Headline / thumbnail overlay — the composer exposes a "Headline" input
+#    (40-char, placeholder "Displayed over your thumbnail") that overlays
+#    text on the video's preview. v1 leaves it blank. v2 could populate it
+#    from the tweet author handle or a leading hashtag for stronger CTR.
+#
+# 3. Multi-destination publish — three checkboxes exist: `#spotlight`,
+#    `#publicStory`, `#publicProfile`. v1 only ticks Spotlight. v2 could
+#    make destinations configurable per post (e.g. via post.metadata) so a
+#    single render fans out to Story and Profile too.
+#
+# 4. Save-to-Profile sub-toggle — ticking Spotlight reveals a sub-toggle
+#    at testid `app.profileMgr.snapPoster.spotlight.saveToProfile`, which
+#    Snap auto-checks. v1 leaves the auto-checked state alone. v2 might
+#    want to control it explicitly so the operator's "post here" intent
+#    isn't silently widened by Snap's defaults.

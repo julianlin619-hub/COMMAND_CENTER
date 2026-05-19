@@ -54,3 +54,16 @@ supabase/.branches/
 /*.png
 /*.csv
 /*.json
+
+# Per-platform tweet-bank usage history. These are runtime state — each
+# cron tick records which hashes have been posted so the picker can
+# exclude them next time. NOTE: `data/ig-bank-history.json` predates
+# this rule and was already tracked when the convention shifted; this
+# pattern only blocks NEW history files from auto-staging (`.gitignore`
+# doesn't un-track files git already knows about).
+data/*-bank-history.json
+
+# Git backup directories left by `git` tooling (e.g. when running
+# `git filter-repo` or moving a worktree). Three-day-old `.git.bak.*`
+# directories are not source — just keep-it-in-case insurance.
+dashboard/.git.bak.*/

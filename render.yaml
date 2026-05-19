@@ -221,6 +221,49 @@ services:
       - key: APIFY_LEILA_TWITTER_HANDLE  # optional — defaults to LeilaHormozi
         sync: false
 
+  # ── Snapchat content-gen trigger ─────────────────────────────────────
+  # Hourly POST to the dashboard's /api/snapchat-pipeline route, which
+  # picks one bank tweet, renders the MP4, uploads to Supabase Storage,
+  # and inserts the posts + schedules rows. Kept under runtime: python
+  # (matching every other cron in this file) instead of introducing a
+  # runtime: image curl service — a 3-line requests.post is cheaper to
+  # maintain than adding a new runtime to the repo.
+  - type: cron
+    name: snapchat-content-pipeline
+    runtime: python
+    buildCommand: pip install -r requirements.txt && pip install -e .
+    startCommand: python -m cron.snapchat_trigger
+    schedule: "0 * * * *"  # hourly at :00 UTC
+    envVars:
+      - key: CRON_SECRET
+        sync: false
+      - key: DASHBOARD_URL
+        sync: false
+
+  # ── Snapchat publisher (headless Chromium via Playwright) ────────────
+  # Runs 5 min after the generator above so it picks up the schedule row
+  # just inserted (scheduled_for is generator-now + 4 min, so the row is
+  # "due" by the time this fires). buildCommand additionally runs
+  # `playwright install --with-deps chromium` to provision the browser
+  # binary — adds ~2 min to the build but matches Playwright's standard
+  # deploy pattern.
+  - type: cron
+    name: snapchat-pipeline
+    runtime: python
+    buildCommand: |
+      pip install -r requirements.txt &&
+      pip install -e . &&
+      playwright install --with-deps chromium
+    startCommand: python -m cron.snapchat_pipeline
+    schedule: "5 * * * *"  # hourly at :05 UTC
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SNAPCHAT_PROFILE_URL
+        sync: false
+
   - type: cron
     name: linkedin-leila-cron
     runtime: python
