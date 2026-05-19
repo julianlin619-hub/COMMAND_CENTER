@@ -13,10 +13,13 @@
  *   4. "Publishes to" eyebrow + row of PlatformChips.
  *
  * Click model:
- *   The root is a <button> with data-action="open-format" so future code can
- *   wire navigation by listening for the data-action attribute (instead of
- *   threading onClick props through every component). For now the onClick
- *   is a no-op — the format detail view doesn't exist yet.
+ *   The root is a role="button" <div> with data-action="open-format". When
+ *   `format.href` is set, click/Enter/Space navigate via router.push (see
+ *   `open()` below). When `href` is absent the card is fully disabled — no
+ *   handler, no button role, no focus ring — so AT users aren't told they
+ *   can activate something that does nothing. The data-action attribute
+ *   is preserved so any future event delegation can still pick up the
+ *   card without threading onClick props through every wrapper.
  *
  *   Chips are independent click targets and stop propagation so they don't
  *   also fire the card's open handler. See platform-chip.tsx.
@@ -24,20 +27,20 @@
 import { ArrowUpRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { PlatformChip } from "./platform-chip";
-import type { Format } from "@/lib/command-center-config";
+import { HealthPill } from "./health-pill";
+import type { Format, FormatHealth } from "@/lib/command-center-config";
 
 interface FormatCardProps {
   format: Format;
   color: string;
-  // Optional inline style merged onto the card root. Today CategorySection
-  // uses this to apply `gridColumnStart: 1` for formats flagged
-  // `breakBefore`, which forces them onto a new row in the grid. Kept
-  // generic (a CSSProperties pass-through) so future callers can layer
-  // grid-position tweaks without growing the prop surface for each one.
-  style?: React.CSSProperties;
+  // Resolved at request-time on the home page from a single 24h posts
+  // query — see lib/format-health.ts. Required so every card on the
+  // page renders a pill (the absence of a pill would itself read as a
+  // signal, which we don't want).
+  health: FormatHealth;
 }
 
-export function FormatCard({ format, color, style }: FormatCardProps) {
+export function FormatCard({ format, color, health }: FormatCardProps) {
   const isLive = format.status === "live";
   const router = useRouter();
 
@@ -47,6 +50,15 @@ export function FormatCard({ format, color, style }: FormatCardProps) {
   // affordance is honest. Any format gains its normal active styling the
   // moment we set an `href` on it in command-center-config.ts.
   const isDisabled = !format.href;
+
+  // A format is "muted" when its underlying cron is intentionally
+  // suspended at the infra layer but the detail page still works — e.g.
+  // the youtube-second-cron is commented out in render.yaml but
+  // /youtube-second still renders the last batch the cron scheduled.
+  // We want the card to read as inactive (lower opacity) while staying
+  // clickable, which is different from fully disabled (no href, no
+  // click). Live and href-less formats both bypass this state.
+  const isMuted = !isLive && !isDisabled;
 
   // Programmatic navigation (not a wrapping <Link>) because the card root
   // is already role="button" and contains nested chip <button>s. Using
@@ -87,16 +99,16 @@ export function FormatCard({ format, color, style }: FormatCardProps) {
       className={`format-card group relative flex min-h-[140px] flex-col overflow-hidden rounded-xl text-left transition-all duration-150 outline-none ${
         isDisabled
           ? "cursor-default opacity-45"
-          : "cursor-pointer focus-visible:ring-2 focus-visible:ring-white/20 active:scale-[0.995]"
+          : `cursor-pointer focus-visible:ring-2 focus-visible:ring-white/20 active:scale-[0.995] ${
+              // Muted = paused-with-href. Dim the surface enough to read
+              // as inactive, but stay above the fully-disabled opacity
+              // (45%) so the user can still tell the card is reachable.
+              isMuted ? "opacity-60" : ""
+            }`
       }`}
       style={{
         backgroundColor: "#161513",
         border: "0.5px solid rgba(255,255,255,0.06)",
-        // Caller-supplied overrides go last so grid-position tweaks (e.g.
-        // `gridColumnStart` from a breakBefore format) can override the
-        // defaults above. The defaults are purely visual, so they're safe
-        // to clobber if a caller really wants to.
-        ...style,
       }}
     >
       {/* Pulse bar — flush to top edge, full width. The animated variant
@@ -125,12 +137,20 @@ export function FormatCard({ format, color, style }: FormatCardProps) {
               {format.subtitle}
             </div>
           </div>
-          {!isDisabled && (
-            <ArrowUpRight
-              aria-hidden
-              className="h-4 w-4 shrink-0 text-white/40 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
-            />
-          )}
+          {/* Right-edge cluster: health pill sits always-visible at the
+              top-right corner, with the hover arrow tucked to its left
+              for clickable cards. The arrow keeps fading in on hover
+              (existing affordance) and the pill anchors the corner so
+              the layout doesn't jump as the arrow appears. */}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {!isDisabled && (
+              <ArrowUpRight
+                aria-hidden
+                className="h-4 w-4 text-white/40 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+              />
+            )}
+            <HealthPill status={health} />
+          </div>
         </div>
 
         {/* Flex spacer — pushes chip row to bottom */}

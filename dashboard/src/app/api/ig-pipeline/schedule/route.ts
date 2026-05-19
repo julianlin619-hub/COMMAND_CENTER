@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
         );
 
         // Record one posts row per successful Buffer hand-off so the
-        // overview card's "Sent to Buffer (24h)" pill picks this up.
+        // Command Center's health pill picks this up in its 24h window.
         // Don't fail the run if the insert errors — Buffer has already
         // accepted, so log and continue.
         const { error: insertError } = await supabase.from('posts').insert({

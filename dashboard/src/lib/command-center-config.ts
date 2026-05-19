@@ -70,13 +70,29 @@ export interface Format {
   // Next.js navigation so the click takes the user to the legacy
   // per-platform automation page.
   href?: string;
-  // When true the card is forced to start a new row in its CategorySection
-  // grid (via `grid-column-start: 1`). Used today for the L1 Q&A card so
-  // it visually separates from the three Short cards above it instead of
-  // sliding into the same row as a fourth column. Optional — most formats
-  // wrap naturally.
-  breakBefore?: boolean;
+  // Optional within-category subdivision (see FormatSubgroup below).
+  // Currently only applied to Alex's Short formats so the row can show
+  // "Creation" vs "Distribution" sub-headers.
+  subgroup?: FormatSubgroup;
+  // List of `posts.platform` values that this format's automation
+  // writes to. Used by the home page to derive a health signal from a
+  // 24h count of `sent_to_buffer` / `published` rows on those platforms.
+  // Leave undefined when the format has no live automation behind it
+  // (Reposts, L1 Q&A) — the card falls back to "paused" via `status`.
+  // Set even on cards that are currently paused at the infra layer
+  // (Bulk Tweet Cards, Scheduling) so flipping `status` back to "live"
+  // immediately surfaces real counts.
+  healthPlatforms?: string[];
 }
+
+// Card health, derived at request time on the home page. Driven by:
+//   - `paused` when `format.status === "paused"` (operator-disabled).
+//   - `healthy` when ≥ 1 post on any of the format's `healthPlatforms`
+//     in the last 24h.
+//   - `failing` otherwise (live but nothing has gone out).
+// Exported here so the health helpers (lib/format-health.ts) and the
+// FormatCard pill share one definition.
+export type FormatHealth = "healthy" | "failing" | "paused";
 
 // Category color tokens. These are intentionally NOT the dashboard's
 // terracotta accent — the Command Center page introduces its own palette
@@ -110,6 +126,21 @@ export const CATEGORY_ORDER: FormatGroup[] = [
   "mid",
 ];
 
+// Optional subdivision *within* a category. Today only "short" uses
+// subgroups (Creation vs Distribution), but the field is on the base
+// Format type so any category can opt in by tagging its formats. When a
+// category has 2+ distinct subgroups present, CategorySection renders
+// each as a faint-headed sub-section. Categories where all formats omit
+// `subgroup` (or share a single subgroup) render flat as before.
+export type FormatSubgroup = "creation" | "distribution";
+
+export const SUBGROUP_ORDER: FormatSubgroup[] = ["distribution", "creation"];
+
+export const SUBGROUP_LABELS: Record<FormatSubgroup, string> = {
+  creation: "Creation",
+  distribution: "Distribution",
+};
+
 export const FORMATS: Format[] = [
   // ──────────────────────────── Alex ────────────────────────────
   // Order within each category drives left-to-right placement in the
@@ -124,6 +155,7 @@ export const FORMATS: Format[] = [
     category: "short",
     status: "live",
     creator: "alex",
+    subgroup: "distribution",
     // Matches the actual fan-out in /api/tiktok/manual-upload: TikTok,
     // YouTube Shorts, LinkedIn (gated by LINKEDIN_FANOUT_ENABLED but
     // listed because the gate is expected to flip back on), and X via
@@ -143,6 +175,10 @@ export const FORMATS: Format[] = [
     // natural detail surface. API endpoints stay at
     // /api/tiktok/manual-upload — backend routes were not renamed.
     href: "/manual-upload",
+    // The route writes 4 posts per upload, one per platform. The X leg
+    // lands as platform="x_acq_official" (not "twitter") — see
+    // /api/tiktok/manual-upload/route.ts.
+    healthPlatforms: ["tiktok", "youtube", "x_acq_official", "linkedin"],
   },
   {
     id: "tweet-cards",
@@ -151,6 +187,7 @@ export const FORMATS: Format[] = [
     category: "short",
     status: "live",
     creator: "alex",
+    subgroup: "creation",
     platforms: [
       { id: "tiktok", name: "TikTok" },
       { id: "facebook", name: "Facebook" },
@@ -166,6 +203,11 @@ export const FORMATS: Format[] = [
     // PNG byte-for-byte and queues as instagram_post_type='post' (feed
     // post — no Reel cross-post anymore).
     href: "/tweet-cards",
+    // Cron writes one post row per platform per run (see
+    // cron/_tweet_card_legs.py): tiktok / facebook / linkedin /
+    // instagram. Any of the four producing a row in the last 24h marks
+    // the format healthy.
+    healthPlatforms: ["tiktok", "facebook", "linkedin", "instagram"],
   },
   {
     id: "reposts",
@@ -179,7 +221,38 @@ export const FORMATS: Format[] = [
     // auto-recycle workflow ships.
     status: "paused",
     creator: "alex",
+    subgroup: "distribution",
     platforms: [{ id: "youtube", name: "YouTube" }],
+  },
+  {
+    // Bulk Tweet Cards — the /instagram-2nd pipeline. Picks tweets from
+    // the CSV bank, renders quote-card media (PNG/MP4), and queues them
+    // to the "alexhighlights2026" Buffer channel (Instagram's 2nd
+    // account). Distinct from the regular Tweet Cards card (which
+    // multi-platform fans a single source tweet) — this one is the
+    // bulk, single-destination daily pipeline.
+    //
+    // Status is "paused" because the GitHub Actions schedule trigger
+    // is currently commented out in .github/workflows/ig-pipeline.yml
+    // (see also `instagram_2nd.paused: true` in lib/cron-schedule.ts).
+    // The detail page at /instagram-2nd still loads — it shows the
+    // last batch the cron queued and the remaining bank — so the card
+    // stays clickable while the muted opacity treatment signals that
+    // the automation is suspended at the infra layer. Flip to "live"
+    // when the workflow trigger is re-enabled.
+    id: "bulk-tweet-cards",
+    name: "Bulk Tweet Cards",
+    subtitle: "Bank → 2nd Instagram",
+    category: "short",
+    status: "paused",
+    creator: "alex",
+    subgroup: "creation",
+    platforms: [{ id: "instagram", name: "Instagram" }],
+    href: "/instagram-2nd",
+    // ig-pipeline writes posts under platform="instagram_2nd". Tagged
+    // even though status is currently "paused" so the count appears
+    // immediately when the GitHub Actions trigger is re-enabled.
+    healthPlatforms: ["instagram_2nd"],
   },
   {
     // L1 Q&A — pipeline doesn't exist yet, but /l1-qa hosts a static
@@ -187,17 +260,16 @@ export const FORMATS: Format[] = [
     // of truth while the actual cron is being scoped. Status stays
     // "paused" (no live pulse, not counted in the header's live tally)
     // and `platforms` is left empty so the card hides its "Publishes
-    // to" eyebrow until destinations are decided. `breakBefore` forces
-    // the card onto its own row in the Short grid — drop the flag
-    // (and flip status to "live") once the workflow ships.
+    // to" eyebrow until destinations are decided. Flip to "live" once
+    // the workflow ships.
     id: "l1-qa",
     name: "L1 Q&A",
     subtitle: "Automation map",
     category: "short",
     status: "paused",
     creator: "alex",
+    subgroup: "creation",
     platforms: [],
-    breakBefore: true,
     href: "/l1-qa",
   },
   {
@@ -215,6 +287,12 @@ export const FORMATS: Format[] = [
     // for written crosspost (X → Threads) this is the actual underlying
     // workflow.
     href: "/threads?pathway=crosspost",
+    // The threads cron writes one row per published post under
+    // platform="threads", with the pathway tucked into metadata. We
+    // intentionally share this signal with bank-post-written below —
+    // both pathways flow through the same daily cron, and splitting by
+    // metadata->>'pathway' would add a JSON filter for marginal signal.
+    healthPlatforms: ["threads"],
   },
   {
     id: "bank-post-written",
@@ -230,6 +308,37 @@ export const FORMATS: Format[] = [
     // Same /threads page filtered to Pathway 2 ("X Bank-Post") — random
     // unposted entries from TweetMasterBank.csv → Threads via Buffer.
     href: "/threads?pathway=bank",
+    // Shares the threads cron's signal with crosspost-written above —
+    // see that comment for why we don't split by pathway.
+    healthPlatforms: ["threads"],
+  },
+  {
+    // Studio-first scheduling pipeline — discovers Private drafts in
+    // YouTube Studio (2nd channel), generates transcript-based titles,
+    // and assigns each video to a publish slot.
+    //
+    // Status is "paused" because the youtube-second-cron is currently
+    // suspended at the infra layer (see render.yaml — service commented
+    // out, and `youtube_second.paused: true` in lib/cron-schedule.ts).
+    // The detail page at /youtube-second still works and shows the
+    // last batch the cron scheduled; flip to "live" when the cron is
+    // resumed on Render.
+    id: "scheduling-mid",
+    name: "Scheduling",
+    subtitle: "Auto-schedule Studio drafts",
+    category: "mid",
+    status: "paused",
+    creator: "alex",
+    platforms: [{ id: "youtube", name: "YouTube" }],
+    href: "/youtube-second",
+    // No `healthPlatforms` on purpose: the youtube_cron writes posts
+    // under platform="youtube", but so does the /manual-upload route
+    // (crosspost-short's YouTube leg). Tagging this card with ["youtube"]
+    // would let manual-upload runs flip scheduling-mid green even when
+    // the studio cron itself is dead. The crons are distinguishable via
+    // metadata.source='studio' (see /youtube-second/page.tsx:121), so
+    // once this format is unpaused, switch to a {platform, metadataSource}
+    // filter rather than a bare platform list.
   },
   // ──────────────────────────── Leila ────────────────────────────
   // Wraps Leila's two existing crons as-is (linkedin-leila-cron at 11:45
@@ -248,6 +357,7 @@ export const FORMATS: Format[] = [
     // Apify @LeilaHormozi → 1080×1080 quote card → Buffer LinkedIn
     // with caption "Agree?".
     href: "/leila/linkedin",
+    healthPlatforms: ["linkedin_leila"],
   },
   {
     id: "leila-crosspost-written",
@@ -260,5 +370,6 @@ export const FORMATS: Format[] = [
     // /leila/threads shows the threads-leila-cron pathway:
     // Apify @LeilaHormozi tweets → Buffer Threads.
     href: "/leila/threads",
+    healthPlatforms: ["threads_leila"],
   },
 ];

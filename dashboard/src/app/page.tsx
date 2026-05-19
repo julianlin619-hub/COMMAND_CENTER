@@ -25,10 +25,19 @@ import {
   parseCreatorParam,
   type FormatGroup,
 } from "@/lib/command-center-config";
+import { fetchHealthCounts, buildHealthMap } from "@/lib/format-health";
+import { getSupabaseClient } from "@/lib/supabase";
 import { PageHeader } from "@/components/command-center/page-header";
 import { CategorySection } from "@/components/command-center/category-section";
 import { EmptyCategoryBand } from "@/components/command-center/empty-category-band";
 import { CreatorToggle } from "@/components/command-center/creator-toggle";
+
+// Always re-render — health pills should reflect the current 24h window
+// on every load, not a build-time snapshot. The page was previously
+// statically renderable because all data was hard-coded; the Supabase
+// fetch makes it dynamic regardless, but the directive is explicit so
+// caching surprises don't creep in later.
+export const dynamic = "force-dynamic";
 
 // Next 16 passes searchParams as a Promise so dynamic APIs can stream.
 // Await it before reading any keys.
@@ -45,6 +54,14 @@ export default async function DashboardHome({ searchParams }: DashboardHomeProps
   // need to reflect the filtered view, so we work off `visibleFormats`
   // everywhere instead of FORMATS directly.
   const visibleFormats = FORMATS.filter((f) => f.creator === creator);
+
+  // One Supabase query covers every card on the page — see
+  // lib/format-health.ts for why we don't fan out per-card. We compute
+  // the map over `visibleFormats` only (rather than FORMATS) so we
+  // don't pay to evaluate the other creator's cards on every load.
+  const supabase = getSupabaseClient();
+  const counts = await fetchHealthCounts(supabase);
+  const healthMap = buildHealthMap(visibleFormats, counts);
 
   const byCategory: Record<FormatGroup, typeof FORMATS> = {
     short: [],
@@ -88,6 +105,7 @@ export default async function DashboardHome({ searchParams }: DashboardHomeProps
               label={CATEGORY_LABELS[c]}
               color={CATEGORY_COLORS[c]}
               formats={byCategory[c]}
+              healthMap={healthMap}
             />
           ))}
         </div>

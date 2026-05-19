@@ -123,10 +123,10 @@ export async function POST(req: NextRequest) {
         );
 
         // Record one posts row per successful Buffer hand-off. The
-        // overview card's "Sent to Buffer (24h)" pill counts these rows.
-        // We don't fail the run if the insert errors — Buffer already
-        // accepted the post and rolling that back is fiddly, so log and
-        // continue.
+        // Command Center's health pill counts these rows in its 24h
+        // window. We don't fail the run if the insert errors — Buffer
+        // already accepted the post and rolling that back is fiddly, so
+        // log and continue.
         const { error: insertError } = await supabase.from('posts').insert({
           platform: 'instagram_2nd',
           status: 'sent_to_buffer',
