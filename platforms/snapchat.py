@@ -277,7 +277,7 @@ class Snapchat(PlatformBase):
             caption = post.caption or post.title or ""
 
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=False, slow_mo=500)
+                browser = pw.chromium.launch(headless=True)
                 context = browser.new_context(
                     storage_state=state, viewport=VIEWPORT
                 )
