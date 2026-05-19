@@ -55,6 +55,28 @@ const SCHEDULE_DELAY_MS = 4 * 60 * 1000;
 // upper bound, not a Snap-imposed one.
 const SNAPCHAT_CAPTION_LIMIT = 280;
 
+/**
+ * Trim `text` to at most `max` characters at a word boundary.
+ *
+ * `text.slice(0, max)` is the obvious choice but cuts mid-word, which reads
+ * awkwardly when a tweet ends with "...a 6-figure busi" instead of
+ * "...a 6-figure". We prefer breaking at the last space inside the slice,
+ * but ONLY if that space lands in the last 30% of the slice — otherwise
+ * we'd fall all the way back to a very early space (or to position 0
+ * entirely) and drop most of the content. Hardcoded threshold; the
+ * heuristic is intentionally simple.
+ *
+ * On TweetMasterBank.csv this almost never fires today (mean tweet length
+ * is well under 280), so the win is in the rare-edge-case ergonomics, not
+ * in changing the common path's behaviour.
+ */
+function truncateAtWord(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const slice = text.slice(0, max);
+  const lastSpace = slice.lastIndexOf(' ');
+  return lastSpace > max * 0.7 ? slice.slice(0, lastSpace) : slice;
+}
+
 export async function POST(req: NextRequest) {
   if (!(await verifyApiAuth(req))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -127,12 +149,12 @@ export async function POST(req: NextRequest) {
         }
         uploaded = true;
 
-        // Truncate to SNAPCHAT_CAPTION_LIMIT. `.slice` matches the convention
-        // used by /api/ig-pipeline (it passes the limit through to Buffer
-        // and lets Buffer slice; here we slice ourselves since there's no
-        // intermediary). Defensive — most TweetMasterBank rows are well
+        // Truncate to SNAPCHAT_CAPTION_LIMIT at a word boundary (see
+        // truncateAtWord). /api/ig-pipeline hands the limit to Buffer
+        // which slices server-side; here we slice ourselves since there's
+        // no intermediary. Defensive — most TweetMasterBank rows are well
         // under 280, so this is a no-op on the common path.
-        const caption = g.text.slice(0, SNAPCHAT_CAPTION_LIMIT);
+        const caption = truncateAtWord(g.text, SNAPCHAT_CAPTION_LIMIT);
 
         // 3a. Insert the posts row. status='scheduled' is what
         //     core/scheduler.py::process_due_posts expects to claim.

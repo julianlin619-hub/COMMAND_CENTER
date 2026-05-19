@@ -20,6 +20,7 @@ tests/conftest.py — kept local for now to avoid premature scaffolding.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -238,3 +239,176 @@ def test_create_post_call_order(monkeypatch, tmp_path):
     # exist post-publish. /tmp is shared with the test process so this is
     # observable.
     assert not os.path.exists(f"/tmp/{post.id}.mp4")
+
+
+def test_create_post_fallback_succeeds_when_success_selector_times_out(
+    monkeypatch, caplog
+):
+    """Load-bearing test for the duplicate-publish guarantee.
+
+    When SELECTOR_PUBLISH_SUCCESS times out (toast auto-dismissed before
+    we caught it), the adapter must NOT raise. Instead it should call
+    _publish_form_was_cleared(), verify the URL gate (still on uploader)
+    and the composer-reset signals (file input cleared, Post button
+    disabled, caption empty), accept the publish as successful, log a
+    warning so the operator has telemetry, and call save_storage_state.
+
+    Without this fallback, a successful real publish + missed toast =
+    post marked 'failed' in DB → next cron tick re-claims and re-publishes
+    the same content as a duplicate on Snapchat. The fallback is the only
+    thing standing between us and a duplicate-publish bug, so this test
+    locks down its behaviour.
+    """
+    monkeypatch.setenv("SNAPCHAT_PROFILE_URL", "https://example.com/uploader")
+
+    sequence: list[str] = []
+
+    # Storage mocks — identical to the happy-path test.
+    mock_storage = MagicMock()
+    mock_storage.download.return_value = b"fake-mp4-bytes"
+    mock_storage.upload = MagicMock()
+    mock_client = MagicMock()
+    mock_client.storage.from_.return_value = mock_storage
+
+    def fake_load():
+        sequence.append("load_storage_state")
+        return {"cookies": [], "origins": []}
+
+    def fake_save(_state):
+        sequence.append("save_storage_state")
+
+    # The page mock. The critical difference from the happy-path test is
+    # that wait_for_selector raises on the SELECTOR_PUBLISH_SUCCESS call
+    # (the text-engine selector starting with `text=`) but succeeds for
+    # the auth and upload-ready waits. side_effect lets us inspect the
+    # selector argument and decide per-call.
+    mock_page = MagicMock()
+    # URL gate passes — page never navigated off the uploader. This is
+    # the "real publish + missed toast" case, NOT the captcha case.
+    mock_page.url = "https://example.com/uploader"
+
+    def fake_wait_for_selector(selector, **_kwargs):
+        if selector.startswith("text="):
+            # SELECTOR_PUBLISH_SUCCESS times out. Any Exception subclass
+            # works since the adapter catches `except Exception as
+            # toast_exc:` — using a plain TimeoutError so the test reads
+            # closely to what Playwright actually raises in prod.
+            raise TimeoutError("waiting for locator to be visible")
+        return MagicMock()
+    mock_page.wait_for_selector.side_effect = fake_wait_for_selector
+
+    def fake_goto(*_args, **_kwargs):
+        sequence.append("goto")
+    mock_page.goto.side_effect = fake_goto
+
+    def fake_check(_selector):
+        sequence.append("check")
+    mock_page.check.side_effect = fake_check
+
+    # Form-state probes return the cleared state on EVERY locator since
+    # the mock_locator is shared across selectors. The fallback reads
+    # input_value() on the file input + caption (we want "") and
+    # is_disabled() on the post button (we want True) — all three signals
+    # should fire and land in the fallback's returned list.
+    mock_locator = MagicMock()
+    mock_locator.input_value.return_value = ""
+    mock_locator.is_disabled.return_value = True
+
+    def fake_set_input_files(_path):
+        sequence.append("set_input_files")
+
+    def fake_click():
+        sequence.append("click")
+    mock_locator.set_input_files.side_effect = fake_set_input_files
+    mock_locator.click.side_effect = fake_click
+    mock_page.locator.return_value = mock_locator
+    mock_page.screenshot.return_value = b""
+
+    mock_context = MagicMock()
+    mock_context.new_page.return_value = mock_page
+    mock_context.storage_state.return_value = {"cookies": ["refreshed"]}
+
+    mock_browser = MagicMock()
+    mock_browser.new_context.return_value = mock_context
+
+    mock_pw = MagicMock()
+    mock_pw.chromium.launch.return_value = mock_browser
+
+    mock_pw_cm = MagicMock()
+    mock_pw_cm.__enter__.return_value = mock_pw
+    mock_pw_cm.__exit__.return_value = False
+
+    fake_playwright_module = MagicMock()
+    fake_playwright_module.sync_playwright.return_value = mock_pw_cm
+
+    def fake_stealth(_page):
+        sequence.append("stealth")
+    fake_stealth_instance = MagicMock()
+    fake_stealth_instance.apply_stealth_sync.side_effect = fake_stealth
+    fake_stealth_class = MagicMock(return_value=fake_stealth_instance)
+    fake_stealth_module = MagicMock()
+    fake_stealth_module.Stealth = fake_stealth_class
+
+    # caplog at WARNING captures the create_post fallback warning. The
+    # _publish_form_was_cleared helper also logs at INFO, but that level
+    # is below the threshold here so we don't have to filter it out.
+    with caplog.at_level(logging.WARNING, logger="platforms.snapchat"), \
+         patch("platforms.snapchat.get_client", return_value=mock_client), \
+         patch("platforms.snapchat.load_storage_state", side_effect=fake_load), \
+         patch("platforms.snapchat.save_storage_state", side_effect=fake_save), \
+         patch.dict(sys.modules, {
+             "playwright": MagicMock(),
+             "playwright.sync_api": fake_playwright_module,
+             "playwright_stealth": fake_stealth_module,
+         }):
+
+        from core.models import Post
+        from platforms.snapchat import Snapchat
+
+        adapter = Snapchat()
+        post = Post(
+            id="post-fallback-uuid",
+            platform="snapchat",
+            caption="hello world",
+            media_type="video",
+            media_urls=["snapchat/tweet-xyz.mp4"],
+            status="publishing",
+        )
+        # MUST NOT raise — without the fallback the toast TimeoutError
+        # would propagate and the scheduler would mark the post failed.
+        result = adapter.create_post(post)
+
+    # The synthetic platform_post_id was returned (publish path completed).
+    assert result.startswith("snap-post-fallback-uuid-")
+
+    # save_storage_state fired — proves the fallback accepted publish as
+    # success. If the fallback rejected, save would not have run because
+    # the toast TimeoutError would have re-raised.
+    assert "save_storage_state" in sequence
+
+    # The publish steps through `click` are identical to the happy-path
+    # test — what changed is the post-click confirmation, not the publish
+    # itself.
+    assert sequence[:6] == [
+        "load_storage_state",
+        "stealth",
+        "goto",
+        "check",
+        "set_input_files",
+        "click",
+    ]
+
+    # The "missed toast but accepted via composer-reset" warning fired —
+    # operator telemetry that lets us tune SELECTOR_PUBLISH_SUCCESS or its
+    # timeout if this recurs. We match on a stable substring ("composer
+    # reset") rather than the full template so the test doesn't fight
+    # phrasing tweaks.
+    fallback_warnings = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and "composer reset" in r.getMessage()
+    ]
+    assert len(fallback_warnings) == 1, (
+        f"expected exactly 1 'composer reset' WARNING; "
+        f"got {len(fallback_warnings)}: "
+        f"{[r.getMessage() for r in caplog.records]}"
+    )

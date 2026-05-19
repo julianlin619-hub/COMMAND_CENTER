@@ -103,6 +103,18 @@ def main() -> int:
         context.close()
         browser.close()
 
+    # Guardrail against accidentally UPSERTing into the wrong Supabase
+    # project. This script writes a production session credential, and
+    # if the operator's shell happens to have a stale SUPABASE_URL set
+    # (e.g. from a previous staging session) the storage_state could land
+    # in the wrong DB without any obvious confirmation. The y/N prompt
+    # before the write makes the target host visible.
+    print()
+    print(f"About to UPSERT Snapchat storage_state to: {os.environ['SUPABASE_URL']}")
+    if input("Continue? [y/N] ").strip().lower() != "y":
+        print("Aborted — no DB write performed.")
+        return 0
+
     try:
         save_storage_state(state)
     except Exception as e:

@@ -406,17 +406,47 @@ class Snapchat(PlatformBase):
         names that fired (rather than just a bool) so the warn-log can
         record which one(s) saved the run, for later tuning.
 
+        URL gate (added after PR review): a captcha challenge screen also
+        has no file input, a disabled Post button, and an empty caption —
+        the exact same three signals as a successful publish. To avoid
+        that false positive we first check we're still on the uploader
+        URL. If the page navigated away (captcha redirect, login wall, an
+        interstitial), we reject the fallback regardless of what the form
+        probes say, and the caller re-raises the toast timeout so the
+        scheduler marks the post failed. Cheap additional positive signal.
+
         Each probe is wrapped because Playwright can raise locator errors
         (element detached, stale handle) mid-check and one such error
         shouldn't short-circuit the other probes.
 
-        Signals (any non-empty subset → treat as success):
+        Signals (any non-empty subset → treat as success, but only after
+        the URL gate passes):
           - file_input_cleared: <input type="file"> .value is ""
           - post_button_disabled: Post button re-disabled (no destination
             checked → form invalid → button disabled, mirroring the
             initial-page state)
           - caption_empty: caption textarea .value is ""
+
+        Both accept and reject paths log at INFO with the current URL so
+        post-mortem reviews can tell at a glance which branch fired.
         """
+        # URL gate first — cheapest probe, and the captcha-false-positive
+        # case is exactly when this should bail out before reading the form.
+        try:
+            current_url = page.url
+        except Exception:
+            current_url = "<unknown>"
+        # rstrip("/") so the gate doesn't break on trailing-slash mismatches
+        # between the env var and the actual URL the page settled on after
+        # Snap's own redirects.
+        if not current_url.startswith(self.profile_url.rstrip("/")):
+            logger.info(
+                "Snapchat fallback REJECTED — page navigated off uploader "
+                "(current_url=%s) — likely captcha or session break.",
+                current_url,
+            )
+            return []
+
         signals: list[str] = []
         try:
             if page.locator(SELECTOR_FILE_INPUT).input_value() == "":
@@ -433,6 +463,19 @@ class Snapchat(PlatformBase):
                 signals.append("caption_empty")
         except Exception:
             pass
+
+        if signals:
+            logger.info(
+                "Snapchat fallback ACCEPTED — composer reset on %s "
+                "(signals: %s).",
+                current_url, signals,
+            )
+        else:
+            logger.info(
+                "Snapchat fallback REJECTED — on uploader (%s) but no "
+                "form-reset signals fired.",
+                current_url,
+            )
         return signals
 
     def _save_auth_failure_screenshot(self, page, post_id: str) -> None:
