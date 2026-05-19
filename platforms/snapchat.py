@@ -92,11 +92,27 @@ SELECTOR_CAPTION = 'textarea[placeholder*="description"]'
 # bare selector for the click itself.
 SELECTOR_POST_BUTTON = '[data-testid="app.profileMgr.snapPoster.postSnap"]'
 
-# Confirmation that the post landed — Snap renders "Your Snap is now live"
-# after the publish succeeds. Only when this resolves do we treat the post
-# as published; without it, a click that was intercepted by a captcha or a
-# server error would silently mark the post published in our DB.
-SELECTOR_PUBLISH_SUCCESS = 'div:has-text("Your Snap is now live")'
+# Confirmation that the post landed — Snap renders a transient toast that
+# reads "Your Snap is now live" after a successful publish.
+#
+# Two subtleties make this selector tricky and they're the reason for the
+# fallback logic below:
+#   1. CSS `:has-text()` matches any ancestor whose subtree contains the
+#      string. Against Snap's nested toast wrapper that yielded 7 elements
+#      and a noisy "resolved to 7 elements; using the first" warning every
+#      run. Playwright's text engine with quoted exact match (`text="..."`)
+#      pins to a single node whose visible text equals the literal string.
+#   2. The toast auto-dismisses inside Snap's React tree. With slow_mo or
+#      a slow network we can race past it — the publish actually succeeded
+#      but wait_for_selector times out, we mark the post `failed`, and the
+#      next cron tick could re-publish the same content as a duplicate.
+#
+# `create_post` uses this selector with a SHORTENED 15s timeout and falls
+# back to `_publish_form_was_cleared()` (which checks for composer reset:
+# empty file input, disabled Post button, empty caption) before giving up.
+# If you're tempted to simplify back to a single wait — don't. The fallback
+# is here because the toast is racy in practice, not in theory.
+SELECTOR_PUBLISH_SUCCESS = 'text="Your Snap is now live"'
 
 
 # ── Constraints ────────────────────────────────────────────────────────────
@@ -312,13 +328,42 @@ class Snapchat(PlatformBase):
                         )
                     page.locator(SELECTOR_POST_BUTTON).click()
 
-                    # Step 6: wait for confirmation that the post actually
-                    # landed. Without this, a click that was intercepted by
-                    # a captcha or server error would silently mark the post
-                    # published in our DB.
-                    page.wait_for_selector(
-                        SELECTOR_PUBLISH_SUCCESS, timeout=60_000
-                    )
+                    # Step 6: confirm the post actually landed. Without
+                    # SOME confirmation, a click intercepted by a captcha
+                    # or a server error would silently mark the post
+                    # published in our DB. But the toast itself is racy
+                    # (see SELECTOR_PUBLISH_SUCCESS comment), so we use a
+                    # two-tier check:
+                    #   Primary (15s): toast appears → success.
+                    #   Fallback: composer form was reset (file input
+                    #     cleared, Post button disabled, caption empty) →
+                    #     also success, with a warn-log so we have
+                    #     telemetry on toast misses.
+                    # Only if BOTH miss do we treat the publish as failed.
+                    # That keeps duplicate-publish risk near zero — we'd
+                    # rather log a false-positive that we can sanity-check
+                    # in the Snap UI than re-publish content.
+                    try:
+                        page.wait_for_selector(
+                            SELECTOR_PUBLISH_SUCCESS, timeout=15_000
+                        )
+                    except Exception as toast_exc:
+                        signals = self._publish_form_was_cleared(page)
+                        if signals:
+                            logger.warning(
+                                "Snapchat publish: success toast not observed "
+                                "for post %s, but composer reset (signals: %s) — "
+                                "treating as successful. Tune "
+                                "SELECTOR_PUBLISH_SUCCESS or its timeout if "
+                                "this recurs.",
+                                post.id, signals,
+                            )
+                        else:
+                            # Neither signal fired — publish likely did not
+                            # land. Re-raise so the scheduler marks the
+                            # post failed and we DON'T save_storage_state
+                            # (which lives below this block).
+                            raise toast_exc
 
                     # Step 6b: persist refreshed cookies BEFORE returning so
                     # next run starts with the most recent session state.
@@ -350,6 +395,45 @@ class Snapchat(PlatformBase):
                 os.unlink(local_path)
             except FileNotFoundError:
                 pass
+
+    def _publish_form_was_cleared(self, page) -> list[str]:
+        """Return secondary success signals: which composer fields were reset.
+
+        Called after `wait_for_selector(SELECTOR_PUBLISH_SUCCESS)` times out.
+        Snap resets the composer to its empty initial state on a successful
+        publish — so even if we missed the toast, observing the reset is
+        strong evidence the publish landed. We return the list of signal
+        names that fired (rather than just a bool) so the warn-log can
+        record which one(s) saved the run, for later tuning.
+
+        Each probe is wrapped because Playwright can raise locator errors
+        (element detached, stale handle) mid-check and one such error
+        shouldn't short-circuit the other probes.
+
+        Signals (any non-empty subset → treat as success):
+          - file_input_cleared: <input type="file"> .value is ""
+          - post_button_disabled: Post button re-disabled (no destination
+            checked → form invalid → button disabled, mirroring the
+            initial-page state)
+          - caption_empty: caption textarea .value is ""
+        """
+        signals: list[str] = []
+        try:
+            if page.locator(SELECTOR_FILE_INPUT).input_value() == "":
+                signals.append("file_input_cleared")
+        except Exception:
+            pass
+        try:
+            if page.locator(SELECTOR_POST_BUTTON).is_disabled():
+                signals.append("post_button_disabled")
+        except Exception:
+            pass
+        try:
+            if page.locator(SELECTOR_CAPTION).input_value() == "":
+                signals.append("caption_empty")
+        except Exception:
+            pass
+        return signals
 
     def _save_auth_failure_screenshot(self, page, post_id: str) -> None:
         """Upload a debug screenshot of the failed auth page to Storage.
