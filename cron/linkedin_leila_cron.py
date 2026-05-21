@@ -48,6 +48,7 @@ from core.database import (
 from core.env_diag import log_env_diagnostics
 from core.media import get_signed_url
 from core.models import Post
+from core.tweet_filter import is_postable_tweet
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -138,6 +139,12 @@ def main() -> None:
         ],
         optional=[
             "APIFY_LEILA_TWITTER_HANDLE",
+            # Read by core.tweet_filter when it constructs an anthropic.Anthropic()
+            # client. Listed as optional so the cron still starts without it, but
+            # the filter will raise on every tweet that reaches the LLM stage —
+            # which is what we want, because skipping bad posts > publishing
+            # unfiltered junk.
+            "ANTHROPIC_API_KEY",
         ],
     )
 
@@ -165,24 +172,57 @@ def main() -> None:
         logger.info("Phase 0: fetched %d tweets from @%s", len(tweets), twitter_handle)
 
         duplicates = 0
+        filtered = 0
         for tweet in tweets:
             text = tweet["text"]
             if post_caption_exists("linkedin_leila", text):
                 duplicates += 1
                 logger.debug("Skipping duplicate: %s...", text[:50])
                 continue
+            # Drop tweets that don't read as a clean standalone quote — retweets,
+            # hyperlink-bearing posts, truncated fragments, and reply snippets.
+            # Cheap regex rejects the obvious junk before any LLM call; the
+            # Claude judge in core/tweet_filter handles the borderline cases
+            # (incomplete sentences, screenshot captions, quotes of others).
+            #
+            # On failure (missing key, rate limit, malformed response) the
+            # filter raises — we catch and skip the tweet rather than letting
+            # an unfiltered post slip through.
+            try:
+                is_clean, reason = is_postable_tweet(text)
+            except Exception as filter_err:
+                filtered += 1
+                logger.warning(
+                    "Filter raised for tweet %s — skipping: %s",
+                    tweet.get("id", "?"),
+                    filter_err,
+                )
+                continue
+            if not is_clean:
+                filtered += 1
+                logger.info(
+                    "Filtered tweet %s (%s): %s",
+                    tweet.get("id", "?"),
+                    reason,
+                    text[:60],
+                )
+                continue
             new_tweets.append(tweet)
             # Wide-fallback path posts exactly one fresh tweet — the goal is
             # "one LinkedIn post per day even on quiet days," not "burn down
             # Leila's entire backlog the next time she goes silent for 24h."
+            # The break is after append (not after dedup/filter), so if the
+            # most-recent tweet gets rejected we keep scanning the latest 30
+            # until we find one that passes.
             if used_wide_fallback:
                 break
 
         log_cron_finish(run_id, status="success", posts_processed=len(new_tweets))
         logger.info(
-            "Phase 0: %d new tweets after dedup (%d duplicates, wide_fallback=%s)",
+            "Phase 0: %d new tweets after dedup+filter (%d duplicates, %d filtered, wide_fallback=%s)",
             len(new_tweets),
             duplicates,
+            filtered,
             used_wide_fallback,
         )
     except Exception as e:
