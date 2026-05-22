@@ -126,3 +126,22 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
   accentBarPosition: "top",
   accentBarThickness: 6,
 };
+
+/**
+ * Instagram default — identical to the Facebook default except for the
+ * canvas height. Instagram feed posts render at 1080×1440 (3:4 portrait)
+ * so the same quote-card design has more vertical dead space than the
+ * Facebook 1:1 version. Note: Instagram's documented max portrait aspect
+ * is 4:5 (1080×1350); 3:4 may be cropped by the IG client at display
+ * time, but the operator explicitly chose this size for the extra room.
+ *
+ * Used as the in-code fallback for /api/content-gen/generate when
+ * platform="instagram" and either the DB row is missing or its config
+ * fields fail validation (validateTemplateConfig drops bad fields, and
+ * we spread defaults under the validated config so missing fields fall
+ * back to these values).
+ */
+export const DEFAULT_INSTAGRAM_TEMPLATE_CONFIG: TemplateConfig = {
+  ...DEFAULT_TEMPLATE_CONFIG,
+  height: 1440,
+};

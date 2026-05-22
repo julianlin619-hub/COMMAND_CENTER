@@ -2,24 +2,26 @@
 
 Runs daily at 11:15 UTC (4:15 AM PDT) to pick 1 high-performing tweet
 from the TweetMasterBank CSV and fan it out as quote-card content across
-three platforms:
+four platform legs:
 
   * TikTok    — 1080×1920 MP4 video
   * Facebook  — 1080×1080 PNG image
-  * LinkedIn  — 1080×1080 PNG image (LinkedIn color overrides)
+  * LinkedIn  — 1080×1080 PNG image (LinkedIn color overrides; reuses
+                the Facebook bytes — no separate render call)
+  * Instagram — 1080×1440 portrait PNG image (own template row)
 
 Companion to cron/tiktok_pipeline.py — same fan-out shape but sources
 from the CSV bank instead of Apify. Both write to the same `posts` table
-with platform values "tiktok" / "facebook" / "linkedin" and rely on the
-partial unique index on (platform, md5(caption)) to prevent
-cross-pipeline duplicates.
+with platform values "tiktok" / "facebook" / "linkedin" / "instagram"
+and rely on the partial unique index on (platform, md5(caption)) to
+prevent cross-pipeline duplicates.
 
 Three cron_runs phases are preserved so the dashboard's getLastRun()
 query keeps working without schema changes:
 
   Phase 1 — bank_pick:     pick 1 random unposted bank tweet
-  Phase 2 — bank_generate: render TikTok MP4 + Facebook PNG + LinkedIn PNG
-  Phase 3 — bank_send:     TikTok → FB → LI fan-out
+  Phase 2 — bank_generate: render TikTok MP4 + FB PNG + IG PNG
+  Phase 3 — bank_send:     TikTok → FB → LI → IG fan-out
 
 cron_runs.platform stays "tiktok" because it's the orchestrator's
 identity. Per-leg outcomes land in the `posts` table. See
@@ -157,9 +159,11 @@ def main():
             )
         logger.info("Phase 2a: generated %d TikTok video(s)", len(generated))
 
-        # Facebook render is best-effort. The same 1:1 PNG is reused
-        # for the LinkedIn and Instagram legs downstream — an empty
-        # facebook result means all three fan-out legs skip for this run.
+        # Facebook + Instagram renders are both best-effort. The FB 1:1
+        # PNG is reused for the LinkedIn leg downstream (no separate LI
+        # render). The IG render is portrait 1080×1440, its own leg only.
+        # An empty FB result means FB + LI legs skip; an empty IG result
+        # means only the IG leg skips for this run.
         extra_paths = render_extra_platforms(
             dashboard_url=dashboard_url,
             cron_secret=cron_secret,
@@ -238,18 +242,22 @@ def main():
         sys.exit(1)
 
     # ─── FACEBOOK + LINKEDIN + INSTAGRAM FAN-OUT ─────────────────────────
-    # LinkedIn and Instagram both reuse the Facebook 1:1 PNG — no
-    # separate render call for either. Wrapped in try/except because
-    # `_send_or_skip` calls `post_caption_exists()` (an unwrapped
-    # Supabase query) before the protected `send_leg()` body — a
-    # transient Supabase blip would otherwise unwind out and skip
-    # `log_cron_finish`, orphaning the cron_runs row at status='running'.
+    # LinkedIn reuses the Facebook 1:1 PNG — no separate LI render call.
+    # Instagram has its own 1080×1440 portrait render (own template row,
+    # own storage path), so its path is looked up from the IG sub-dict.
+    # Wrapped in try/except because `_send_or_skip` calls
+    # `post_caption_exists()` (an unwrapped Supabase query) before the
+    # protected `send_leg()` body — a transient Supabase blip would
+    # otherwise unwind out and skip `log_cron_finish`, orphaning the
+    # cron_runs row at status='running'.
     tweet_id = str(item.get("id", ""))
     fb_path = extra_paths["facebook"].get(tweet_id)
+    ig_path = extra_paths["instagram"].get(tweet_id)
     try:
         leg_result = fanout_extra_legs_for_one_tweet(
             tweet_caption=caption,
             fb_storage_path=fb_path,
+            ig_storage_path=ig_path,
             fb_channel_id=fb_channel_id,
             li_channel_id=li_channel_id,
             ig_channel_id=ig_channel_id,
@@ -270,17 +278,23 @@ def main():
 
 
 def _render_summary(extra_paths: dict[str, dict[str, str]]) -> str | None:
-    """One-line description of the Facebook render result for the bank run.
+    """One-line description of the FB + IG render results for the bank run.
 
-    Used as the Phase-2 error_message when the FB render came back empty.
-    Helps operators tell "render dropped the leg" from "render succeeded
-    but Buffer rejected everything." LI and IG legs reuse the FB bytes,
-    so an empty result here means all three fan-out legs will skip.
-    Returns None when the render succeeded so the success record stays clean.
+    Used as the Phase-2 error_message field. Helps operators tell
+    "render dropped the leg" from "render succeeded but Buffer rejected
+    everything." LinkedIn reuses the FB bytes (so an empty FB result
+    skips FB + LI), while Instagram has its own render (so an empty
+    IG result skips only the IG leg). Returns None when both renders
+    produced at least one image so the success record stays clean.
     """
-    if not extra_paths["facebook"]:
-        return "no facebook renders"
-    return None
+    missing: list[str] = []
+    if not extra_paths.get("facebook"):
+        missing.append("facebook")
+    if not extra_paths.get("instagram"):
+        missing.append("instagram")
+    if not missing:
+        return None
+    return "no " + " or ".join(missing) + " renders"
 
 
 if __name__ == "__main__":

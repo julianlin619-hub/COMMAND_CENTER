@@ -88,75 +88,81 @@ def render_extra_platforms(
     cron_secret: str,
     tweets: list[dict[str, Any]],
 ) -> dict[str, dict[str, str]]:
-    """Render the Facebook variant for a batch of tweets (reused for LI + IG).
+    """Render the Facebook + Instagram variants for a batch of tweets.
 
-    Calls /api/content-gen/generate once with platform='facebook' to produce
-    a 1080×1080 PNG per tweet. The same PNG is later shipped to LinkedIn
-    and Instagram by `fanout_extra_legs_for_one_tweet` — we no longer call
-    the API a second/third time for those platforms because the visual
-    output was effectively identical and the extra calls were burning
-    generation cost + latency. The TikTok render is the caller's
-    responsibility and happens before this function is invoked.
+    Calls /api/content-gen/generate twice — once per render dimension:
+      - platform='facebook'  → 1080×1080 PNG per tweet. Also reused for
+        the LinkedIn fan-out leg (same visual design, the operator
+        opted into FB/LI parity to save a render call).
+      - platform='instagram' → 1080×1440 portrait PNG per tweet. Has
+        its own template row so the height can diverge from FB's 1:1.
+
+    The TikTok render is the caller's responsibility and happens before
+    this function is invoked. We don't render LinkedIn separately;
+    `fanout_extra_legs_for_one_tweet` ships the Facebook bytes to LI's
+    Buffer queue.
 
     `tweets` items must be the same {'id', 'text', ...} shape that the
     TikTok render received — we re-use the IDs as keys in the result.
 
-    Returns a mapping:
-        {'facebook': {tweet_id: storage_path, ...}}
+    Returns a mapping keyed by platform:
+        {'facebook':  {tweet_id: storage_path, ...},
+         'instagram': {tweet_id: storage_path, ...}}
 
-    The return shape is still a dict keyed by platform (rather than just
-    `dict[str, str]`) so future per-platform render variants can be added
-    back without changing the caller signature — today only 'facebook'
-    is populated.
+    Each platform's sub-dict is independent: an Instagram render failure
+    yields an empty IG dict but leaves the Facebook dict intact (and
+    vice-versa). The fan-out's per-tweet skip logic handles missing
+    storage paths via `_send_or_skip`.
 
     A failed render (network error, API 5xx after retries, empty
-    response) yields an empty dict for facebook — the caller will skip
-    every leg per-tweet when the lookup returns None. Per-tweet errors
-    inside the response are simply omitted from the mapping. NEVER
-    raises: TikTok publishes must not be blocked by FB render hiccups.
+    response) yields an empty dict for that platform — the caller will
+    skip every leg per-tweet when the lookup returns None. Per-tweet
+    errors inside the response are simply omitted from the mapping.
+    NEVER raises: TikTok publishes must not be blocked by FB or IG
+    render hiccups.
     """
     payload_tweets = [{"id": t["id"], "text": t["text"]} for t in tweets]
-    result: dict[str, dict[str, str]] = {"facebook": {}}
+    result: dict[str, dict[str, str]] = {"facebook": {}, "instagram": {}}
 
-    # Only Facebook is rendered. LinkedIn and Instagram reuse the same
-    # bytes downstream (see fanout_extra_legs_for_one_tweet). The
-    # platform-keyed dict is preserved here so future re-introduction of
-    # per-platform variants is a one-line change.
-    platform = "facebook"
-    try:
-        data = generate_content(
-            dashboard_url=dashboard_url,
-            cron_secret=cron_secret,
-            tweets=payload_tweets,
-            platform=platform,
+    # Each render call is independent — IG failures must not block the
+    # FB leg (and FB failures must not block IG). The loop body is
+    # intentionally identical for both, with the platform-specific
+    # storage path coming back from the API itself.
+    for platform in ("facebook", "instagram"):
+        try:
+            data = generate_content(
+                dashboard_url=dashboard_url,
+                cron_secret=cron_secret,
+                tweets=payload_tweets,
+                platform=platform,
+            )
+        except Exception as e:
+            # generate_content already retries on 5xx/network errors;
+            # if it propagates here the whole leg is bust for this run.
+            logger.warning(
+                "%s render leg failed entirely (skipping leg for this run): %s",
+                platform, e,
+            )
+            continue
+
+        if data.get("error"):
+            logger.warning("%s render leg returned top-level error: %s", platform, data["error"])
+            continue
+
+        api_errors = data.get("errors", []) or []
+        for i, err in enumerate(api_errors):
+            logger.warning("  %s render error[%d]: %s", platform, i, err)
+
+        for item in data.get("generated", []) or []:
+            tweet_id = item.get("id")
+            storage_path = item.get("storagePath")
+            if tweet_id and storage_path:
+                result[platform][str(tweet_id)] = storage_path
+
+        logger.info(
+            "%s render: %d images generated (%d errors)",
+            platform, len(result[platform]), len(api_errors),
         )
-    except Exception as e:
-        # generate_content already retries on 5xx/network errors;
-        # if it propagates here the whole leg is bust.
-        logger.warning(
-            "%s render leg failed entirely (skipping leg for this run): %s",
-            platform, e,
-        )
-        return result
-
-    if data.get("error"):
-        logger.warning("%s render leg returned top-level error: %s", platform, data["error"])
-        return result
-
-    api_errors = data.get("errors", []) or []
-    for i, err in enumerate(api_errors):
-        logger.warning("  %s render error[%d]: %s", platform, i, err)
-
-    for item in data.get("generated", []) or []:
-        tweet_id = item.get("id")
-        storage_path = item.get("storagePath")
-        if tweet_id and storage_path:
-            result[platform][str(tweet_id)] = storage_path
-
-    logger.info(
-        "%s render: %d images generated (%d errors)",
-        platform, len(result[platform]), len(api_errors),
-    )
 
     return result
 
@@ -279,6 +285,7 @@ def fanout_extra_legs_for_one_tweet(
     *,
     tweet_caption: str,
     fb_storage_path: str | None,
+    ig_storage_path: str | None,
     fb_channel_id: str | None,
     li_channel_id: str | None,
     ig_channel_id: str | None,
@@ -289,21 +296,24 @@ def fanout_extra_legs_for_one_tweet(
     Called by both unified pipelines inside their Phase 4 / `buffer_send`
     loop, right after the TikTok send for the same tweet succeeds. Each
     leg can independently skip when:
-      - fb_storage_path is None (the Facebook render dropped this tweet —
-        since LI/IG also reuse this path, all three legs skip with
-        `skipped_no_render`; the next day's run will retry the whole
-        fan-out once the TikTok side has already shipped),
+      - its storage_path is None — the render dropped this tweet. FB
+        and IG render independently, so an IG render failure only
+        kills the IG leg, not FB/LI. (LinkedIn reuses the FB path, so
+        an FB render failure still kills both FB and LI legs.)
       - its channel_id is None (channel lookup failed once for the whole
         run, so we know the leg cannot ship today),
       - the caption already exists in posts for that platform (per-leg
         dedup, mirrors today's chain behavior).
 
-    LinkedIn and Instagram both reuse fb_storage_path (the 1080×1080
-    PNG) — same image bytes as Facebook. We no longer call
-    /api/content-gen/generate separately for LI or IG; the previous
-    LinkedIn render only differed in palette and the user opted into
-    visually-linked posts across these three platforms. Buffer-side
-    metadata still differs per leg (facebook_post_type='post',
+    Storage path sharing today:
+      - facebook : fb_storage_path (1080×1080 PNG, FB's own render)
+      - linkedin : fb_storage_path (reuses FB bytes — same image. Saves
+                   a generate-call per tweet; operator opted into
+                   FB/LI visual parity.)
+      - instagram: ig_storage_path (1080×1440 PNG, IG's own render
+                   from a dedicated template row)
+
+    Buffer-side metadata still differs per leg (facebook_post_type='post',
     instagram_post_type='post', LinkedIn defaults) so each platform's
     Buffer integration receives the right hints.
 
@@ -340,11 +350,14 @@ def fanout_extra_legs_for_one_tweet(
         "instagram": _send_or_skip(
             platform="instagram",
             channel_id=ig_channel_id,
-            # Reuse the FB 1:1 PNG — same template, same image bytes.
-            # An Instagram-specific render variant doesn't exist in
-            # /api/content-gen/generate today, and the user wants
-            # parity with Facebook's static feed post.
-            storage_path=fb_storage_path,
+            # Instagram has its own render now (1080×1440 portrait,
+            # from the dedicated 'instagram' template row). Used to
+            # reuse fb_storage_path but the operator wanted more
+            # vertical dead space on IG without changing FB's 1:1.
+            # If the IG render failed for this tweet, ig_storage_path
+            # is None and _send_or_skip returns skipped_no_render —
+            # FB + LI legs still ship on their own.
+            storage_path=ig_storage_path,
             caption=tweet_caption,
             source_tag=source_tag,
             # Buffer's IG integration needs metadata.instagram.type to

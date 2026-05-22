@@ -5,13 +5,19 @@
  * generates platform-specific media:
  *
  *   - TikTok (default): 1080x1920 PNG → 5-second MP4 video
- *   - Facebook: 1080x1080 square PNG quote card (no video conversion)
+ *   - Facebook / LinkedIn / Leila-LinkedIn: 1080x1080 square PNG quote
+ *     card (no video conversion) — all read the Facebook template row
+ *     and layer per-platform color overrides in code.
+ *   - Instagram: 1080x1440 portrait PNG quote card (3:4) — reads its
+ *     own dedicated template row so the height can diverge from FB's
+ *     1:1 without affecting FB/LI.
  *
- * Body: { tweets: [{ id, text }], platform?: 'tiktok' | 'facebook' }
+ * Body: { tweets: [{ id, text }], platform?: 'tiktok' | 'facebook' |
+ *         'linkedin' | 'linkedin_leila' | 'instagram' }
  * Returns: { generated: [{ id, text, storagePath }] }
  *
- * Facebook uses the template from the `templates` table in Supabase,
- * while TikTok still reads from data/canvas-config.json.
+ * Quote-card platforms use the template from the `templates` table in
+ * Supabase; TikTok still reads from data/canvas-config.json.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -25,7 +31,11 @@ import { renderSquareQuoteCard } from "@/lib/square-canvas-render";
 import { getSupabaseClient } from "@/lib/supabase";
 import { verifyApiAuth } from "@/lib/auth";
 import type { TemplateConfig } from "@/lib/template-types";
-import { DEFAULT_TEMPLATE_CONFIG, validateTemplateConfig } from "@/lib/template-types";
+import {
+  DEFAULT_TEMPLATE_CONFIG,
+  DEFAULT_INSTAGRAM_TEMPLATE_CONFIG,
+  validateTemplateConfig,
+} from "@/lib/template-types";
 
 // Per-creator header image overrides. The square renderer's default is
 // Alex's Header.png in public/ig-pipeline; anything in this map wins for
@@ -64,7 +74,7 @@ export async function POST(req: NextRequest) {
     // The storage path is also interpolated from `platform` directly for
     // the square-template branch; keeping this list authoritative prevents
     // anything from sneaking into a path it shouldn't.
-    const VALID_PLATFORMS = ["tiktok", "facebook", "linkedin", "linkedin_leila"] as const;
+    const VALID_PLATFORMS = ["tiktok", "facebook", "linkedin", "linkedin_leila", "instagram"] as const;
     if (!(VALID_PLATFORMS as readonly string[]).includes(rawPlatform)) {
       return NextResponse.json(
         { error: `Unknown platform: ${rawPlatform}` },
@@ -87,42 +97,65 @@ export async function POST(req: NextRequest) {
     // on based on errors.length vs generated.length.
     const errors: { id: string; error: string }[] = [];
 
-    // Facebook, Leila-LinkedIn, and Alex-LinkedIn all render a square
-    // 1080×1080 quote card from the Facebook template config. Each gets
-    // its own storage path namespace so the renders don't collide, and
-    // each can layer per-platform color overrides on top (see below).
-    // None of them currently have a dedicated template row — they all
-    // read Alex's Facebook template and diverge via in-code overrides.
+    // Facebook, Leila-LinkedIn, Alex-LinkedIn, and Instagram all render
+    // a quote card via the shared `renderSquareQuoteCard` (the name is a
+    // mild misnomer now — Instagram is 1080×1440 portrait, not square,
+    // but the renderer is fully dimension-generic).
+    //
+    // Template-row routing:
+    //   - facebook / linkedin / linkedin_leila → read the Facebook
+    //     template row from Supabase, 1080×1080 base, layer per-platform
+    //     color overrides on top (see below). None of them have a
+    //     dedicated template row today.
+    //   - instagram → read its own template row (1080×1440 portrait),
+    //     seeded by the 20260522 migration. No color override — defaults
+    //     match Facebook. Instagram has its own row because the height
+    //     differs; using FB's row + an in-code height override would
+    //     work but defeats the operator's ability to tune IG dimensions
+    //     in the template designer later.
     const usesSquareTemplate =
       platform === "facebook" ||
       platform === "linkedin" ||
-      platform === "linkedin_leila";
+      platform === "linkedin_leila" ||
+      platform === "instagram";
     let fbTemplateConfig: TemplateConfig | null = null;
     if (usesSquareTemplate) {
+      // Pick the template row + in-code fallback per platform. Instagram
+      // gets its own row + DEFAULT_INSTAGRAM_TEMPLATE_CONFIG (1080×1440);
+      // everyone else reads Alex's Facebook row + DEFAULT_TEMPLATE_CONFIG
+      // (1080×1080).
+      const isInstagram = platform === "instagram";
+      const templatePlatform = isInstagram ? "instagram" : "facebook";
+      const baseDefaults = isInstagram
+        ? DEFAULT_INSTAGRAM_TEMPLATE_CONFIG
+        : DEFAULT_TEMPLATE_CONFIG;
+
       const { data: template, error: tmplError } = await supabase
         .from("templates")
         .select("config")
-        .eq("platform", "facebook")
+        .eq("platform", templatePlatform)
         .eq("is_active", true)
         .limit(1)
         .single();
 
       if (tmplError || !template) {
         return NextResponse.json(
-          { error: "No active Facebook template found — create one in the template designer" },
+          {
+            error: `No active ${templatePlatform} template found — create one in the template designer`,
+          },
           { status: 400 }
         );
       }
       // Merge with defaults so any missing fields (e.g. paddingLeft vs old
       // single "padding") fall back to the locked-in values.
-      fbTemplateConfig = { ...DEFAULT_TEMPLATE_CONFIG, ...validateTemplateConfig(template.config as Record<string, unknown>) };
+      fbTemplateConfig = { ...baseDefaults, ...validateTemplateConfig(template.config as Record<string, unknown>) };
 
-      // Per-platform overrides on top of Alex's Facebook template. These
+      // Per-platform overrides on top of the base template row. These
       // are the *locked-in* deltas — the operator decided on them in the
       // design sandbox and they stay constant regardless of any future
-      // edits to Alex's Facebook template config. Anything else (padding,
-      // typography, alignment) keeps inheriting from FB so that broad
-      // layout changes apply to every platform by default.
+      // edits to the base template config. Anything else (padding,
+      // typography, alignment) keeps inheriting from the row so that
+      // broad layout changes apply to every platform by default.
       if (platform === "linkedin_leila") {
         fbTemplateConfig = {
           ...fbTemplateConfig,
@@ -142,6 +175,8 @@ export async function POST(req: NextRequest) {
           textColor: "#0a1f33",
         };
       }
+      // No instagram override — visual defaults match Facebook (white bg,
+      // dark text). The only intentional difference is canvas height.
     }
 
     // Resolve the per-creator header image up front, so we don't re-read
@@ -175,11 +210,13 @@ export async function POST(req: NextRequest) {
           const normalized = normalizeTweetText(tweet.text);
 
           if (usesSquareTemplate) {
-            // Facebook + Leila-LinkedIn path: render 1080×1080 square PNG.
-            // Storage path is namespaced by `platform` so Leila's renders
-            // don't collide with Facebook's (same tweet text could be used
-            // for both creators in the future, and Buffer needs distinct
-            // signed URLs anyway).
+            // FB / LinkedIn / Leila-LinkedIn render a 1080×1080 PNG;
+            // Instagram renders 1080×1440. The exact dimensions come
+            // from `fbTemplateConfig` (width/height fields) so the
+            // renderer adapts automatically. Storage path is namespaced
+            // by `platform` so each platform's renders don't collide
+            // (same tweet text can be reused across platforms and
+            // Buffer needs distinct signed URLs anyway).
             const pngBuffer = await renderSquareQuoteCard(
               normalized,
               fbTemplateConfig!,
