@@ -91,11 +91,22 @@ export interface Show {
   // drawer renders placeholder text in each category section.
   automation: AutomationStep[];
 
-  // Drawer's Notes tab content. Bound to the textarea via "commit on
-  // blur" — typing doesn't update React state; tabbing/clicking away
-  // does. Persists with the rest of `shows` when the user clicks
-  // "Save as new default".
+  // Drawer's Creative Brief tab content. Bound to the textarea via
+  // "commit on blur" — typing doesn't update React state; tabbing/
+  // clicking away does. In-memory only; refreshing the page resets to
+  // the seed value.
   notes?: string;
+
+  // Optional external brief doc. When set, the Creative Brief tab
+  // shows a link to this URL instead of the inline textarea — used
+  // when the canonical brief lives in Google Docs / Notion / etc.
+  briefUrl?: string;
+
+  // Optional supporting references displayed as a list of link cards
+  // below the brief textarea. Use this when the show has its own
+  // inline brief AND external docs worth linking to (notes from
+  // contributors, visual guides, etc.).
+  briefLinks?: Array<{ label: string; url: string }>;
 }
 
 export interface PlatformGroup {
@@ -111,6 +122,12 @@ export interface PlatformGroup {
     // opacity on a second line in the column header.
     isExperimental?: boolean;
   }>;
+  // Optional "first principles" brief for this format group, shown in
+  // the drawer that opens when the user clicks the column header. Plain
+  // text — rendered in a monospace block (matches the show briefs) so
+  // structured headings and bullets line up. Leave undefined for groups
+  // that don't have copy yet — the drawer shows a placeholder.
+  firstPrinciples?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +229,8 @@ export const seedShows: Show[] = [
       written: "none",
     },
     automation: [],
+    briefUrl:
+      "https://docs.google.com/document/d/1p-0rrn6prLtCPUewBAwPGG7ZgO1v9cym0S2edWCCt00/edit?usp=sharing",
   },
   {
     id: "hotline",
@@ -268,6 +287,42 @@ export const seedShows: Show[] = [
         description: "Posts to IG, TikTok, YT Shorts",
       },
     ],
+    notes: `HIGH STAKES HOTLINE — On The Line / Fix My Business
+
+[1] CASTING — Same criteria as Scale or Fail
+
+    PERSON
+    ☐ Compelling on camera
+    ☐ Real stakes in their story
+    ☐ Specific point of view
+    ☐ Genuine, not rehearsed
+    ☐ Doesn't dominate the room
+
+    BUSINESS
+    ☐ Recognizable category
+    ☐ Concrete numbers to share
+    ☐ At a real inflection point
+    ☐ Decisions still ahead of them
+
+[2] PRE PRODUCTION
+
+    Gather the same intake info as Scale or Fail, condensed into
+    an L3-style brief for Alex.
+
+[3] PRODUCTION
+
+    ☐ Guest opens with a virtual presentation phase (slides / numbers)
+    ☐ Rest of the session is interactive with Alex
+
+[4] POST PRODUCTION
+
+    Minimal pass — no narrative re-edit.
+    ☐ Transcript cut (filler, dead air, false starts)
+    ☐ Cam switching (presenter / Alex / split)
+
+[5] DISTRIBUTION
+
+    ☐ Uploaded to YouTube`,
   },
   {
     id: "l1-qa",
@@ -280,6 +335,48 @@ export const seedShows: Show[] = [
       written: "none",
     },
     automation: [],
+    briefLinks: [
+      {
+        label: "Devin Notes",
+        url: "https://docs.google.com/document/d/1CefvU4dpC8ChJH9mxPHWoCPKKGMGP4Zq9RaPKgBIXHA/edit?usp=sharing",
+      },
+      {
+        label: "Oliver Notes",
+        url: "https://www.notion.so/YT-Shorts-Content-Type-Outlines-1dbf6823298280af8f5ef8a7ed4210cd#2e8f68232982802cb1c6e80fa36f8c10",
+      },
+      {
+        label: "Oliver Visual Guide",
+        url: "https://www.notion.so/Alex-Q-A-SF-Visual-Guide-32ef6823298280c5a939c568cb906d36",
+      },
+    ],
+    notes: `[1] CASTING — Would you take them to the club with you?
+
+    PERSON
+    ☐ Compelling on camera
+    ☐ Real stakes in their story
+    ☐ Specific point of view
+    ☐ Genuine, not rehearsed
+    ☐ Doesn't dominate the room
+
+    BUSINESS
+    ☐ Recognizable category
+    ☐ Concrete numbers to share
+    ☐ At a real inflection point
+    ☐ Decisions still ahead of them
+
+[2] CLIP SELECTION
+
+    ☐ Guest selection was positive (see above)
+    ☐ Broadly applicable (solution)
+    ☐ Clear problem + payoff
+    ☐ Strong hook (bars)
+
+[3] EDITING
+
+    ☐ HOOK — "business is X, revenue Y, goal Z; blocker A; question B"
+    ☐ TENSION — establish immediately (stakes)
+    ☐ PAYOFF — single payoff / problem; trim context to the minimum needed
+    ☐ Title card — simple, concise, curiosity hook`,
   },
   {
     // Spec wrote "L3 Boardroomnt" — treated as a typo for "L3 Boardroom"
@@ -330,6 +427,18 @@ export const seedShows: Show[] = [
       written: "none",
     },
     automation: [],
+    notes: `1. Go to business-related forums on Reddit, e.g., r/smallbusiness, r/entrepreneur
+2. Search top upvoted posts (all time, recent, etc.)
+3. Look for posts with the following criteria:
+   - High upvotes
+   - Clear question
+   - High TAM question
+   - High stakes
+   - Strong hook (title)
+4. Trim down the post so it's more concise
+5. Run it through ElevenLabs to generate voice (or use a voice changer)
+6. Alex responds to the AI caller
+7. Editing involves placing audio from the AI caller and Alex's response (cut down to make it more concise), then adding captions`,
   },
   {
     id: "tweets",
@@ -354,6 +463,11 @@ export const seedPlatformGroups: PlatformGroup[] = [
     id: "long",
     label: "Long",
     platforms: [{ name: "YouTube" }, { name: "Podcasts" }],
+    firstPrinciples: `FUTURE DIRECTION
+
+    ☐ YouTube = TV
+        ◦ https://www.youtube.com/watch?v=h69SwIn-bA4
+        ◦ https://www.youtube.com/watch?v=rGmXQNZ2yBU`,
   },
   {
     id: "mid",
@@ -371,6 +485,37 @@ export const seedPlatformGroups: PlatformGroup[] = [
       { name: "Pinterest", isExperimental: true },
       { name: "Reddit", isExperimental: true },
     ],
+    firstPrinciples: `METRICS
+
+    ☐ Cluster 1: Views + Likes + Reach + Shares
+    ☐ Cluster 2: Follows + Saves
+    ☐ Cluster 3: Comments
+
+OTHER
+
+    ☐ Carousels = followers, Reels = new
+    ☐ IG: volume vs views not positively correlated (more volume = lower views per post, but potentially higher aggregate)
+
+SECONDARY IG CHANNEL
+
+    ☐ Second channel IG (high TAM)
+    ☐ 6000 tweets in 6 months then repost
+        ◦ Potentially AI voice to read out tweets
+    ☐ Is a moat (Alex's writing)
+    ☐ Fully automated (doesn't change much behaviour)
+    ☐ Increase reach
+    ☐ Increase beginner (view discrimination)
+    ☐ Precision > volume (Ali Abdaal reduced relevance when he did too much)
+    ☐ New follower to Skool
+    ☐ Act as an umbrella brand
+    ☐ Decrease risk with new name / collab / 2 hour automation
+
+NEW FORMAT IDEAS
+
+    ☐ Mozi 6
+    ☐ Scaling Roadmap
+    ☐ Horizontal Q&A with written hook on top
+    ☐ Carousel static of Q&A`,
   },
   {
     id: "written",

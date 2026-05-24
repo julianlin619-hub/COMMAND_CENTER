@@ -5,36 +5,18 @@
 // Layout (top to bottom):
 //   - Back link (← Command Center) — preserved from the previous design so
 //     there's still a way home.
-//   - Header row: page title "Media ecosystem" + "Hide experiments" toggle.
+//   - Header row: page title "Media ecosystem".
 //   - Legend row: source-color swatches, status-pill examples, repost icon.
 //   - Matrix table: Shows (rows) × FormatGroups (columns), sticky left col.
 //   - Platform settings card: 4-column auto-fit grid listing platforms in
 //     each format group.
 //
-// Status pills cycle on click: active → experiment → none → active.
-// Clicking an em-dash (none) promotes the cell straight to experiment —
-// per the spec, that's the "safer default for adding something new".
-//
-// State persistence:
-//   - On first mount we hydrate from localStorage (key STORAGE_KEY) if a
-//     prior session saved something; otherwise we start from `seedShows`
-//     in strategy-config.ts (the "committed default").
-//   - "Save as new default" writes the current state to localStorage —
-//     this becomes the new starting state for subsequent reloads on this
-//     browser. It does NOT change strategy-config.ts; the committed
-//     default is still the seed in source.
-//   - "Reset to default" clears localStorage AND replaces state with the
-//     committed seed. After this, refreshing the page also loads the seed.
-//
-// We use localStorage (not Supabase) because this is still a UI test —
-// the user is evaluating the matrix layout before deciding whether to
-// invest in real persistence. Per-browser saves are enough for that.
-// The component accepts an optional onChange callback at the boundary
-// so a future PR can wire it to Supabase without changing internals.
+// Status pills are read-only — the matrix shows distribution state from
+// the seed in strategy-config.ts. Clicking a show name opens the drawer.
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { ArrowDown, Plus, RefreshCw, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowDown, ExternalLink, Plus, RefreshCw, X } from "lucide-react";
 
 import {
   FORMAT_GROUP_LABELS,
@@ -47,97 +29,63 @@ import {
   seedShows,
   type AutomationStep,
   type FormatGroup,
+  type PlatformGroup,
   type Show,
   type Source,
   type Status,
   type StepCategory,
 } from "./strategy-config";
 
-// Click-cycle order for status pills (and for em-dash cells, which jump
-// straight to `experiment` regardless of where they "would" be in this
-// sequence — see handleCycle).
-const CYCLE: Record<Status, Status> = {
-  active: "experiment",
-  experiment: "none",
-  none: "active",
-};
-
-// Versioned storage key. Bumped to v2 when the drawer work added the
-// required `automation` field to Show — old v1 entries lack it and
-// would render incorrectly if applied. Orphan v1 entries are harmless
-// (we never read them); we'll leave them in localStorage rather than
-// add cleanup code for a UI test.
-const STORAGE_KEY = "strategy-matrix-shows-v2";
-
-// Defensive parse of a localStorage payload. We don't want a corrupted
-// or stale entry from an older shape to crash the page — if anything
-// looks off, return null and we fall back to the seed.
-function loadSavedShows(): Show[] | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    // Minimal sanity check — must be an array with the expected number
-    // of shows. We do NOT validate every field; if you bump the shape,
-    // bump STORAGE_KEY too.
-    if (!Array.isArray(parsed)) return null;
-    return parsed as Show[];
-  } catch {
-    return null;
-  }
-}
-
-interface StrategyPageProps {
-  // Spec asks for this at the component boundary so a future wiring to
-  // Supabase has a hook. Unused today — state stays local.
-  onChange?: (show: Show, group: FormatGroup, status: Status) => void;
-}
-
-export default function StrategyPage({ onChange }: StrategyPageProps) {
+export default function StrategyPage() {
   const [shows, setShows] = useState<Show[]>(seedShows);
-  const [hideExperiments, setHideExperiments] = useState(false);
 
-  // Drawer state. `openShowId === null` means the drawer is closed.
+  // Drawer state. The page has two mutually-exclusive drawers:
+  //   - openShowId: opened by clicking a show name (left column).
+  //   - openGroupId: opened by clicking a format-group column header.
+  // We track them as separate ids (rather than a tagged union) because
+  // each drawer renders distinct components and props — keeping the
+  // state shape flat avoids a useReducer/discriminated-union helper
+  // when two booleans-by-proxy do the job.
   // `hoveredCellKey` is "{showId}:{group}" while a distribution step
   // card in the Automation tab is hovered; it drives the outline + glow
   // + z-index promotion on the matching matrix cell so it stays visible
   // through the 35% dim backdrop.
   const [openShowId, setOpenShowId] = useState<string | null>(null);
+  const [openGroupId, setOpenGroupId] = useState<FormatGroup | null>(null);
   const [hoveredCellKey, setHoveredCellKey] = useState<string | null>(null);
 
-  // Element to return keyboard focus to when the drawer closes. We
-  // store the show-name button that triggered the open; if the user
-  // closes via Escape / X / backdrop, focus returns there instead of
-  // disappearing into the document body.
+  // Element to return keyboard focus to when the drawer closes. Shared
+  // between the show drawer and the group drawer — only one is ever
+  // open at a time, so a single ref is enough. If the user closes via
+  // Escape / X / backdrop, focus returns to the triggering header/name
+  // button instead of disappearing into the document body.
   const lastFocusRef = useRef<HTMLElement | null>(null);
 
-  // Hydrate from localStorage after mount. We can't do this in the
-  // useState initializer because Next.js renders this client component
-  // on the server first, where `window` doesn't exist — reading it there
-  // would crash, and a lazy initializer that returned different values
-  // on server vs. client would cause a hydration mismatch. So we accept
-  // the brief flash of seed values, then setState once after mount.
-  // This is the canonical one-shot hydration pattern; the lint rule
-  // below has a known false positive for it. useSyncExternalStore would
-  // be the "correct" alternative but is overkill for a single read.
-  useEffect(() => {
-    const saved = loadSavedShows();
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (saved) setShows(saved);
-  }, []);
-
-  // Open the drawer for a show and remember the trigger element so we
-  // can restore focus on close. Called from ShowRow's name button.
+  // Open the show drawer and remember the trigger element so we can
+  // restore focus on close. Closes the group drawer if it was open so
+  // the two are mutually exclusive (they share the backdrop + lock).
   function handleOpenShow(showId: string, trigger: HTMLElement | null) {
     lastFocusRef.current = trigger;
+    setOpenGroupId(null);
     setOpenShowId(showId);
   }
 
-  // Close the drawer and restore focus. Used by Escape, X button, and
-  // backdrop click — all share the same close path.
+  // Mirror of handleOpenShow for the column-header drawer. Mutually
+  // exclusive with the show drawer for the same reasons.
+  function handleOpenGroup(
+    groupId: FormatGroup,
+    trigger: HTMLElement | null,
+  ) {
+    lastFocusRef.current = trigger;
+    setOpenShowId(null);
+    setOpenGroupId(groupId);
+  }
+
+  // Close whichever drawer is open and restore focus. Used by Escape,
+  // X button, and backdrop click — all share the same close path.
   function closeDrawer() {
     setOpenShowId(null);
+    setOpenGroupId(null);
     setHoveredCellKey(null);
     // Defer focus restore so React can finish unmounting the drawer
     // first; otherwise the focused button is briefly inside an
@@ -175,53 +123,20 @@ export default function StrategyPage({ onChange }: StrategyPageProps) {
     );
   }
 
-  // Save the current matrix state as the new starting point for future
-  // page loads on this browser. Per-browser, no server involvement.
-  function handleSaveDefault() {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(shows));
-  }
-
-  // Wipe any saved override and snap state back to the committed seed
-  // in strategy-config.ts. After this, a hard reload also loads the seed
-  // (no leftover localStorage entry to re-apply).
-  function handleResetDefault() {
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
-    setShows(seedShows);
-  }
-
   // Derived current open show. We don't store the Show object directly
-  // in state because that would go stale when the user mutates the
-  // matrix or adds an automation step — deriving from id-into-list
-  // means every render sees the latest version of the show.
+  // in state because that would go stale when the user mutates an
+  // automation step — deriving from id-into-list means every render
+  // sees the latest version of the show.
   const openShow: Show | null = openShowId
     ? shows.find((s) => s.id === openShowId) ?? null
     : null;
 
-  // Single reducer for every cell mutation. Em-dash clicks pass
-  // `forceExperiment: true` so the cell jumps straight to experiment
-  // instead of following the active→experiment→none→active cycle.
-  function handleCycle(
-    showId: string,
-    group: FormatGroup,
-    forceExperiment = false,
-  ) {
-    setShows((prev) =>
-      prev.map((show) => {
-        if (show.id !== showId) return show;
-        const current = show.distribution[group];
-        const next: Status = forceExperiment ? "experiment" : CYCLE[current];
-        const updated: Show = {
-          ...show,
-          distribution: { ...show.distribution, [group]: next },
-        };
-        onChange?.(updated, group, next);
-        return updated;
-      }),
-    );
-  }
+  // Same derivation for the format-group drawer. Groups are static
+  // (seedPlatformGroups), so this is a simple lookup, but we keep the
+  // pattern symmetric with openShow for clarity.
+  const openGroup: PlatformGroup | null = openGroupId
+    ? seedPlatformGroups.find((g) => g.id === openGroupId) ?? null
+    : null;
 
   return (
     <div className="mx-auto max-w-[1100px] px-6 py-10">
@@ -234,43 +149,12 @@ export default function StrategyPage({ onChange }: StrategyPageProps) {
         ← Command Center
       </Link>
 
-      {/* Header: title + action cluster.
-          Per spec: title is 18px, weight 500, sentence case. The action
-          cluster on the right groups three controls — Reset to default,
-          Save as new default, Hide experiments. They share the same
-          muted-text-button treatment to read as a single set of options;
-          a thin vertical divider separates the save/reset pair from the
-          Hide experiments toggle since they belong to different concerns
-          (persistence vs. view filter). */}
-      <header className="flex items-center justify-between mb-5">
+      {/* Header: page title only.
+          Per spec: title is 18px, weight 500, sentence case. */}
+      <header className="mb-5">
         <h1 className="text-[18px] font-medium text-[var(--foreground)]">
           Media ecosystem
         </h1>
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={handleResetDefault}
-            className="text-[12px] font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-          >
-            Reset to default
-          </button>
-          <button
-            type="button"
-            onClick={handleSaveDefault}
-            className="text-[12px] font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-          >
-            Save as new default
-          </button>
-          <span
-            aria-hidden
-            className="inline-block h-[14px] w-px"
-            style={{ backgroundColor: "var(--border)" }}
-          />
-          <HideExperimentsToggle
-            hidden={hideExperiments}
-            onToggle={() => setHideExperiments((v) => !v)}
-          />
-        </div>
       </header>
 
       {/* Legend */}
@@ -292,7 +176,11 @@ export default function StrategyPage({ onChange }: StrategyPageProps) {
                 <span className="sr-only">Show</span>
               </th>
               {FORMAT_GROUP_ORDER.map((group) => (
-                <ColumnHeader key={group} group={group} />
+                <ColumnHeader
+                  key={group}
+                  group={group}
+                  onOpenGroup={handleOpenGroup}
+                />
               ))}
             </tr>
           </thead>
@@ -301,8 +189,6 @@ export default function StrategyPage({ onChange }: StrategyPageProps) {
               <ShowRow
                 key={show.id}
                 show={show}
-                hideExperiments={hideExperiments}
-                onCellClick={handleCycle}
                 onOpenShow={handleOpenShow}
                 hoveredCellKey={hoveredCellKey}
               />
@@ -314,59 +200,35 @@ export default function StrategyPage({ onChange }: StrategyPageProps) {
       {/* Platform settings panel */}
       <PlatformSettingsPanel />
 
-      {/* Drawer overlay — only mounts while a show is open. The dim
-          backdrop and the drawer are siblings; both use `position: fixed`
-          so they escape the page wrapper and stack above the matrix.
-          z-index layering: backdrop=40, drawer=50, hover-promoted cell=41
-          (cell pops *through* the dim, but stays under the drawer). */}
+      {/* Drawer overlay — only mounts while a show OR group is open.
+          The dim backdrop and the drawer are siblings; both use
+          `position: fixed` so they escape the page wrapper and stack
+          above the matrix. z-index layering: backdrop=40, drawer=50,
+          hover-promoted cell=41 (cell pops *through* the dim, but
+          stays under the drawer). Show and group drawers are mutually
+          exclusive (enforced in handleOpenShow / handleOpenGroup), so
+          we only ever render one. */}
+      {openShow || openGroup ? (
+        <div
+          className="fixed inset-0 z-[40] bg-black/35 backdrop-blur-[0.5px]"
+          onClick={closeDrawer}
+          aria-hidden
+        />
+      ) : null}
       {openShow ? (
-        <>
-          <div
-            className="fixed inset-0 z-[40] bg-black/35 backdrop-blur-[0.5px]"
-            onClick={closeDrawer}
-            aria-hidden
-          />
-          <ShowDrawer
-            show={openShow}
-            onClose={closeDrawer}
-            hoveredCellKey={hoveredCellKey}
-            setHoveredCellKey={setHoveredCellKey}
-            onAddStep={(step) => handleAddStep(openShow.id, step)}
-            onUpdateNotes={(notes) => handleUpdateNotes(openShow.id, notes)}
-          />
-        </>
+        <ShowDrawer
+          show={openShow}
+          onClose={closeDrawer}
+          hoveredCellKey={hoveredCellKey}
+          setHoveredCellKey={setHoveredCellKey}
+          onAddStep={(step) => handleAddStep(openShow.id, step)}
+          onUpdateNotes={(notes) => handleUpdateNotes(openShow.id, notes)}
+        />
+      ) : null}
+      {openGroup ? (
+        <GroupDrawer group={openGroup} onClose={closeDrawer} />
       ) : null}
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Hide experiments toggle — plain button with a tiny filled-square indicator
-// that flips between filled and outlined. No fancy switch primitive.
-// ---------------------------------------------------------------------------
-
-function HideExperimentsToggle({
-  hidden,
-  onToggle,
-}: {
-  hidden: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-pressed={hidden}
-      className="inline-flex items-center gap-2 text-[12px] font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-    >
-      <span
-        className="inline-block h-[10px] w-[10px] rounded-[2px] border-[0.5px] border-[var(--muted-foreground)]"
-        style={{
-          backgroundColor: hidden ? "var(--muted-foreground)" : "transparent",
-        }}
-      />
-      Hide experiments
-    </button>
   );
 }
 
@@ -440,7 +302,15 @@ function LegendDivider() {
 // platforms render on a second sub-line at 60% opacity per spec.
 // ---------------------------------------------------------------------------
 
-function ColumnHeader({ group }: { group: FormatGroup }) {
+function ColumnHeader({
+  group,
+  onOpenGroup,
+}: {
+  group: FormatGroup;
+  // Called when the label button is clicked. The trigger element is
+  // captured so the drawer can return keyboard focus to it on close.
+  onOpenGroup: (groupId: FormatGroup, trigger: HTMLElement | null) => void;
+}) {
   const groupConfig = seedPlatformGroups.find((g) => g.id === group);
   if (!groupConfig) return null;
 
@@ -451,9 +321,17 @@ function ColumnHeader({ group }: { group: FormatGroup }) {
 
   return (
     <th className="text-left align-bottom px-3 py-3 border-b-[0.5px] border-[var(--border)]">
-      <div className="text-[13px] font-medium text-[var(--foreground)]">
+      {/* Group label is a button — opens the first-principles drawer.
+          Hover tint reuses --terracotta-hover to match the show-name
+          button below, keeping the page's hoverable-text vocabulary
+          consistent. */}
+      <button
+        type="button"
+        onClick={(e) => onOpenGroup(group, e.currentTarget)}
+        className="text-[13px] font-medium text-[var(--foreground)] hover:text-[var(--terracotta-hover)] transition-colors text-left cursor-pointer"
+      >
         {FORMAT_GROUP_LABELS[group]}
-      </div>
+      </button>
       <div className="mt-1 text-[10px] text-[var(--overview-fg)]/35 leading-snug">
         {mainPlatforms.map((p, i) => (
           <span key={p.name} className="inline-flex items-center gap-1">
@@ -490,14 +368,10 @@ function ColumnHeader({ group }: { group: FormatGroup }) {
 
 function ShowRow({
   show,
-  hideExperiments,
-  onCellClick,
   onOpenShow,
   hoveredCellKey,
 }: {
   show: Show;
-  hideExperiments: boolean;
-  onCellClick: (showId: string, group: FormatGroup, forceExperiment?: boolean) => void;
   // Called when the show name button is clicked. The trigger element is
   // captured so the drawer can return keyboard focus to it on close.
   onOpenShow: (showId: string, trigger: HTMLElement | null) => void;
@@ -564,10 +438,6 @@ function ShowRow({
             <StatusCell
               source={show.source}
               status={show.distribution[group]}
-              hideExperiments={hideExperiments}
-              onClick={(forceExperiment) =>
-                onCellClick(show.id, group, forceExperiment)
-              }
             />
           </td>
         );
@@ -578,62 +448,46 @@ function ShowRow({
 
 // ---------------------------------------------------------------------------
 // Status cell — renders the right pill / em-dash for a Show × FormatGroup
-// intersection. Always returns a clickable element so adding a new
-// experiment is one click on an empty cell.
+// intersection. Read-only display; status is set in strategy-config.ts.
 // ---------------------------------------------------------------------------
 
 function StatusCell({
   source,
   status,
-  hideExperiments,
-  onClick,
 }: {
   source: Source;
   status: Status;
-  hideExperiments: boolean;
-  // forceExperiment = true when the click came from an em-dash cell.
-  onClick: (forceExperiment?: boolean) => void;
 }) {
   if (status === "none") {
     return (
-      <button
-        type="button"
-        onClick={() => onClick(true)}
-        className="text-[var(--overview-fg)]/35 hover:text-[var(--overview-fg)]/60 transition-colors text-[14px] leading-none"
-        aria-label="Empty cell — click to add an experiment"
-      >
+      <span className="text-[var(--overview-fg)]/35 text-[14px] leading-none">
         —
-      </button>
+      </span>
     );
   }
 
   if (status === "experiment") {
     return (
-      <button
-        type="button"
-        onClick={() => onClick()}
+      <span
         className="rounded-full px-2.5 py-[3px] text-[11px] font-medium border border-dashed"
         style={{
-          ...(hideExperiments ? { display: "none" } : {}),
           borderColor: SOURCE_COLORS[source],
           color: SOURCE_COLORS[source],
         }}
       >
         Experiment
-      </button>
+      </span>
     );
   }
 
   // active
   return (
-    <button
-      type="button"
-      onClick={() => onClick()}
+    <span
       className="rounded-full px-2.5 py-[3px] text-[11px] font-medium text-white"
       style={{ backgroundColor: SOURCE_COLORS[source] }}
     >
       Active
-    </button>
+    </span>
   );
 }
 
@@ -702,8 +556,8 @@ function PlatformColumn({ group }: { group: { id: FormatGroup; label: string; pl
 }
 
 // ---------------------------------------------------------------------------
-// Show drawer — right-side overlay with four tabs (Overview / Automation /
-// Posts / Notes). Mounted by StrategyPage when openShowId is non-null.
+// Show drawer — right-side overlay with two tabs (Creative Brief /
+// Automation). Mounted by StrategyPage when openShowId is non-null.
 //
 // The drawer is its own focus realm:
 //   - Body scroll is locked while open.
@@ -714,13 +568,11 @@ function PlatformColumn({ group }: { group: { id: FormatGroup; label: string; pl
 //     drawer visually to the matrix row.
 // ---------------------------------------------------------------------------
 
-type DrawerTab = "overview" | "automation" | "posts" | "notes";
+type DrawerTab = "brief" | "automation";
 
 const DRAWER_TABS: { id: DrawerTab; label: string }[] = [
-  { id: "overview", label: "Overview" },
+  { id: "brief", label: "Creative Brief" },
   { id: "automation", label: "Automation" },
-  { id: "posts", label: "Posts" },
-  { id: "notes", label: "Notes" },
 ];
 
 interface ShowDrawerProps {
@@ -732,19 +584,20 @@ interface ShowDrawerProps {
   onUpdateNotes: (notes: string) => void;
 }
 
-function ShowDrawer({
-  show,
+// Shared body-scroll-lock + Escape + focus-trap behavior. Lives at
+// module scope (instead of inside ShowDrawer) so GroupDrawer can reuse
+// the same keyboard contract without copy-pasting ~40 lines that would
+// drift apart over time. Caller passes refs for the drawer root and
+// the initial-focus target (the X button).
+function useDrawerKeyboard({
+  drawerRef,
+  closeBtnRef,
   onClose,
-  setHoveredCellKey,
-  onAddStep,
-  onUpdateNotes,
-}: ShowDrawerProps) {
-  const [tab, setTab] = useState<DrawerTab>("overview");
-  const drawerRef = useRef<HTMLDivElement | null>(null);
-  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
-
-  // Body scroll lock + keyboard handlers (Escape, focus trap).
-  // All wired up while the drawer is mounted; cleanup restores state.
+}: {
+  drawerRef: React.RefObject<HTMLDivElement | null>;
+  closeBtnRef: React.RefObject<HTMLButtonElement | null>;
+  onClose: () => void;
+}) {
   useEffect(() => {
     // Lock body scroll. We restore the prior value (not just unset)
     // in case some other code had it set to a non-default value.
@@ -807,7 +660,20 @@ function ShowDrawer({
         prevActive.focus?.();
       }
     };
-  }, [onClose]);
+  }, [onClose, drawerRef, closeBtnRef]);
+}
+
+function ShowDrawer({
+  show,
+  onClose,
+  setHoveredCellKey,
+  onAddStep,
+  onUpdateNotes,
+}: ShowDrawerProps) {
+  const [tab, setTab] = useState<DrawerTab>("brief");
+  const drawerRef = useRef<HTMLDivElement | null>(null);
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
+  useDrawerKeyboard({ drawerRef, closeBtnRef, onClose });
 
   return (
     <aside
@@ -822,17 +688,15 @@ function ShowDrawer({
       <DrawerHeader show={show} onClose={onClose} closeBtnRef={closeBtnRef} />
       <DrawerTabsNav source={show.source} tab={tab} onTabChange={setTab} />
       <div className="flex-1 overflow-y-auto">
-        {tab === "overview" ? <OverviewTab show={show} /> : null}
+        {tab === "brief" ? (
+          <CreativeBriefTab show={show} onUpdateNotes={onUpdateNotes} />
+        ) : null}
         {tab === "automation" ? (
           <AutomationTab
             show={show}
             onAddStep={onAddStep}
             setHoveredCellKey={setHoveredCellKey}
           />
-        ) : null}
-        {tab === "posts" ? <PostsTab /> : null}
-        {tab === "notes" ? (
-          <NotesTab show={show} onUpdateNotes={onUpdateNotes} />
         ) : null}
       </div>
     </aside>
@@ -882,9 +746,9 @@ function DrawerHeader({
 }
 
 // ---------------------------------------------------------------------------
-// Drawer tabs — Overview / Automation / Posts / Notes. Active tab's
-// underline uses the show's source color (not the global theme accent)
-// so the drawer's identity is tied to the row that opened it.
+// Drawer tabs — Creative Brief / Automation. Active tab's underline uses
+// the show's source color (not the global theme accent) so the drawer's
+// identity is tied to the row that opened it.
 // ---------------------------------------------------------------------------
 
 function DrawerTabsNav({
@@ -932,64 +796,127 @@ function DrawerTabsNav({
 }
 
 // ---------------------------------------------------------------------------
-// Overview tab — read-only restatement of the show's matrix row plus a
-// small data grid (source / owner / updated / active count / experiment
-// count).
+// Creative Brief tab.
+//
+// Two modes:
+//   1. `show.briefUrl` set — render a link card pointing at the external
+//      doc (Google Docs, Notion, etc.). No inline editing in this mode;
+//      the canonical brief lives at the URL.
+//   2. Otherwise — render a textarea bound via "commit on blur": typing
+//      updates a local buffer, blur commits to the shared `shows` state.
+//      The local-state reset effect depends only on `show.id` (not
+//      `show.notes`) so external mutations don't clobber in-progress
+//      typing; re-hydration happens only on show-identity change.
 // ---------------------------------------------------------------------------
 
-function OverviewTab({ show }: { show: Show }) {
-  const activeCount = FORMAT_GROUP_ORDER.filter(
-    (g) => show.distribution[g] === "active",
-  ).length;
-  const experimentCount = FORMAT_GROUP_ORDER.filter(
-    (g) => show.distribution[g] === "experiment",
-  ).length;
+function CreativeBriefTab({
+  show,
+  onUpdateNotes,
+}: {
+  show: Show;
+  onUpdateNotes: (notes: string) => void;
+}) {
+  const [value, setValue] = useState(show.notes ?? "");
+  // Ref so we can auto-grow the textarea: reset height to 'auto' then
+  // set to scrollHeight on every value change. This lets the whole
+  // brief flow down the page (scrolling happens on the drawer body),
+  // instead of getting trapped behind an inner scrollbar.
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    setValue(show.notes ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [show.id]);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+
+  if (show.briefUrl) {
+    return (
+      <div className="p-6">
+        <BriefLinkCard label="Open creative brief" url={show.briefUrl} />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
-      <section>
-        <div className="text-[11px] font-medium text-[var(--muted-foreground)] mb-3">
-          Distribution
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {FORMAT_GROUP_ORDER.map((g) => (
-            <div
-              key={g}
-              className="flex flex-col items-start gap-1.5 rounded-[8px] border-[0.5px] p-3"
-              style={{ borderColor: "var(--border)" }}
-            >
-              <span className="text-[10px] uppercase tracking-[0.08em] text-[var(--overview-fg)]/35">
-                {FORMAT_GROUP_LABELS[g]}
-              </span>
-              <ReadOnlyStatusPill
-                source={show.source}
-                status={show.distribution[g]}
+      <textarea
+        ref={textareaRef}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={() => onUpdateNotes(value)}
+        placeholder="Describe the show — voice, audience, creative direction, goals…"
+        // Mono font so the structured briefs (numbered sections,
+        // 4-space indents, ☐ checkboxes) line up the way they're
+        // written. overflow-hidden + resize-none + JS auto-grow lets
+        // the textarea expand vertically and pushes scroll up to the
+        // drawer body — no inner scrollbar.
+        className="block w-full font-mono text-[12px] bg-transparent border-[0.5px] rounded-[8px] px-3 py-2 text-[var(--foreground)] focus:outline-none focus:border-[var(--terracotta)] resize-none overflow-hidden leading-relaxed whitespace-pre"
+        style={{ borderColor: "var(--border)" }}
+      />
+      {show.briefLinks && show.briefLinks.length > 0 ? (
+        <section>
+          <div className="text-[11px] font-medium text-[var(--muted-foreground)] mb-3">
+            References
+          </div>
+          <div className="space-y-2">
+            {show.briefLinks.map((link) => (
+              <BriefLinkCard
+                key={link.url}
+                label={link.label}
+                url={link.url}
               />
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-        <OverviewField label="Source" value={SOURCE_LABELS[show.source]} />
-        <OverviewField label="Owner" value={show.owner ?? "—"} />
-        <OverviewField label="Updated" value={formatRelative(show.updatedAt)} />
-        <OverviewField label="Active" value={String(activeCount)} />
-        <OverviewField label="Experiments" value={String(experimentCount)} />
-      </section>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
 
-function OverviewField({ label, value }: { label: string; value: string }) {
+// Shared link card used by the Creative Brief tab. Handles both the
+// "brief lives entirely at this URL" case (Scale or Fail) and the
+// list-of-references case (L1 Q&A). Source label on the right is
+// derived from the URL's host so we don't have to hand-tag every link.
+function BriefLinkCard({ label, url }: { label: string; url: string }) {
   return (
-    <div>
-      <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--overview-fg)]/35">
-        {label}
-      </div>
-      <div className="text-[13px] text-[var(--foreground)] mt-1">{value}</div>
-    </div>
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center justify-between gap-3 rounded-[8px] border-[0.5px] px-4 py-3 text-[13px] text-[var(--foreground)] hover:border-[var(--terracotta)] transition-colors"
+      style={{
+        backgroundColor: "var(--card)",
+        borderColor: "var(--border)",
+      }}
+    >
+      <span className="flex items-center gap-2 min-w-0">
+        <ExternalLink className="size-4 shrink-0 text-[var(--muted-foreground)]" />
+        <span className="truncate">{label}</span>
+      </span>
+      <span className="text-[11px] text-[var(--muted-foreground)] shrink-0">
+        {getLinkSourceLabel(url)}
+      </span>
+    </a>
   );
+}
+
+// Maps a URL to a short host label ("Google Docs" / "Notion" / hostname
+// fallback). Kept hand-rolled because the set of doc hosts we link to
+// is tiny — a library would be overkill.
+function getLinkSourceLabel(url: string): string {
+  if (url.includes("docs.google.com")) return "Google Docs";
+  if (url.includes("notion.so")) return "Notion";
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "Link";
+  }
 }
 
 // Read-only version of StatusCell — used by the Overview tab and step
@@ -1431,60 +1358,147 @@ function AddStepForm({
 }
 
 // ---------------------------------------------------------------------------
-// Posts tab — placeholder per spec ("Don't build out").
+// Group drawer — right-side overlay that opens when a format-group
+// column header (Long / Mid / Short / Written) is clicked. Mirrors the
+// show drawer's structure (header / tabs / body) but only has a single
+// tab ("First Principles") today. Kept as its own component instead of
+// generalizing ShowDrawer — the two share the keyboard hook but their
+// props and bodies have nothing in common.
 // ---------------------------------------------------------------------------
 
-function PostsTab() {
+function GroupDrawer({
+  group,
+  onClose,
+}: {
+  group: PlatformGroup;
+  onClose: () => void;
+}) {
+  const drawerRef = useRef<HTMLDivElement | null>(null);
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
+  useDrawerKeyboard({ drawerRef, closeBtnRef, onClose });
+
+  // Platform-count subtitle ("3 platforms"). Cheap derivation — doesn't
+  // need useMemo since the array is tiny and the drawer mounts rarely.
+  const platformCount = group.platforms.length;
+
+  return (
+    <aside
+      ref={drawerRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${group.label} first principles`}
+      className="fixed top-0 right-0 h-screen w-full md:w-[60vw] md:max-w-[720px] bg-[var(--background)] z-[50] flex flex-col animate-in slide-in-from-right duration-200 border-l-[0.5px] border-[var(--border)]"
+    >
+      <header className="flex items-stretch gap-3 px-6 py-5 border-b-[0.5px] border-[var(--border)]">
+        <div className="flex-1 min-w-0">
+          <h2 className="text-[17px] font-medium text-[var(--foreground)] truncate">
+            {group.label}
+          </h2>
+          <p className="text-[11px] text-[var(--overview-fg)]/35 mt-1">
+            Format group · {platformCount}{" "}
+            {platformCount === 1 ? "platform" : "platforms"}
+          </p>
+        </div>
+        <button
+          ref={closeBtnRef}
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors self-start"
+        >
+          <X className="size-4" />
+        </button>
+      </header>
+
+      {/* Single-tab nav. We keep the tablist semantics + visual
+          treatment even with only one tab so the drawer reads as
+          consistent with the show drawer — and so dropping in a
+          second tab later is a one-line change. Underline color uses
+          --foreground (white) instead of a source color since groups
+          don't belong to a source palette. */}
+      <nav
+        className="flex gap-6 px-6 border-b-[0.5px] border-[var(--border)]"
+        role="tablist"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected="true"
+          className="py-3 text-[12px] font-medium uppercase tracking-[0.08em]"
+          style={{
+            color: "var(--foreground)",
+            borderBottom: "2px solid var(--foreground)",
+            marginBottom: "-0.5px",
+          }}
+        >
+          First Principles
+        </button>
+      </nav>
+
+      <div className="flex-1 overflow-y-auto">
+        <FirstPrinciplesTab group={group} />
+      </div>
+    </aside>
+  );
+}
+
+// Body of the First Principles tab. Read-only display — copy lives in
+// strategy-config.ts on the PlatformGroup. Rendered in a monospace
+// pre-formatted block so structured headings / bullet indentation
+// (similar to the show briefs) line up exactly as authored. If no
+// copy has been written yet, show a placeholder so the empty state
+// is obvious rather than a blank panel.
+function FirstPrinciplesTab({ group }: { group: PlatformGroup }) {
+  if (!group.firstPrinciples) {
+    return (
+      <div className="p-6">
+        <p className="text-[12px] text-[var(--muted-foreground)] italic">
+          No first principles defined yet.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="p-6">
-      <p className="text-[12px] text-[var(--muted-foreground)]">
-        Recent posts will appear here once connected.
-      </p>
+      <pre className="font-mono text-[12px] text-[var(--foreground)] leading-relaxed whitespace-pre-wrap">
+        {renderFirstPrinciplesWithLinks(group.firstPrinciples)}
+      </pre>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Notes tab — single textarea with "commit on blur" semantics. Typing
-// updates local state; blur commits to React's shared `shows` state.
-// Persistence to localStorage still requires the existing
-// "Save as new default" button — same model as every other matrix edit.
-// ---------------------------------------------------------------------------
-
-function NotesTab({
-  show,
-  onUpdateNotes,
-}: {
-  show: Show;
-  onUpdateNotes: (notes: string) => void;
-}) {
-  // Local textarea state. We use the show id as the dependency to reset
-  // the buffer when a different show's drawer is opened.
-  const [value, setValue] = useState(show.notes ?? "");
-
-  // Reset local buffer ONLY when the drawer switches to a different
-  // show. The textarea is the source of truth during an edit session,
-  // so we deliberately do not depend on `show.notes` — if anything
-  // external mutates it (future backend sync, import action, optimistic
-  // update), we don't want to clobber in-progress typing. Re-hydration
-  // happens only on show-identity change.
-  useEffect(() => {
-    setValue(show.notes ?? "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [show.id]);
-
-  return (
-    <div className="p-6">
-      <textarea
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={() => onUpdateNotes(value)}
-        placeholder="Notes about this show…"
-        className="w-full min-h-[200px] text-[13px] bg-transparent border-[0.5px] rounded-[8px] px-3 py-2 text-[var(--foreground)] focus:outline-none focus:border-[var(--terracotta)] resize-y leading-relaxed"
-        style={{ borderColor: "var(--border)" }}
-      />
-    </div>
-  );
+// Split the firstPrinciples copy on http(s) URLs and wrap matches in
+// anchor tags so they're clickable. The surrounding <pre> still
+// preserves whitespace because plain-text segments come back as raw
+// strings. Kept inline here (rather than a separate utility) because
+// it's only used by this one component.
+function renderFirstPrinciplesWithLinks(text: string) {
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const parts: ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+  while ((match = urlRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    parts.push(
+      <a
+        key={key++}
+        href={match[0]}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-[var(--terracotta)] hover:underline"
+      >
+        {match[0]}
+      </a>,
+    );
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts;
 }
 
 // ---------------------------------------------------------------------------
