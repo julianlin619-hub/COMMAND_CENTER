@@ -111,6 +111,43 @@ def get_posts(
     return query.execute().data
 
 
+def get_posts_awaiting_buffer_confirmation(
+    max_age_days: int = 30, min_age_minutes: int = 5
+) -> list[dict]:
+    """Fetch posts we handed to Buffer's queue but haven't confirmed published.
+
+    The fan-out legs (cron/_tweet_card_legs.py) and the other Buffer paths
+    stamp `platform_post_id` once Buffer accepts a post into its queue, but
+    leave `status='sent_to_buffer'` — they never check back whether Buffer
+    actually published it. This returns exactly that unconfirmed set so
+    cron/buffer_reconcile.py can poll Buffer and resolve each one.
+
+    Bounds:
+      - `min_age_minutes`: skip very recently-sent posts so we don't race a
+        post Buffer hasn't ingested yet (its status would read as queued and
+        we'd just re-check next run anyway).
+      - `max_age_days`: stop polling posts old enough that Buffer would have
+        published or permanently failed them long ago — avoids scanning stale
+        rows forever. Matches the 30-day signed-URL TTL window.
+    """
+    client = get_client()
+    now = datetime.now(timezone.utc)
+    newest = (now - timedelta(minutes=min_age_minutes)).isoformat()
+    oldest = (now - timedelta(days=max_age_days)).isoformat()
+
+    return (
+        client.table("posts")
+        .select("*")
+        .eq("status", "sent_to_buffer")
+        .not_.is_("platform_post_id", "null")
+        .lte("created_at", newest)
+        .gte("created_at", oldest)
+        .order("created_at", desc=False)
+        .execute()
+        .data
+    )
+
+
 # ── Schedules ────────────────────────────────────────────────────────────
 # The `schedules` table links a post to a future publish time. The cron job
 # queries for "due" schedules — ones where the time has passed but no cron

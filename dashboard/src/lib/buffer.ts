@@ -207,13 +207,20 @@ export async function sendToBuffer(
   if (Object.keys(metadata).length > 0) input.metadata = metadata;
 
   const data = await bufferRequest<{
-    createPost: { post?: { id: string }; message?: string };
+    createPost: { __typename?: string; post?: { id: string }; message?: string };
   }>(
     `mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
+        __typename
         ... on PostActionSuccess {
           post { id }
         }
+        # Catch-all: every Buffer error type implements the MutationError
+        # interface, so this surfaces the message for ANY error member —
+        # including new types Buffer adds later. Without it, an unlisted
+        # error type returned neither post nor message and we raised a
+        # useless "Unexpected response from Buffer API".
+        ... on MutationError { message }
         ... on NotFoundError { message }
         ... on UnauthorizedError { message }
         ... on UnexpectedError { message }
@@ -226,11 +233,15 @@ export async function sendToBuffer(
   );
 
   const result = data.createPost;
+  // Name the error type (__typename) so callers/logs can tell which union
+  // member fired (e.g. LimitReachedError vs InvalidInputError).
   if ("message" in result && result.message) {
-    throw new Error(result.message);
+    throw new Error(`${result.__typename ?? "BufferError"}: ${result.message}`);
   }
   if (!result.post) {
-    throw new Error("Unexpected response from Buffer API");
+    throw new Error(
+      `Unexpected response from Buffer API (${result.__typename ?? "unknown type"})`
+    );
   }
   return result.post.id;
 }

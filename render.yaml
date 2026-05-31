@@ -177,6 +177,28 @@ services:
       - key: BUFFER_ORG_ID
         sync: false
 
+  # Reconciles posts handed to Buffer's queue against Buffer's actual publish
+  # state. Buffer accepts a post immediately but may fail to publish it days
+  # later (e.g. expired media URL); send_to_buffer never checks back. This
+  # polls every unconfirmed handoff (status='sent_to_buffer' with a
+  # platform_post_id) and flips it to 'published' or 'buffer_error' so
+  # Buffer-side failures surface in the dashboard instead of dying silently.
+  - type: cron
+    name: buffer-reconcile
+    runtime: python
+    buildCommand: pip install -r requirements.txt && pip install -e .
+    startCommand: python -m cron.buffer_reconcile
+    schedule: "0 */3 * * *"  # every 3 hours
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: BUFFER_ACCESS_TOKEN
+        sync: false
+      - key: BUFFER_ORG_ID
+        sync: false
+
   - type: cron
     name: written-posts
     runtime: python

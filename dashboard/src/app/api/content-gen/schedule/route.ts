@@ -44,11 +44,13 @@ export async function POST(req: NextRequest) {
     const sent: { postId: string; bufferId: string }[] = [];
 
     for (const item of items) {
-      // 1. Get a signed URL with 7-day expiry.
-      //    Buffer queues content and may not download it for hours or days.
+      // 1. Get a signed URL with 30-day expiry.
+      //    Buffer downloads content lazily from its queue and a post can sit
+      //    there 1-2 weeks before its slot; a 7-day expiry left backed-up
+      //    posts with a dead URL (surfacing as Buffer's "unknown error").
       const { data: signedData, error: signError } = await supabase.storage
         .from("media")
-        .createSignedUrl(item.storagePath, 604800); // 7 days in seconds
+        .createSignedUrl(item.storagePath, 2592000); // 30 days in seconds
 
       if (signError || !signedData?.signedUrl) {
         console.error("Failed to create signed URL:", signError?.message);

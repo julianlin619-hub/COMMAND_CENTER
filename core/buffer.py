@@ -35,25 +35,66 @@ TIKTOK_CAPTION_LIMIT = 150
 _cached_channel_ids: dict[str, str] = {}
 
 
+# Retry budget for transient rate limiting. Bank-sourced bursts (e.g. a bank
+# run firing ~24 items × 4 fan-out platforms ≈ 96 createPost calls against
+# Buffer's ~100-req/15-min cap) were nuking whole batches: every send got
+# rate-limited and the post was marked failed with no retry. We absorb the
+# transient case here so callers don't each need their own retry logic.
+_MAX_ATTEMPTS = 5  # 1 initial try + up to 4 retries
+# Cap a single backoff sleep. A 15-minute rolling-window cooldown can ask us
+# to wait minutes, which would blow the Render cron's runtime budget and stall
+# every later post in the run. If the wait hint exceeds this, we give up and
+# let the post be retried by the next cron run / the reconcile cron instead.
+_MAX_BACKOFF_SECONDS = 60.0
+# Fallback when no wait hint is given: short enough not to waste the run,
+# long enough to clear a typical per-second/per-minute quota.
+_DEFAULT_BACKOFF_SECONDS = 5.0
+
+
+def _parse_wait_seconds(raw: object) -> float:
+    """Coerce a Retry-After / retryAfter hint to seconds, with a safe default."""
+    try:
+        return float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return _DEFAULT_BACKOFF_SECONDS
+
+
+def _graphql_rate_limited(errors: list[dict]) -> tuple[bool, float]:
+    """Detect a rate-limit error in a GraphQL `errors` array.
+
+    Buffer's new public GraphQL API reports rate limiting as a GraphQL error
+    with `extensions.code == "RATE_LIMIT_EXCEEDED"` at HTTP 200 — NOT an HTTP
+    429 — so the legacy 429-only retry never fired for it. Returns
+    (is_rate_limited, wait_seconds); wait falls back to the default when Buffer
+    doesn't include a hint in `extensions`.
+    """
+    for err in errors:
+        ext = err.get("extensions") or {}
+        code = str(ext.get("code", "")).upper()
+        message = str(err.get("message", "")).lower()
+        if code == "RATE_LIMIT_EXCEEDED" or "rate limit" in message:
+            hint = ext.get("retryAfter", ext.get("retry_after"))
+            wait = _parse_wait_seconds(hint) if hint is not None else _DEFAULT_BACKOFF_SECONDS
+            return True, wait
+    return False, 0.0
+
+
 def _buffer_request(query: str, variables: dict | None = None) -> dict:
     """Send a GraphQL request to Buffer and return the data payload.
 
     Raises on HTTP errors, auth errors, or GraphQL-level errors.
 
-    On HTTP 429 (rate-limited) we honor the `Retry-After` header and retry
-    up to 2 times before giving up. Bank-sourced bursts (e.g. threads_cron
-    inserting 20+ posts scheduled for "now" and the scheduler firing them
-    in tight succession) were nuking entire batches because every send hit
-    429 and the post got marked `failed` with no retry. Absorbing transient
-    429s here means callers don't need their own retry logic.
+    Retries transient rate limiting up to `_MAX_ATTEMPTS` times, honoring the
+    server's wait hint but capping a single sleep at `_MAX_BACKOFF_SECONDS`.
+    Two rate-limit shapes are handled: a legacy HTTP 429 (honoring the
+    `Retry-After` header) and the new API's GraphQL `RATE_LIMIT_EXCEEDED`
+    error (HTTP 200, see `_graphql_rate_limited`).
     """
     token = os.environ.get("BUFFER_ACCESS_TOKEN", "")
     if not token:
         raise RuntimeError("BUFFER_ACCESS_TOKEN env var not set")
 
-    max_attempts = 3  # 1 initial try + up to 2 retries on 429
-    resp: httpx.Response | None = None
-    for attempt in range(1, max_attempts + 1):
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
         resp = httpx.post(
             BUFFER_GRAPHQL_URL,
             headers={
@@ -66,38 +107,48 @@ def _buffer_request(query: str, variables: dict | None = None) -> dict:
             timeout=120,
         )
 
-        if resp.status_code != 429 or attempt == max_attempts:
-            break
+        # Legacy HTTP 429 rate limit.
+        if resp.status_code == 429:
+            wait = _parse_wait_seconds(resp.headers.get("Retry-After"))
+            if attempt < _MAX_ATTEMPTS and wait <= _MAX_BACKOFF_SECONDS:
+                logger.warning(
+                    "Buffer 429 on attempt %d/%d — sleeping %.1fs before retry",
+                    attempt, _MAX_ATTEMPTS, wait,
+                )
+                time.sleep(wait)
+                continue
+            raise RuntimeError(
+                f"Buffer rate limited (HTTP 429) after {attempt} attempt(s)"
+            )
 
-        # Buffer's Retry-After is usually seconds. If missing or unparseable,
-        # fall back to 5s — short enough that retries don't blow the cron's
-        # runtime budget, long enough to clear a typical per-second quota.
-        try:
-            retry_after = float(resp.headers.get("Retry-After", "5"))
-        except (TypeError, ValueError):
-            retry_after = 5.0
-        logger.warning(
-            "Buffer 429 on attempt %d/%d — sleeping %.1fs before retry",
-            attempt, max_attempts, retry_after,
-        )
-        time.sleep(retry_after)
+        if resp.status_code == 401:
+            raise RuntimeError("Buffer token is invalid or expired (401)")
+        if not resp.is_success:
+            raise RuntimeError(
+                f"Buffer API error {resp.status_code}: {resp.text or resp.reason_phrase}"
+            )
 
-    assert resp is not None  # loop runs at least once
-    if resp.status_code == 401:
-        raise RuntimeError("Buffer token is invalid or expired (401)")
-    if not resp.is_success:
-        raise RuntimeError(
-            f"Buffer API error {resp.status_code}: {resp.text or resp.reason_phrase}"
-        )
+        body = resp.json()
 
-    body = resp.json()
+        # GraphQL-level errors (rate limiting, query syntax, missing fields…).
+        errors = body.get("errors")
+        if errors:
+            limited, wait = _graphql_rate_limited(errors)
+            if limited and attempt < _MAX_ATTEMPTS and wait <= _MAX_BACKOFF_SECONDS:
+                logger.warning(
+                    "Buffer RATE_LIMIT_EXCEEDED on attempt %d/%d — sleeping %.1fs before retry",
+                    attempt, _MAX_ATTEMPTS, wait,
+                )
+                time.sleep(wait)
+                continue
+            messages = ", ".join(e.get("message", "") for e in errors)
+            raise RuntimeError(f"Buffer GraphQL error: {messages}")
 
-    # GraphQL-level errors (query syntax, missing fields, etc.)
-    if body.get("errors"):
-        messages = ", ".join(e.get("message", "") for e in body["errors"])
-        raise RuntimeError(f"Buffer GraphQL error: {messages}")
+        return body.get("data", {})
 
-    return body.get("data", {})
+    # Defensive: every branch above returns, continues, or raises, so the loop
+    # can't fall through here in practice.
+    raise RuntimeError("Buffer request failed after exhausting retries")
 
 
 def get_channel_id(org_id: str | None = None, service: str = "tiktok") -> str:
@@ -188,9 +239,17 @@ def send_to_buffer(
         """
         mutation CreatePost($input: CreatePostInput!) {
             createPost(input: $input) {
+                __typename
                 ... on PostActionSuccess {
                     post { id }
                 }
+                # Catch-all: every Buffer error type implements the
+                # MutationError interface, so this fragment surfaces the
+                # message for ANY error member — including ones not listed
+                # explicitly below and any new types Buffer adds later.
+                # Without it, an unlisted error type returned neither `post`
+                # nor `message` and we raised a useless "Unexpected response".
+                ... on MutationError { message }
                 ... on NotFoundError { message }
                 ... on UnauthorizedError { message }
                 ... on UnexpectedError { message }
@@ -234,13 +293,21 @@ def send_to_buffer(
 
     result = data.get("createPost", {})
 
-    # Buffer returns error types as union members with a `message` field
+    # Buffer returns error types as union members with a `message` field.
+    # Include __typename so the log/error names which error type fired
+    # (e.g. LimitReachedError vs InvalidInputError) instead of a bare string.
     if result.get("message"):
-        raise RuntimeError(f"Buffer error: {result['message']}")
+        error_type = result.get("__typename") or "BufferError"
+        raise RuntimeError(f"Buffer error ({error_type}): {result['message']}")
 
     post = result.get("post")
     if not post:
-        raise RuntimeError("Unexpected response from Buffer — no post returned")
+        # No post and no message — surface the typename so we can tell which
+        # union member came back unhandled rather than masking it entirely.
+        error_type = result.get("__typename") or "unknown type"
+        raise RuntimeError(
+            f"Unexpected response from Buffer — no post returned ({error_type})"
+        )
 
     logger.info("Sent to Buffer queue: post %s", post["id"])
     return post["id"]
@@ -276,6 +343,47 @@ def get_buffer_post_sent_at(post_id: str) -> datetime | None:
         return None
     # Buffer returns ISO-8601 with a `Z` suffix; fromisoformat needs +00:00.
     return datetime.fromisoformat(sent.replace("Z", "+00:00"))
+
+
+def get_buffer_post_state(post_id: str) -> dict | None:
+    """Return Buffer's current view of a post: {'status', 'sentAt'} or None.
+
+    Used by cron/buffer_reconcile.py to verify posts we handed to Buffer's
+    queue actually published. Unlike `get_buffer_post_sent_at` (which only
+    cares about the publish timestamp), this also returns the raw `status`
+    string so the reconcile cron can distinguish "still queued" from a
+    Buffer-side failure.
+
+    Returns None only if Buffer has no record of the post (deleted/unknown id).
+    `sentAt` is a parsed UTC datetime when set, else None.
+    """
+    # Same read query as get_buffer_post_sent_at — Buffer's post(input:{id})
+    # returns a plain Post object (not the createPost union), so we select
+    # fields directly.
+    data = _buffer_request(
+        """
+        query GetPost($id: PostId!) {
+            post(input: { id: $id }) {
+                id
+                sentAt
+                status
+            }
+        }
+        """,
+        {"id": post_id},
+    )
+
+    post = data.get("post")
+    if not post:
+        return None
+
+    sent_raw = post.get("sentAt")
+    sent_at = (
+        datetime.fromisoformat(sent_raw.replace("Z", "+00:00"))
+        if sent_raw
+        else None
+    )
+    return {"status": post.get("status"), "sentAt": sent_at}
 
 
 def truncate_caption(text: str, limit: int = TIKTOK_CAPTION_LIMIT) -> str:

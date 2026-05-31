@@ -65,9 +65,10 @@ const PG_UNIQUE_VIOLATION = "23505";
 
 const BUCKET = "media";
 
-// 7 days. Buffer may not pull the file for hours or days after we queue it,
-// so short-lived URLs risk expiring before Buffer fetches the video.
-const READ_URL_TTL_SECONDS = 60 * 60 * 24 * 7;
+// 30 days. Buffer downloads the file lazily from its queue and a post can sit
+// there 1-2 weeks before its slot, so a 7-day expiry risked the URL dying
+// before Buffer fetched the video (surfacing as Buffer's "unknown error").
+const READ_URL_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 // Defaults applied to every YouTube Shorts upload. Pulled out so they're
 // easy to scan and tweak. `title` is supplied per-upload from the form.

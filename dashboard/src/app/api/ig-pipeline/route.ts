@@ -35,8 +35,9 @@ const INSTAGRAM_CAPTION_LIMIT = 2200;
 const BUFFER_IG_2ND_NAME =
   process.env.BUFFER_INSTAGRAM_2ND_NAME ?? 'alexhighlights2026';
 
-// 7-day signed URL — Buffer may not pull the file for hours or days.
-const SIGNED_URL_EXPIRY_SECONDS = 604800;
+// 30-day signed URL — Buffer downloads lazily from its queue and a post can
+// sit there 1-2 weeks; a 7-day expiry left backed-up posts with a dead URL.
+const SIGNED_URL_EXPIRY_SECONDS = 2592000;
 
 export async function POST(req: NextRequest) {
   if (!(await verifyApiAuth(req))) {

@@ -324,9 +324,12 @@ def main() -> None:
             continue
 
         try:
-            # 7-day signed URL — Buffer queues for hours/days before downloading,
-            # and a short expiry would silently break the eventual fetch.
-            image_url = get_signed_url(storage_path, expires_in=604800)
+            # 30-day signed URL — Buffer downloads the asset lazily from its
+            # queue, and a post can sit there 1-2 weeks before its slot. A
+            # 7-day expiry (the old value) meant backed-up posts had a dead
+            # URL by the time Buffer fetched them, surfacing as Buffer's
+            # generic "unknown error". 30 days clears the queue with margin.
+            image_url = get_signed_url(storage_path, expires_in=2592000)
 
             buffer_post_id = send_to_buffer(
                 LINKEDIN_LEILA_CHANNEL_ID,

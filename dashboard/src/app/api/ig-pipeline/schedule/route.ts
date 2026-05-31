@@ -28,9 +28,10 @@ const INSTAGRAM_CAPTION_LIMIT = 2200;
 const BUFFER_IG_2ND_NAME =
   process.env.BUFFER_INSTAGRAM_2ND_NAME ?? 'alexhighlights2026';
 
-// Buffer may not pull the file for hours/days, so use a 7-day signed URL.
-// Same expiry as SIGNED_URL_EXPIRES_IN in cron/_tweet_card_legs.py.
-const SIGNED_URL_EXPIRY_SECONDS = 604800;
+// Buffer downloads lazily from its queue and a post can sit there 1-2 weeks,
+// so use a 30-day signed URL (a 7-day expiry left backed-up posts with a dead
+// URL). Same expiry as SIGNED_URL_EXPIRES_IN in cron/_tweet_card_legs.py.
+const SIGNED_URL_EXPIRY_SECONDS = 2592000;
 
 export async function POST(req: NextRequest) {
   if (!(await verifyApiAuth(req))) {
