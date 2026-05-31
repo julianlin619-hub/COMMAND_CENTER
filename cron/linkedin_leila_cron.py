@@ -43,6 +43,7 @@ from core.database import (
     log_cron_finish,
     log_cron_start,
     post_caption_exists,
+    record_buffer_handoff,
     update_post,
 )
 from core.env_diag import log_env_diagnostics
@@ -337,7 +338,14 @@ def main() -> None:
                 image_url,
                 media_type="image",
             )
-            update_post(post_id, platform_post_id=buffer_post_id)
+            # Persist the replay payload so buffer_reconcile can re-send this
+            # exact post if Buffer later fails to publish it.
+            record_buffer_handoff(
+                post_id, buffer_post_id,
+                channel_id=LINKEDIN_LEILA_CHANNEL_ID,
+                body=LINKEDIN_LEILA_CAPTION,
+                media_type="image",
+            )
             sent_count += 1
             logger.info("Sent to Buffer: %s (Buffer post %s)", storage_path, buffer_post_id)
         except Exception as e:

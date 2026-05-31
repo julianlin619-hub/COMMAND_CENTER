@@ -58,6 +58,11 @@ CREATE_POST_MUTATION = """
 class Threads(PlatformBase):
     name = "threads"
 
+    # create_post hands the post to Buffer's queue (Buffer publishes to Threads
+    # asynchronously), so the scheduler should mark it 'sent_to_buffer' and let
+    # cron.buffer_reconcile confirm the actual publish — see PlatformBase.
+    publishes_via_buffer = True
+
     def __init__(self, channel_id: str | None = None) -> None:
         # Buffer credentials (for posting). channel_id can be passed
         # explicitly so the same adapter can target different Buffer
@@ -189,6 +194,15 @@ class Threads(PlatformBase):
         logger.info("Queued post to Buffer: %s (status: %s)",
                      post_id, buffer_post.get("status", "?"))
         return post_id
+
+    def buffer_replay(self, post: Post) -> dict:
+        """Replay payload for cron.buffer_reconcile to re-send a failed post.
+
+        Threads posts are text-only and rebuilt deterministically from the row
+        by create_post, so reconcile only needs to know which Buffer channel to
+        target (this adapter can front several Threads channels via channel_id).
+        """
+        return {"channel_id": self.channel_id}
 
     # ── Media ───────────────────────────────────────────────────
 

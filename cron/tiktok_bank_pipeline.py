@@ -41,6 +41,7 @@ from core.database import (
     log_cron_finish,
     log_cron_start,
     post_caption_exists,
+    record_buffer_handoff,
     update_post,
 )
 from core.env_diag import log_env_diagnostics
@@ -229,7 +230,15 @@ def main():
         buffer_post_id = send_to_buffer(
             tiktok_channel_id, BUFFER_CAPTION, video_url, media_type="video",
         )
-        update_post(post_id, platform_post_id=buffer_post_id)
+        # Persist the replay payload so buffer_reconcile can re-send this
+        # exact post if Buffer later fails to publish it.
+        record_buffer_handoff(
+            post_id, buffer_post_id,
+            channel_id=tiktok_channel_id,
+            body=BUFFER_CAPTION,
+            media_type="video",
+            base_metadata={"source": SOURCE_TAG},
+        )
         logger.info("[tiktok] sent to Buffer: %s (Buffer post %s)", storage_path, buffer_post_id)
     except Exception as e:
         logger.error("[tiktok] Buffer send failed for %s: %s", storage_path, e, exc_info=True)

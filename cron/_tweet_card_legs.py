@@ -39,6 +39,7 @@ from core.content_gen_client import generate_content
 from core.database import (
     insert_post,
     post_caption_exists,
+    record_buffer_handoff,
     update_post,
 )
 from core.media import get_signed_url
@@ -256,7 +257,19 @@ def send_leg(
             media_type=media_type,
             **extra_send_kwargs,
         )
-        update_post(post_id, platform_post_id=buffer_post_id)
+        # Persist the replay payload alongside platform_post_id so
+        # cron/buffer_reconcile.py can re-send this exact post if Buffer
+        # fails to publish it (the Buffer body is BUFFER_CAPTION, not the
+        # stored caption, and channel_id/post-type live only here).
+        record_buffer_handoff(
+            post_id, buffer_post_id,
+            channel_id=channel_id,
+            body=BUFFER_CAPTION,
+            media_type=media_type,
+            facebook_post_type=extra_send_kwargs.get("facebook_post_type"),
+            instagram_post_type=extra_send_kwargs.get("instagram_post_type"),
+            base_metadata={"source": source_tag},
+        )
         logger.info("[%s] sent to Buffer: %s (Buffer post %s)", platform, storage_path, buffer_post_id)
         return {
             "status": "sent",

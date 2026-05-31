@@ -47,6 +47,15 @@ class PlatformBase(ABC):
     # look up the right adapter class by name at runtime.
     name: str  # e.g. "youtube", "instagram" — matches platform_enum
 
+    # Whether create_post() hands the post to Buffer's queue (which publishes
+    # it asynchronously, possibly hours/days later and possibly failing) rather
+    # than publishing synchronously. Adapters that return a real, already-live
+    # platform id leave this False. Buffer-backed adapters set it True so
+    # core.scheduler.process_due_posts marks the post 'sent_to_buffer' (awaiting
+    # confirmation) instead of optimistically 'published' — cron.buffer_reconcile
+    # then confirms it to 'published' or 'buffer_error'.
+    publishes_via_buffer: bool = False
+
     # ── Configuration Validation ───────────────────────────────
     # Each adapter declares which env vars it needs. validate_config()
     # checks they're all present at startup so we fail fast with a clear
@@ -135,6 +144,17 @@ class PlatformBase(ABC):
         Raises PlatformAPIError on failure.
         """
         ...
+
+    def buffer_replay(self, post: Post) -> dict | None:
+        """Return the replay payload to persist for a Buffer-backed handoff.
+
+        Only meaningful when `publishes_via_buffer` is True. The scheduler
+        stores this under `metadata.buffer_replay` so cron.buffer_reconcile can
+        re-send the post if Buffer fails to publish it. Default None (nothing to
+        replay). Buffer-backed adapters override it to return what reconcile
+        needs to reconstruct the send — e.g. `{"channel_id": ...}`.
+        """
+        return None
 
     # ── Media ───────────────────────────────────────────────────
     # Some platforms require you to upload media (images/videos) in a

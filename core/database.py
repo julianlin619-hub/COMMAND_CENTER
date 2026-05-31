@@ -92,6 +92,46 @@ def update_post(post_id: str, **fields) -> None:
         )
 
 
+def record_buffer_handoff(
+    post_id: str,
+    buffer_post_id: str,
+    *,
+    channel_id: str,
+    body: str,
+    media_type: str | None,
+    facebook_post_type: str | None = None,
+    instagram_post_type: str | None = None,
+    base_metadata: dict | None = None,
+) -> None:
+    """Stamp a successful Buffer handoff and persist a replay payload.
+
+    Records `platform_post_id` AND a `buffer_replay` block in metadata so
+    cron/buffer_reconcile.py can re-send the EXACT same post if Buffer later
+    fails to publish it. We persist the replay rather than reconstructing it
+    from the row because the Buffer body differs from `posts.caption` — the
+    fan-out legs publish a constant hook ("Agree?") while `caption` stores the
+    tweet text for dedup, and channel_id / post-type aren't on the row at all.
+
+    `metadata` is set wholesale by update_post (it's a single jsonb column), so
+    we merge `buffer_replay` into `base_metadata` — the metadata the row was
+    inserted with — instead of a read-modify-write round trip.
+    """
+    replay: dict = {
+        "channel_id": channel_id,
+        "body": body,
+        "media_type": media_type,
+    }
+    # Only carry the platform post-type hints when set, so the replay block
+    # stays minimal and reconcile can pass them straight back to send_to_buffer.
+    if facebook_post_type:
+        replay["facebook_post_type"] = facebook_post_type
+    if instagram_post_type:
+        replay["instagram_post_type"] = instagram_post_type
+
+    metadata = {**(base_metadata or {}), "buffer_replay": replay}
+    update_post(post_id, platform_post_id=buffer_post_id, metadata=metadata)
+
+
 def get_posts(
     platform: str | None = None,
     status: str | None = None,

@@ -94,14 +94,38 @@ def process_due_posts(platform_client, platform: str) -> int:
         try:
             update_post(post_id, status="publishing")
             platform_post_id = platform_client.create_post(post)
-            update_post(
-                post_id,
-                status="published",
-                platform_post_id=platform_post_id,
-                published_at=datetime.now(timezone.utc).isoformat(),
-            )
+            if getattr(platform_client, "publishes_via_buffer", False):
+                # Buffer-backed adapter: create_post only handed the post to
+                # Buffer's queue — it isn't live yet and may fail to publish
+                # later. Mark it 'sent_to_buffer' (no published_at) so
+                # cron.buffer_reconcile confirms it to 'published' or surfaces
+                # a Buffer-side failure as 'buffer_error'. Without this the
+                # dashboard would show an optimistic 'published' that never
+                # actually went out.
+                #
+                # Persist the adapter's replay payload (e.g. the Buffer channel
+                # id) under metadata.buffer_replay so reconcile can re-send the
+                # post if Buffer fails it. Merge into the row's existing
+                # metadata since update_post sets the jsonb column wholesale.
+                fields: dict = {
+                    "status": "sent_to_buffer",
+                    "platform_post_id": platform_post_id,
+                }
+                replay = platform_client.buffer_replay(post)
+                if replay is not None:
+                    fields["metadata"] = {**(post.metadata or {}), "buffer_replay": replay}
+                update_post(post_id, **fields)
+                logger.info("Handed post %s to Buffer -> %s (awaiting confirmation)",
+                            post_id, platform_post_id)
+            else:
+                update_post(
+                    post_id,
+                    status="published",
+                    platform_post_id=platform_post_id,
+                    published_at=datetime.now(timezone.utc).isoformat(),
+                )
+                logger.info("Published post %s -> %s", post_id, platform_post_id)
             processed += 1
-            logger.info("Published post %s -> %s", post_id, platform_post_id)
         except Exception as e:
             # Mark as failed and store the error message so it's visible
             # in the dashboard. The post can be retried manually later.
