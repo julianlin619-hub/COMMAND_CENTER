@@ -1,0 +1,18 @@
+-- buffer-reconcile cron: platform_enum addition.
+--
+-- The buffer-reconcile cron (cron/buffer_reconcile.py) is cross-platform — it
+-- polls Buffer for every unconfirmed handoff regardless of platform — so it
+-- logs its cron_runs rows under a 'buffer' job-grouping sentinel rather than a
+-- real social platform. cron_runs.platform is platform_enum (see
+-- 20260412105430_initial_schema.sql), so without this value log_cron_start()
+-- fails with invalid_text_representation (22P02) and the cron exits 1 on every
+-- run.
+--
+-- Mirrors the precedent set by 20260519120000_add_snapchat_enum.sql and
+-- 20260514120000_x_acq_official_enum.sql.
+--
+-- Postgres rule: an enum value added in a transaction can't be used in the same
+-- transaction. This migration runs a single ALTER TYPE in its own transaction;
+-- the cron's runtime insert is what consumes the new value, so this is safe.
+-- IF NOT EXISTS makes the migration idempotent.
+ALTER TYPE platform_enum ADD VALUE IF NOT EXISTS 'buffer';
