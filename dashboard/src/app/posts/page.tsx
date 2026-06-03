@@ -64,6 +64,13 @@ type Post = {
   metadata: Record<string, unknown> | null;
 };
 
+// Posts whose metadata.source === 'manual_upload' belong to the Manual
+// Upload workflow (user-driven crosspost via /manual-upload page).
+// Everything else is pipeline-generated (tiktok_pipeline, youtube_cron, etc.).
+function isManualUpload(post: Post) {
+  return (post.metadata as { source?: string } | null)?.source === "manual_upload";
+}
+
 function PostsTable({ posts }: { posts: Post[] }) {
   return (
     <Card className="overflow-hidden">
@@ -154,10 +161,15 @@ export default async function PostsPage({
 
   const posts = (allPosts || []) as Post[];
 
-  /* Split posts by status for the tab views */
+  /* Split by workflow */
+  const manualPosts = posts.filter(isManualUpload);
+  const pipelinePosts = posts.filter((p) => !isManualUpload(p));
+
+  /* Status splits for summary badges */
   const published = posts.filter((p) => p.status === "published");
-  const drafts = posts.filter((p) => p.status === "draft");
-  const failed = posts.filter((p) => p.status === "failed");
+  const failed = posts.filter(
+    (p) => p.status === "failed" || p.status === "buffer_error"
+  );
 
   return (
     <AppShell>
@@ -175,33 +187,41 @@ export default async function PostsPage({
         <Badge className="bg-[#8ca082]/15 text-[#8ca082] border-[#8ca082]/25">
           {published.length} published
         </Badge>
-        <Badge variant="secondary">{drafts.length} draft</Badge>
         <Badge variant="destructive">{failed.length} failed</Badge>
       </div>
 
-      {/* Tabs for status filtering */}
+      {/* Workflow tabs */}
       <Tabs defaultValue="all">
         <TabsList>
           <TabsTrigger value="all">All</TabsTrigger>
-          <TabsTrigger value="published">Published</TabsTrigger>
-          <TabsTrigger value="draft">Draft</TabsTrigger>
-          <TabsTrigger value="failed">Failed</TabsTrigger>
+          <TabsTrigger value="manual">
+            Manual Upload
+            {manualPosts.length > 0 && (
+              <span className="ml-1.5 rounded-full bg-white/10 px-1.5 py-0.5 text-[10px]">
+                {manualPosts.length}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="pipeline">
+            Pipeline
+            {pipelinePosts.length > 0 && (
+              <span className="ml-1.5 rounded-full bg-white/10 px-1.5 py-0.5 text-[10px]">
+                {pipelinePosts.length}
+              </span>
+            )}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="all">
           <PostsTable posts={posts} />
         </TabsContent>
 
-        <TabsContent value="published">
-          <PostsTable posts={published} />
+        <TabsContent value="manual">
+          <PostsTable posts={manualPosts} />
         </TabsContent>
 
-        <TabsContent value="draft">
-          <PostsTable posts={drafts} />
-        </TabsContent>
-
-        <TabsContent value="failed">
-          <PostsTable posts={failed} />
+        <TabsContent value="pipeline">
+          <PostsTable posts={pipelinePosts} />
         </TabsContent>
       </Tabs>
     </AppShell>
