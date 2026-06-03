@@ -188,7 +188,7 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.buffer_reconcile
-    schedule: "0 */3 * * *"  # every 3 hours
+    schedule: "0 3 * * *"  # once a day at 03:00 UTC
     envVars:
       - key: SUPABASE_URL
         sync: false
