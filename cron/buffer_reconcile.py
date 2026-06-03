@@ -63,8 +63,9 @@ INTER_READ_SLEEP_SECONDS = 1.0
 # paths (publishers, fan-out legs). Polling the whole backlog (hundreds of rows)
 # in one run blows that window and every request comes back 429. So we process a
 # bounded slice — oldest first — and let a backlog drain across runs. 40 leaves
-# headroom under ~100 for the other Buffer crons. At a 3-hourly cadence that's
-# 320 posts/day of drain capacity, far above steady-state volume.
+# headroom under ~100 for the other Buffer crons. At a daily cadence that's
+# 40 posts/day of drain capacity; if steady-state volume ever exceeds that,
+# raise this cap or the run frequency (see schedule in render.yaml).
 RECONCILE_BATCH_LIMIT = 40
 # Fresh signed-URL lifetime for a re-send: 30 days, matching the send paths so
 # the re-queued post survives another long stint in Buffer's queue.
