@@ -23,19 +23,44 @@ import {
   CopyIcon,
   Trash2Icon,
   LoaderIcon,
+  RefreshCwIcon,
 } from "lucide-react";
 
 export function PostActions({
   permalink,
   postId,
+  status,
+  canRequeue,
 }: {
   permalink: string | null;
   postId: string;
+  status: string;
+  canRequeue: boolean;
 }) {
   const router = useRouter();
   const [showDelete, setShowDelete] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isRequeuing, setIsRequeuing] = useState(false);
+  const [requeueError, setRequeueError] = useState<string | null>(null);
+
+  async function handleRequeue() {
+    setIsRequeuing(true);
+    setRequeueError(null);
+    try {
+      const res = await fetch(`/api/posts/${postId}/requeue`, { method: "POST" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setRequeueError(data?.error || "Failed to requeue post.");
+        return;
+      }
+      router.refresh();
+    } catch (err) {
+      setRequeueError((err as Error).message || "Failed to requeue post.");
+    } finally {
+      setIsRequeuing(false);
+    }
+  }
 
   async function handleDelete() {
     setIsDeleting(true);
@@ -96,6 +121,22 @@ export function PostActions({
             <CopyIcon className="size-3.5 mr-2" />
             Copy ID
           </DropdownMenuItem>
+          {status === "buffer_error" && canRequeue && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={handleRequeue}
+                disabled={isRequeuing}
+              >
+                {isRequeuing ? (
+                  <LoaderIcon className="size-3.5 mr-2 animate-spin" />
+                ) : (
+                  <RefreshCwIcon className="size-3.5 mr-2" />
+                )}
+                {isRequeuing ? "Requeuing…" : "Requeue to Buffer"}
+              </DropdownMenuItem>
+            </>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             className="text-destructive"
@@ -143,6 +184,20 @@ export function PostActions({
               ) : (
                 "Delete"
               )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Requeue error dialog */}
+      <Dialog open={!!requeueError} onOpenChange={() => setRequeueError(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Requeue failed</DialogTitle>
+            <DialogDescription>{requeueError}</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end mt-2">
+            <Button variant="outline" onClick={() => setRequeueError(null)}>
+              Close
             </Button>
           </div>
         </DialogContent>

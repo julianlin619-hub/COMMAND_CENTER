@@ -60,6 +60,8 @@ type Post = {
   published_at: string | null;
   permalink: string | null;
   created_at: string;
+  media_urls: string[] | null;
+  metadata: Record<string, unknown> | null;
 };
 
 function PostsTable({ posts }: { posts: Post[] }) {
@@ -100,7 +102,23 @@ function PostsTable({ posts }: { posts: Post[] }) {
                   : "-"}
               </TableCell>
               <TableCell>
-                <PostActions permalink={post.permalink} postId={post.id} />
+                <PostActions
+                  permalink={post.permalink}
+                  postId={post.id}
+                  status={post.status}
+                  canRequeue={
+                    // Only show Requeue when we have everything _resend needs:
+                    // a buffer_replay payload with channel_id + media_type, and
+                    // a storage path in media_urls.
+                    !!(
+                      post.media_urls?.[0] &&
+                      (post.metadata?.buffer_replay as Record<string, unknown> | undefined)
+                        ?.channel_id &&
+                      (post.metadata?.buffer_replay as Record<string, unknown> | undefined)
+                        ?.media_type
+                    )
+                  }
+                />
               </TableCell>
             </StaggeredTableRow>
           ))}
