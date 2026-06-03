@@ -341,18 +341,27 @@ def get_buffer_post_sent_at(post_id: str) -> datetime | None:
     # Buffer's `post(input:{id})` returns a plain Post object, not a union,
     # so we select fields directly. `createPost` uses a union (PostActionSuccess
     # | *Error), but reads don't — a mismatch here returns GRAPHQL_VALIDATION_FAILED.
-    data = _buffer_request(
-        """
-        query GetPost($id: PostId!) {
-            post(input: { id: $id }) {
-                id
-                sentAt
-                status
+    try:
+        data = _buffer_request(
+            """
+            query GetPost($id: PostId!) {
+                post(input: { id: $id }) {
+                    id
+                    sentAt
+                    status
+                }
             }
-        }
-        """,
-        {"id": post_id},
-    )
+            """,
+            {"id": post_id},
+        )
+    except RuntimeError as exc:
+        # Same "not found" guard as get_buffer_post_state: if Buffer has
+        # deleted the post, treat it as unpublished (None) so the cleanup
+        # cron skips the group rather than crashing and potentially
+        # mis-deleting files that belong to other still-queued posts.
+        if "not found" in str(exc).lower():
+            return None
+        raise
 
     post = data.get("post") or {}
     sent = post.get("sentAt")

@@ -79,6 +79,27 @@ export async function POST(
     );
   }
 
+  // Verify the file still exists before signing — createSignedUrl succeeds
+  // even for deleted paths, so Buffer would get a 404 when it tries to fetch
+  // the video and surface another "unknown error". Check existence first so
+  // we can return a clear message instead of silently re-queuing a dead URL.
+  const pathParts = storagePath.split("/");
+  const fileName = pathParts.pop()!;
+  const dirPath = pathParts.join("/");
+  const { data: listed } = await supabase.storage.from(BUCKET).list(dirPath, {
+    search: fileName,
+  });
+  if (!listed || listed.length === 0) {
+    return NextResponse.json(
+      {
+        error:
+          "The source file has been deleted from storage and can no longer be re-uploaded. " +
+          "Please re-upload the video manually via the Manual Upload page.",
+      },
+      { status: 422 },
+    );
+  }
+
   // Re-mint a fresh signed URL so Buffer can fetch the asset even if the
   // original URL has expired.
   const { data: signed, error: signError } = await supabase.storage
@@ -88,7 +109,7 @@ export async function POST(
   if (signError || !signed?.signedUrl) {
     console.error("requeue: createSignedUrl failed:", signError?.message);
     return NextResponse.json(
-      { error: "Failed to create signed URL for media. The file may have been deleted from storage." },
+      { error: "Failed to create signed URL for media." },
       { status: 500 },
     );
   }
