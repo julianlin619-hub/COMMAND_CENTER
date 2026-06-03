@@ -30,6 +30,9 @@ from datetime import datetime, timezone
 
 # Content sourcing functions (ported from the original THREADS repo)
 from core.content_sources import fetch_apify_tweets, select_bank_content
+# LLM sanity-check: rejects bank posts that are incomplete (e.g. "7 ways to
+# get rich" with no actual list) before they're inserted and queued to Buffer.
+from core.bank_post_reviewer import is_postable_bank_post
 # Database helpers for tracking cron runs and storing data
 from core.database import (
     insert_post,
@@ -143,6 +146,27 @@ def main():
             # call) lands in between.
             if post_caption_exists("threads", text):
                 continue
+
+            # LLM sanity check: make sure the post is complete and self-contained
+            # before queuing it. The main failure mode this catches is "hook-only"
+            # posts — e.g. "7 ways to get rich" scraped from a tweet whose tips
+            # only lived in the replies (which aren't in the bank). Those posts
+            # would reach Threads as an unfulfilled promise with no payoff.
+            # SDK errors are caught here so a flaky API key skips the post rather
+            # than crashing the whole bank sourcing phase.
+            try:
+                keep, reason = is_postable_bank_post(text)
+                if not keep:
+                    logger.info("Bank post rejected by LLM review (reason=%s): %.80s…", reason, text)
+                    continue
+                logger.debug("Bank post passed LLM review (reason=%s): %.80s…", reason, text)
+            except Exception as review_err:
+                logger.warning(
+                    "LLM review failed for bank post — skipping post to be safe: %s | text=%.80s…",
+                    review_err, text,
+                )
+                continue
+
             post = Post(platform="threads", caption=text, status="scheduled")
             post_id = insert_post(post)
             insert_schedule(post_id, now)
