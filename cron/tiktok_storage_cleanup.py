@@ -1,16 +1,16 @@
-"""Manual-upload storage cleanup — daily cron job.
+"""Manual-upload storage cleanup — weekly cron job.
 
-Runs daily at 03:00 UTC. Two responsibilities, both scoped to the
+Runs weekly on Monday at 03:00 UTC. Two responsibilities, both scoped to the
 TikTok manual-upload pathway (Pathway 3):
 
   1. Group cleanup (the original behaviour). Reclaim Supabase Storage
-     for manually-uploaded videos whose Buffer queue entries have
-     already published. Each manual upload writes one `posts` row per
-     fan-out target (currently tiktok / youtube / linkedin) pointing
-     at the SAME storage path; the file is deleted 3 days after Buffer
-     confirms every queued copy is live. Per-row `published_at` is
-     mirrored from Buffer's sentAt as soon as the post goes live so
-     the posts view reflects publish state before the file is reaped.
+     for manually-uploaded videos once every post in the fan-out group
+     is confirmed `published` in our DB. Each manual upload writes one
+     `posts` row per fan-out target (currently tiktok / youtube / linkedin)
+     pointing at the SAME storage path; the file is deleted as soon as
+     buffer_reconcile has flipped every row to status='published'.
+     No arbitrary age window — if it's live on the platform, it's safe
+     to delete.
 
      Scan predicate per row:
        metadata->>'source'                 = 'manual_upload'
@@ -36,9 +36,8 @@ TikTok manual-upload pathway (Pathway 3):
 import logging
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from core.buffer import get_buffer_post_sent_at
 from core.database import (
     get_client,
     log_cron_finish,
@@ -55,7 +54,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MANUAL_UPLOAD_PLATFORMS = ("tiktok", "youtube", "linkedin")
-RETENTION = timedelta(days=7)
 
 # Storage prefix that the dashboard's sign-url route mints paths under.
 # Format: `tiktok/manual/<userId>/<uuid>.<ext>`. Orphan cleanup walks the
@@ -90,7 +88,7 @@ def main():
         client = get_client()
         rows = (
             client.table("posts")
-            .select("id, platform, media_urls, metadata, published_at")
+            .select("id, platform, status, media_urls, metadata, published_at")
             .in_("platform", list(MANUAL_UPLOAD_PLATFORMS))
             .filter("metadata->>source", "eq", "manual_upload")
             .filter("metadata->>storage_cleanup_status", "eq", "pending")
@@ -113,7 +111,6 @@ def main():
 
         processed_groups = 0
         skipped_queued = 0
-        skipped_retention = 0
         errors = 0
 
         # Orphan rows (no media_urls) — nothing to delete, just flip the flag
@@ -139,15 +136,12 @@ def main():
                 processed_groups += 1
             elif result == "queued":
                 skipped_queued += 1
-            elif result == "retention":
-                skipped_retention += 1
             elif result == "error":
                 errors += 1
 
         logger.info(
-            "Group cleanup: %d group(s) cleaned, %d awaiting publish, "
-            "%d within 3d retention, %d errors",
-            processed_groups, skipped_queued, skipped_retention, errors,
+            "Group cleanup: %d group(s) cleaned, %d awaiting publish, %d errors",
+            processed_groups, skipped_queued, errors,
         )
 
         # Orphan sweep — best-effort. If it fails, the group cleanup
@@ -180,65 +174,30 @@ def main():
 def _process_group(client, storage_path: str, group: list[dict]) -> str:
     """Resolve one storage-path group. Returns a one-word status for tallies.
 
+    Deletion condition: every post row in the group must have status='published'
+    in our DB. buffer_reconcile mirrors Buffer's sentAt into that status on a
+    3-hour cadence, so by the time this weekly cron runs it's authoritative —
+    no need to hit the Buffer API or enforce an age window.
+
     Returns:
-        "deleted"   — file removed, all rows flipped to done.
-        "queued"    — at least one row still has no Buffer sentAt yet.
-        "retention" — all published, but the newest sentAt is <3d old.
-        "error"     — partial failure; see logged details.
+        "deleted" — all rows published, file removed, rows flipped to done.
+        "queued"  — at least one row not yet published; skip for next run.
+        "error"   — partial failure; see logged details.
     """
-    # Fetch sentAt for every row's Buffer post. If any row raises, bubble up —
-    # main() logs once and skips the group; tomorrow's run retries cleanly.
-    sent_times: list[datetime] = []
+    # Check every row's status in our DB — no Buffer API calls needed.
     for row in group:
-        metadata = row.get("metadata") or {}
-        buffer_id = metadata.get("buffer_post_id")
-        if not buffer_id:
-            logger.warning("Row %s (%s) has no buffer_post_id — skipping group %s",
-                           row["id"], row.get("platform"), storage_path)
-            return "error"
-
-        sent_at = get_buffer_post_sent_at(buffer_id)
-
-        # Mirror sentAt into posts.published_at the first time we see it set,
-        # independent of whether the group is ready to delete — this keeps the
-        # posts view in sync with Buffer's publish state as soon as it flips.
-        #
-        # update_post() now raises RuntimeError on a zero-row UPDATE (missing
-        # row, RLS rejection, transient outage). Without this guard, a single
-        # bad row would abort _process_group via main()'s except clause, mark
-        # the whole group as errored, and prevent the file from being deleted
-        # even though every OTHER row in the group is in good shape. Treat
-        # the mirror as best-effort: log, continue with the publish check,
-        # and let tomorrow's run retry the same row.
-        if sent_at is not None and not row.get("published_at"):
-            try:
-                update_post(
-                    row["id"],
-                    status="published",
-                    published_at=sent_at.isoformat(),
-                )
-            except RuntimeError as e:
-                logger.warning(
-                    "Could not mirror sentAt to post %s (%s): %s — continuing; tomorrow's run will retry",
-                    row["id"], row.get("platform"), e,
-                )
-
-        if sent_at is None:
+        if row.get("status") != "published":
+            logger.info(
+                "Group %s: row %s (%s) has status=%r — skipping until all published",
+                storage_path, row["id"], row.get("platform"), row.get("status"),
+            )
             return "queued"
-        sent_times.append(sent_at)
 
-    # Every row is published. The file can go once the LATEST sentAt is 3+
-    # days old — otherwise a copy that just published would lose its source
-    # before it could re-serve (Buffer already has the video, but we keep
-    # the 3-day grace window in case of post deletion + re-queue recovery).
-    newest = max(sent_times)
-    age = datetime.now(timezone.utc) - newest
-    if age < RETENTION:
-        logger.info(
-            "Group %s: all published, newest is %s old — waiting for %s retention",
-            storage_path, age, RETENTION,
-        )
-        return "retention"
+    # All rows confirmed published — safe to delete the source file.
+    logger.info(
+        "Group %s: all %d row(s) published — deleting source file",
+        storage_path, len(group),
+    )
 
     # Delete the file once, then flip every row's cleanup_status to done.
     try:
