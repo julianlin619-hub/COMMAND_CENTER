@@ -55,7 +55,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MANUAL_UPLOAD_PLATFORMS = ("tiktok", "youtube", "linkedin")
-RETENTION = timedelta(days=3)
+RETENTION = timedelta(days=7)
 
 # Storage prefix that the dashboard's sign-url route mints paths under.
 # Format: `tiktok/manual/<userId>/<uuid>.<ext>`. Orphan cleanup walks the

@@ -160,13 +160,13 @@ services:
   # Reclaims Supabase Storage for manual TikTok uploads after Buffer confirms
   # they've published. Scans posts where metadata.source='manual_upload' and
   # storage_cleanup_status='pending'; mirrors Buffer's sentAt into
-  # posts.published_at, then deletes the mp4 3 days later.
+  # posts.published_at, then deletes the mp4 7 days later. Runs weekly.
   - type: cron
     name: manual-upload-storage-cleanup
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.tiktok_storage_cleanup
-    schedule: "0 3 * * *"  # daily at 03:00 UTC
+    schedule: "0 3 * * 1"  # weekly on Monday at 03:00 UTC
     envVars:
       - key: SUPABASE_URL
         sync: false
