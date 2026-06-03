@@ -6,7 +6,7 @@
  * token issued by /api/tiktok/manual-upload/sign-url. This endpoint just:
  *   1. Verifies the storagePath belongs to the calling user.
  *   2. Confirms the upload actually completed (the object exists).
- *   3. Signs a 7-day read URL for Buffer to pull from.
+ *   3. Signs a 30-day read URL for Buffer to pull from.
  *   4. Queues the video on Buffer for TikTok, then fans it out to YouTube
  *      Shorts and (if enabled) LinkedIn.
  *   5. Writes one `posts` row per successful platform, all referencing the
@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Sign a 7-day read URL for Buffer.
+  // Sign a 30-day read URL for Buffer.
   const { data: signed, error: signError } = await supabase.storage
     .from(BUCKET)
     .createSignedUrl(storagePath, READ_URL_TTL_SECONDS);

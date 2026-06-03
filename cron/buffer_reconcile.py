@@ -175,14 +175,20 @@ def main() -> None:
             try:
                 state = get_buffer_post_state(buffer_id)
 
-                # Buffer has no record of this id (deleted/unknown). Leave the
-                # row as-is and log — flipping it either way would be a guess.
+                # Buffer has no record of this id — it was either manually
+                # deleted from the queue or pruned by Buffer after a publish
+                # failure. The post can never publish, so surface it as a
+                # terminal failure rather than leaving it stuck forever.
                 if state is None:
-                    logger.warning(
-                        "Post %s (%s): Buffer has no record of %s — skipping",
-                        post_id, post.get("platform"), buffer_id,
+                    reason = (
+                        f"Buffer post {buffer_id} not found "
+                        "(deleted from Buffer queue or pruned after failure)"
                     )
-                    still_queued += 1
+                    update_post(post_id, status="buffer_error", error_message=reason)
+                    failed += 1
+                    logger.warning(
+                        "Post %s (%s): %s", post_id, post.get("platform"), reason,
+                    )
                     continue
 
                 sent_at = state["sentAt"]

@@ -377,18 +377,28 @@ def get_buffer_post_state(post_id: str) -> dict | None:
     # Same read query as get_buffer_post_sent_at — Buffer's post(input:{id})
     # returns a plain Post object (not the createPost union), so we select
     # fields directly.
-    data = _buffer_request(
-        """
-        query GetPost($id: PostId!) {
-            post(input: { id: $id }) {
-                id
-                sentAt
-                status
+    try:
+        data = _buffer_request(
+            """
+            query GetPost($id: PostId!) {
+                post(input: { id: $id }) {
+                    id
+                    sentAt
+                    status
+                }
             }
-        }
-        """,
-        {"id": post_id},
-    )
+            """,
+            {"id": post_id},
+        )
+    except RuntimeError as exc:
+        # Buffer returns a GraphQL error when the post id is unknown (e.g. the
+        # user manually deleted the post from Buffer's queue, or Buffer pruned
+        # it after a publish failure). Honour the docstring's "Returns None"
+        # contract so the reconcile cron can mark the row terminal instead of
+        # looping on it forever.
+        if "not found" in str(exc).lower():
+            return None
+        raise
 
     post = data.get("post")
     if not post:
