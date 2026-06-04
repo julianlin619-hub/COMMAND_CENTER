@@ -179,18 +179,17 @@ def send_leg(
     storage_path: str,
     caption: str,
     source_tag: str,
+    buffer_body: str = BUFFER_CAPTION,
     extra_send_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Insert posts row, signed-URL, Buffer-send, stamp the post.
 
     The `caption` argument here is the tweet text — that's what `Post.caption`
     stores (for dedup against the partial-unique index on
-    (platform, md5(caption))). What Buffer actually publishes is always
-    BUFFER_CAPTION ("Agree?"), the short engagement hook — every legacy
-    per-platform cron used a separate constant for the Buffer body, and
-    this helper preserves that behavior. Treating `caption` as the post
-    body would publish a truncated tweet excerpt that duplicates text
-    already burned into the rendered image.
+    (platform, md5(caption))). `buffer_body` is what Buffer actually publishes
+    as the visible caption on the social platform — defaults to BUFFER_CAPTION
+    ("Agree?") but can be overridden per-platform (e.g. `""` for Instagram,
+    which publishes tweet card images with no caption text).
 
     Mirrors the insert-first-then-send pattern that the deleted FB/LI
     pipelines used: we attempt the DB insert first so the partial-unique
@@ -249,22 +248,23 @@ def send_leg(
 
     try:
         media_url = get_signed_url(storage_path, expires_in=SIGNED_URL_EXPIRES_IN)
-        # BUFFER_CAPTION ("Agree?") is what Buffer publishes — never
-        # the tweet text. The tweet text is already rendered onto the
-        # image and would duplicate visually if sent again.
+        # buffer_body is what Buffer publishes — never the tweet text.
+        # The tweet text is already rendered onto the image and would
+        # duplicate visually if sent again. Defaults to BUFFER_CAPTION
+        # ("Agree?") but Instagram passes "" for a caption-free post.
         buffer_post_id = send_to_buffer(
-            channel_id, BUFFER_CAPTION, media_url,
+            channel_id, buffer_body, media_url,
             media_type=media_type,
             **extra_send_kwargs,
         )
         # Persist the replay payload alongside platform_post_id so
         # cron/buffer_reconcile.py can re-send this exact post if Buffer
-        # fails to publish it (the Buffer body is BUFFER_CAPTION, not the
-        # stored caption, and channel_id/post-type live only here).
+        # fails to publish it (buffer_body and channel_id/post-type live
+        # only here).
         record_buffer_handoff(
             post_id, buffer_post_id,
             channel_id=channel_id,
-            body=BUFFER_CAPTION,
+            body=buffer_body,
             media_type=media_type,
             facebook_post_type=extra_send_kwargs.get("facebook_post_type"),
             instagram_post_type=extra_send_kwargs.get("instagram_post_type"),
@@ -377,6 +377,9 @@ def fanout_extra_legs_for_one_tweet(
             storage_path=ig_storage_path,
             caption=tweet_caption,
             source_tag=source_tag,
+            # Tweet card images already contain the tweet text visually,
+            # so Instagram posts ship with no caption text.
+            buffer_body="",
             # Buffer's IG integration needs metadata.instagram.type to
             # know this is a feed post (not a reel/story).
             extra_send_kwargs={"instagram_post_type": "post"},
@@ -391,6 +394,7 @@ def _send_or_skip(
     storage_path: str | None,
     caption: str,
     source_tag: str,
+    buffer_body: str = BUFFER_CAPTION,
     extra_send_kwargs: dict[str, Any],
 ) -> dict[str, Any]:
     """Wrap send_leg with the upstream skip-conditions a fan-out needs."""
@@ -399,8 +403,8 @@ def _send_or_skip(
     if channel_id is None:
         return {"status": "skipped_no_channel", "post_id": None, "buffer_post_id": None, "error": None}
     if not caption or not caption.strip():
-        # Buffer rejects empty captions; mirror the guard from the old
-        # pipelines (don't insert a row we know cannot ship).
+        # The tweet text (caption) is used as the dedup key — it must
+        # never be empty. (buffer_body can be empty, e.g. Instagram.)
         return {"status": "skipped_empty_caption", "post_id": None, "buffer_post_id": None, "error": None}
     if post_caption_exists(platform, caption):
         # Pre-insert dedup. The DB unique-index is still the source of
@@ -415,6 +419,7 @@ def _send_or_skip(
         storage_path=storage_path,
         caption=caption,
         source_tag=source_tag,
+        buffer_body=buffer_body,
         extra_send_kwargs=extra_send_kwargs,
     )
 
