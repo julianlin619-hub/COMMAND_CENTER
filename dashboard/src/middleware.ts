@@ -17,13 +17,18 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { timingSafeEqual } from "@/lib/timing-safe";
 
 // Define which routes should be accessible WITHOUT authentication.
-// Only the Clerk sign-in flow is public. Notably, `/api(.*)` is NOT public:
-// API routes must authenticate via either a Clerk session (browser use) or
-// the CRON_SECRET bearer token (cron / GitHub Actions). Keeping the API
-// surface fail-closed at the middleware layer means a route that forgets
-// to call `verifyApiAuth()` is still protected — no route can be exposed
-// by omission alone.
-const isPublicRoute = createRouteMatcher(["/sign-in(.*)"]);
+// Two things are public: the Clerk sign-in flow, and the media proxy endpoint.
+// Otherwise `/api(.*)` is NOT public: API routes must authenticate via either a
+// Clerk session (browser use) or the CRON_SECRET bearer token (cron / GitHub
+// Actions). Keeping the API surface fail-closed at the middleware layer means a
+// route that forgets to call `verifyApiAuth()` is still protected — no route can
+// be exposed by omission alone.
+//
+// `/api/media/(.*)` is the one deliberate exception: Buffer fetches media proxy
+// URLs directly, with no session cookie and no CRON_SECRET. The post ID in the
+// URL is an unguessable UUID, so exposing it publicly is as safe as the signed
+// Supabase URLs it replaced. See app/api/media/[id]/route.ts for the rationale.
+const isPublicRoute = createRouteMatcher(["/sign-in(.*)", "/api/media/(.*)"]);
 
 // For API routes, we enforce auth at the middleware layer rather than relying
 // on `auth.protect()` (which would redirect browsers to the sign-in page —
