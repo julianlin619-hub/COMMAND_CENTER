@@ -391,6 +391,10 @@ export const seedShows: Show[] = [
       written: "none",
     },
     automation: [],
+    notes: `USES
+
+    ☐ Pull concepts & tactics to become long form videos (10-1 rule)
+    ☐ Pull soundbites to serve as tweets (using writing guide)`,
   },
   {
     id: "the-game",
@@ -403,6 +407,7 @@ export const seedShows: Show[] = [
       written: "none",
     },
     automation: [],
+    notes: `SOURCE OF IDEAS`,
   },
   {
     id: "podcasts",
