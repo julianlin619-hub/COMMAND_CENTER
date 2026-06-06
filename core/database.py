@@ -343,6 +343,83 @@ def mark_schedule_picked_up(schedule_id: str) -> bool:
     return len(result.data) > 0
 
 
+# ── Video batch jobs ─────────────────────────────────────────────────────
+# One row per uploaded mp4 in the batch manual-upload pathway. The dashboard
+# inserts a 'pending' row after the browser uploads to Storage, then spawns
+# `python -m core.video_batch --job-id <id>`. The processor claims the row,
+# transcribes/titles/captions/fans-out, and marks it done|failed. See
+# supabase/migrations/20260606120000_video_batch.sql for the table.
+
+
+def insert_video_batch_job(user_id: str, storage_path: str) -> str:
+    """Insert a pending video batch job. Returns the job ID."""
+    client = get_client()
+    result = (
+        client.table("video_batch_jobs")
+        .insert({"user_id": user_id, "storage_path": storage_path})
+        .execute()
+    )
+    if not result.data:
+        raise RuntimeError(
+            "insert_video_batch_job returned no rows — check RLS / schema"
+        )
+    return result.data[0]["id"]
+
+
+def get_video_batch_job(job_id: str) -> dict | None:
+    """Fetch a single job row, or None if it doesn't exist."""
+    client = get_client()
+    result = (
+        client.table("video_batch_jobs")
+        .select("*")
+        .eq("id", job_id)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def claim_video_batch_job(job_id: str) -> bool:
+    """Atomically claim a pending job. Returns True if this call won the claim.
+
+    Only updates if status is still 'pending' — so a double-click in the UI or
+    a retry that races a still-running processor can't double-process (and thus
+    can't double-post to Buffer). The loser gets an empty result and bails.
+
+    Sets status='processing', stamps picked_up_at, and bumps attempts. attempts
+    is incremented with a read value rather than an atomic SQL expression
+    because the claim itself (the status guard) is what guarantees exactly one
+    winner; attempts is just a diagnostic counter.
+    """
+    client = get_client()
+    existing = get_video_batch_job(job_id)
+    attempts = (existing or {}).get("attempts", 0) if existing else 0
+    result = (
+        client.table("video_batch_jobs")
+        .update(
+            {
+                "status": "processing",
+                "picked_up_at": datetime.now(timezone.utc).isoformat(),
+                "attempts": attempts + 1,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        .eq("id", job_id)
+        .eq("status", "pending")
+        .execute()
+    )
+    return len(result.data) > 0
+
+
+def update_video_batch_job(job_id: str, **fields) -> None:
+    """Update fields on a job row. Sanitizes error_message before storing."""
+    client = get_client()
+    fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+    if fields.get("error_message"):
+        fields["error_message"] = sanitize_error_message(fields["error_message"])
+    client.table("video_batch_jobs").update(fields).eq("id", job_id).execute()
+
+
 def list_post_captions(platform: str) -> set[str]:
     """Return the set of all captions for a platform that count as 'already posted'.
 

@@ -22,6 +22,7 @@ import Link from "next/link";
 import { ArrowLeftIcon } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { TikTokUploadQueue } from "@/components/tiktok-upload-queue";
+import { BatchVideoUpload } from "@/components/batch-video-upload";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +47,28 @@ export default function ManualUploadPage() {
         </div>
       </div>
 
-      <TikTokUploadQueue />
+      {/* Batch auto-schedule: drop a folder of mp4s; title + caption are
+          generated from each video's transcript and fanned out automatically.
+          Sits above the manual title+caption form since it's the faster path
+          for bulk reposts. */}
+      <section className="mb-10">
+        <h2 className="mb-1 text-sm font-semibold">Batch auto-schedule</h2>
+        <p className="mb-4 text-sm text-muted-foreground">
+          Drag in a batch of videos. Each one is transcribed, gets an
+          auto-generated title and a caption matched from the tweet bank, then
+          is scheduled to TikTok + YouTube Shorts + X via Buffer.
+        </p>
+        <BatchVideoUpload />
+      </section>
+
+      {/* Manual single upload with hand-written title + caption. */}
+      <section>
+        <h2 className="mb-1 text-sm font-semibold">Manual title &amp; caption</h2>
+        <p className="mb-4 text-sm text-muted-foreground">
+          Type the title and caption yourself for a single video.
+        </p>
+        <TikTokUploadQueue />
+      </section>
     </AppShell>
   );
 }

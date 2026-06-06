@@ -23,3 +23,10 @@ playwright-stealth==2.0.3
 # the dashboard. httpx (already above) would work too, but requests is
 # the standard for three-line trigger scripts.
 requests>=2.31
+# Bundled static ffmpeg binary for the batch-video manual-upload pathway
+# (core/transcription.py extracts audio from uploaded mp4s). We use the
+# bundled binary instead of a system ffmpeg because Render's Python build
+# can't apt-get (sudo is disallowed); imageio_ffmpeg.get_ffmpeg_exe() returns
+# a working binary on both Render and local dev. Deepgram + OpenAI are called
+# over plain httpx (already above) — no extra SDKs.
+imageio-ffmpeg>=0.5

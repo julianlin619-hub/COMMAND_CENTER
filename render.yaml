@@ -55,6 +55,14 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
+      # Batch-video manual-upload pathway: the dashboard spawns
+      # `python -m core.video_batch` (see api/tiktok/manual-upload/batch),
+      # which transcribes via Deepgram and embeds via OpenAI. These run on
+      # THIS web service (not a cron), so the keys live here.
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
 
   # ── Cron Jobs (Python) ─────────────────────────────────────────────────
   # IMPORTANT: Update the schedule values to match your actual posting cadence.

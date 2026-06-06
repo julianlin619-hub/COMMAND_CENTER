@@ -10,71 +10,15 @@
  *
  * The cron scripts live at the project root (one level above dashboard/)
  * and are run via `python3 -m cron.<module>`, matching the startCommand
- * values in render.yaml.
+ * values in render.yaml. The spawn mechanics live in lib/python-runner.ts
+ * (shared with the batch-video manual-upload pathway).
  *
  * Auth: same dual auth as other dashboard API routes (Clerk session or
  * CRON_SECRET bearer token — see lib/auth.ts).
  */
 import { NextResponse } from "next/server";
 import { verifyApiAuth } from "@/lib/auth";
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { existsSync } from "fs";
-import path from "path";
-
-// execFile runs a binary with an explicit argv array instead of a shell string.
-// This is safer than exec() — which would spawn a shell and interpolate our
-// path variables into the command line — because there's no shell to parse
-// metacharacters, so paths with spaces or special characters can't be
-// re-interpreted as shell syntax. Even though our paths come from trusted
-// sources today (process.cwd + path.resolve), this eliminates a whole class
-// of landmines for future edits.
-const execFileAsync = promisify(execFile);
-
-// python_deps/ holds third-party packages (httpx, supabase, pydantic, etc.).
-// On Render it's created during the build phase; locally it's created on
-// first cron invocation (pip IS available locally).
-const depsDir = path.join(process.cwd(), "python_deps");
-
-let depsReady: Promise<void> | null = null;
-
-function ensurePythonDeps(): Promise<void> {
-  if (!depsReady) {
-    depsReady = (async () => {
-      if (existsSync(depsDir)) return; // already exists (Render build or prior local run)
-
-      // Locally, pip is available — install on first use
-      const reqFile = path.resolve(process.cwd(), "..", "requirements.txt");
-      try {
-        await execFileAsync(
-          "python3",
-          ["-m", "pip", "install", `--target=${depsDir}`, "-r", reqFile],
-          { timeout: 120_000 },
-        );
-      } catch {
-        // pip unavailable (Render Node runtime) — if python_deps/ wasn't
-        // created by the build phase, the cron will fail with a clear
-        // ModuleNotFoundError rather than a cryptic pip error.
-        depsReady = null;
-      }
-    })();
-  }
-  return depsReady;
-}
-
-// Build the env for Python subprocesses.
-function pythonEnv(projectRoot: string) {
-  return {
-    ...process.env,
-    PYTHONPATH: [
-      depsDir,       // third-party deps (inside dashboard/)
-      projectRoot,   // local packages (core/, platforms/, cron/)
-      process.env.PYTHONPATH,
-    ]
-      .filter(Boolean)
-      .join(":"),
-  };
-}
+import { runPythonModule, combineOutput } from "@/lib/python-runner";
 
 // Maps cron job names (from render.yaml) to their Python module paths.
 // The startCommand in render.yaml is `python -m cron.<module>`.
@@ -108,59 +52,18 @@ export async function POST(request: Request) {
     );
   }
 
-  const modulePath = CRON_MODULES[jobName];
-  // Cron scripts live at the project root, one level above the dashboard/ dir.
-  const projectRoot = path.resolve(process.cwd(), "..");
+  // modulePath comes from the hard-coded CRON_MODULES map, so it's never
+  // user-controlled. 5-minute timeout — pipelines with Apify + video
+  // generation can be slow.
+  const result = await runPythonModule(CRON_MODULES[jobName]);
 
-  // Create python_deps/ if it doesn't exist (locally, pip is available)
-  await ensurePythonDeps();
-
-  const startTime = Date.now();
-
-  try {
-    // modulePath comes from the hard-coded CRON_MODULES map above, so it
-    // can never be user-controlled — but we still use execFile so the
-    // shell can't misinterpret anything future edits introduce.
-    const { stdout, stderr } = await execFileAsync(
-      "python3",
-      ["-m", modulePath],
-      {
-        cwd: projectRoot,
-        // 5-minute timeout — pipelines with Apify + video generation can be slow
-        timeout: 300_000,
-        // 5 MB buffer — cron output is usually small but be safe
-        maxBuffer: 5 * 1024 * 1024,
-        env: pythonEnv(projectRoot),
-      },
-    );
-
-    return NextResponse.json({
-      job: jobName,
-      status: "success",
-      output: combineOutput(stdout, stderr),
-      durationMs: Date.now() - startTime,
-    });
-  } catch (err: unknown) {
-    // Python scripts call sys.exit(1) on failure, which causes exec to throw.
-    // We still want to return stdout/stderr so the user can see what happened.
-    const e = err as {
-      stdout?: string;
-      stderr?: string;
-      message?: string;
-      code?: number | string;
-    };
-    return NextResponse.json({
-      job: jobName,
-      status: "failed",
-      output:
-        combineOutput(e.stdout || "", e.stderr || "") || e.message || "Unknown error",
-      durationMs: Date.now() - startTime,
-      exitCode: e.code,
-    });
-  }
-}
-
-/** Merge stdout + stderr into a single string, trimming whitespace. */
-function combineOutput(stdout: string, stderr: string): string {
-  return [stdout, stderr].filter(Boolean).join("\n").trim();
+  return NextResponse.json({
+    job: jobName,
+    status: result.status,
+    output:
+      combineOutput(result.stdout, result.stderr) ||
+      (result.status === "failed" ? "Unknown error" : ""),
+    durationMs: result.durationMs,
+    ...(result.exitCode !== undefined ? { exitCode: result.exitCode } : {}),
+  });
 }

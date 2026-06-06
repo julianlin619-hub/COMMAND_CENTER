@@ -168,7 +168,9 @@ def _buffer_request(query: str, variables: dict | None = None) -> dict:
     raise RuntimeError("Buffer request failed after exhausting retries")
 
 
-def get_channel_id(org_id: str | None = None, service: str = "tiktok") -> str:
+def get_channel_id(
+    org_id: str | None = None, service: str = "tiktok", name: str | None = None
+) -> str:
     """Look up a platform's channel ID in a Buffer organization.
 
     Queries Buffer's channels endpoint, finds the one matching the given
@@ -178,12 +180,21 @@ def get_channel_id(org_id: str | None = None, service: str = "tiktok") -> str:
     Args:
         org_id: Buffer organization ID. Defaults to BUFFER_ORG_ID env var.
         service: Buffer service name — 'tiktok', 'facebook', etc.
+        name: Optional channel name (case-insensitive) to disambiguate when an
+            org has multiple channels for the same service. Buffer reports the
+            X (Twitter) channel under service='twitter', and an org can carry a
+            stale/legacy twitter channel alongside the live one — pass
+            name='acq_official' to pin the right one. Mirrors getChannelId's
+            `name` arg in dashboard/src/lib/buffer.ts.
 
     Raises:
         RuntimeError: If no matching channel is found in Buffer.
     """
-    if service in _cached_channel_ids:
-        return _cached_channel_ids[service]
+    # Cache key includes the name so a service-only lookup and a name-scoped
+    # lookup for the same service don't clobber each other.
+    cache_key = f"{service}:{name.lower()}" if name else service
+    if cache_key in _cached_channel_ids:
+        return _cached_channel_ids[cache_key]
 
     org = org_id or os.environ.get("BUFFER_ORG_ID", "")
     if not org:
@@ -204,16 +215,26 @@ def get_channel_id(org_id: str | None = None, service: str = "tiktok") -> str:
         {"orgId": org},
     )
 
+    want_name = name.lower() if name else None
     channels = data.get("channels", [])
-    match = next((c for c in channels if c.get("service") == service), None)
+    match = next(
+        (
+            c
+            for c in channels
+            if c.get("service") == service
+            and (want_name is None or str(c.get("name", "")).lower() == want_name)
+        ),
+        None,
+    )
 
     if not match:
+        suffix = f' named "{name}"' if name else ""
         raise RuntimeError(
-            f"No {service} channel connected in Buffer. "
+            f"No {service} channel{suffix} connected in Buffer. "
             f"Connect {service} at buffer.com first."
         )
 
-    _cached_channel_ids[service] = match["id"]
+    _cached_channel_ids[cache_key] = match["id"]
     logger.info("Found %s channel in Buffer: %s (%s)", service, match["name"], match["id"])
     return match["id"]
 
@@ -222,6 +243,8 @@ def send_to_buffer(
     channel_id: str, caption: str, media_url: str, media_type: str = "video",
     facebook_post_type: str | None = None,
     instagram_post_type: str | None = None,
+    youtube: dict | None = None,
+    caption_limit: int | None = None,
 ) -> str:
     """Send content to Buffer's posting queue.
 
@@ -231,9 +254,17 @@ def send_to_buffer(
 
     Args:
         channel_id: Buffer channel ID (from get_channel_id).
-        caption: Post caption text (will be truncated if over 150 chars).
+        caption: Post caption text (truncated to caption_limit, default 150).
         media_url: Public URL of the media file (Supabase signed URL).
         media_type: 'video' or 'image' — determines Buffer asset format.
+        youtube: Optional YouTube publisher metadata block (title, categoryId,
+            privacy, madeForKids, notifySubscribers, embeddable, license, and
+            optional tags). Required for the YouTube channel — Buffer rejects a
+            YouTube post that's missing a category. Mirrors the YouTubeMetadata
+            type in dashboard/src/lib/buffer.ts.
+        caption_limit: Override the 150-char TikTok truncation. YouTube callers
+            pass 5000 (descriptions) and X callers pass 280 so captions aren't
+            amputated unnecessarily.
 
     Returns:
         The Buffer post ID on success.
@@ -251,6 +282,37 @@ def send_to_buffer(
         assets = [{"image": {"url": media_url}}]
     else:
         assets = [{"video": {"url": media_url}}]
+
+    # Buffer nests platform-specific fields under metadata, not on the
+    # top-level input. Build it up only with the keys that apply so we never
+    # send an empty/partial block Buffer might reject.
+    metadata: dict = {}
+    if facebook_post_type:
+        metadata["facebook"] = {"type": facebook_post_type}
+    if instagram_post_type:
+        # 1080x1920 vertical videos belong in the Reels tab; shouldShareToFeed
+        # also pushes them into the main feed (marked required in Buffer's
+        # schema for every IG type). Mirrors dashboard/src/lib/buffer.ts.
+        metadata["instagram"] = {
+            "type": instagram_post_type,
+            "shouldShareToFeed": True,
+        }
+    if youtube:
+        # Drop an empty `tags` key — some publishers reject `tags: []`.
+        yt = dict(youtube)
+        if not yt.get("tags"):
+            yt.pop("tags", None)
+        metadata["youtube"] = yt
+
+    post_input: dict = {
+        "channelId": channel_id,
+        "schedulingType": "automatic",
+        "mode": "addToQueue",
+        "text": truncate_caption(caption, caption_limit or TIKTOK_CAPTION_LIMIT),
+        "assets": assets,
+    }
+    if metadata:
+        post_input["metadata"] = metadata
 
     data = _buffer_request(
         """
@@ -276,36 +338,7 @@ def send_to_buffer(
             }
         }
         """,
-        {
-            "input": {
-                "channelId": channel_id,
-                "schedulingType": "automatic",
-                "mode": "addToQueue",
-                "text": truncate_caption(caption),
-                "assets": assets,
-                # Buffer nests platform-specific fields under metadata.
-                # Facebook requires metadata.facebook.type (post/reel/story);
-                # Instagram requires metadata.instagram.type (post/reel/story) AND
-                # metadata.instagram.shouldShareToFeed (Boolean!) — marked
-                # required in Buffer's GraphQL schema for every IG type, even
-                # "post". For both "post" and "reel" we want True (the post
-                # lands in the feed; the reel cross-posts to the feed). Story
-                # support, if ever added, should set False here.
-                **(
-                    {"metadata": {
-                        **({"facebook": {"type": facebook_post_type}} if facebook_post_type else {}),
-                        **(
-                            {"instagram": {
-                                "type": instagram_post_type,
-                                "shouldShareToFeed": True,
-                            }}
-                            if instagram_post_type else {}
-                        ),
-                    }}
-                    if facebook_post_type or instagram_post_type else {}
-                ),
-            },
-        },
+        {"input": post_input},
     )
 
     result = data.get("createPost", {})
