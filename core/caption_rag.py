@@ -29,6 +29,14 @@ logger = logging.getLogger(__name__)
 # on-topic, but wide enough that we can prefer a stronger line within it.
 _TOP_K = 10
 
+# text-embedding-3-small has an ~8191-token input ceiling; OpenAI rejects
+# anything longer with a 400. English text averages ~4 chars/token, so we cap
+# the transcript well under that (~6K tokens) before embedding. A multi-minute
+# clip can transcribe to more than this, and the opening of the transcript
+# carries the sentiment we're matching on, so a head-truncate is a fine proxy —
+# far better than letting the whole upload fail on an over-length input.
+_MAX_TRANSCRIPT_CHARS = 24000
+
 
 def pick_caption(transcript: str) -> str:
     """Return the bank tweet text that best fits the transcript's sentiment.
@@ -39,7 +47,16 @@ def pick_caption(transcript: str) -> str:
     if not transcript or not transcript.strip():
         raise ValueError("transcript is empty")
 
-    query_embedding = embed(transcript)
+    # Truncate before embedding so a long transcript can't blow the embedding
+    # model's token limit (which would 400 and fail the job).
+    embed_input = transcript[:_MAX_TRANSCRIPT_CHARS]
+    if len(transcript) > _MAX_TRANSCRIPT_CHARS:
+        logger.info(
+            "Transcript truncated %d → %d chars for embedding",
+            len(transcript), _MAX_TRANSCRIPT_CHARS,
+        )
+
+    query_embedding = embed(embed_input)
 
     client = get_client()
     result = client.rpc(

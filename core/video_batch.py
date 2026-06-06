@@ -37,10 +37,11 @@ from core.database import (
     claim_video_batch_job,
     get_video_batch_job,
     insert_post,
+    record_buffer_handoff,
     sanitize_error_message,
-    update_post,
     update_video_batch_job,
 )
+from core.log_safe import install_log_sanitizer
 from core.media import build_proxy_url
 from core.models import Post
 from core.transcription import extract_audio, transcribe
@@ -75,13 +76,27 @@ _X_CAPTION_LIMIT = 280
 _X_CHANNEL_NAME = "acq_official"
 
 
-def _insert_leg(platform: str, title: str, caption: str, storage_path: str) -> str:
-    """Insert a sent_to_buffer posts row for one platform leg. Returns post id.
+def _leg_metadata(job_id: str) -> dict:
+    """Base metadata stamped on every leg row.
 
-    Uses the identical metadata shape as the single-file manual upload so the
-    storage-cleanup cron (which groups by storage path and scans
-    metadata.source='manual_upload') reclaims the mp4 once every leg publishes.
+    Identical to the single-file manual upload's shape (so the storage-cleanup
+    cron, which scans metadata.source='manual_upload', reclaims the mp4 once
+    every leg publishes) PLUS `video_batch_job_id`. The job id is what makes the
+    fan-out idempotent on a re-run: _already_posted() looks a leg up by
+    (job_id, platform), so a process that crashed mid-fanout and is re-run won't
+    re-queue a leg it already sent (see fanout_video / finding #2).
     """
+    return {
+        "source": "manual_upload",
+        "storage_cleanup_status": "pending",
+        "video_batch_job_id": job_id,
+    }
+
+
+def _insert_leg(
+    job_id: str, platform: str, title: str, caption: str, storage_path: str
+) -> str:
+    """Insert a sent_to_buffer posts row for one platform leg. Returns post id."""
     post = Post(
         platform=platform,  # type: ignore[arg-type]  # validated by Post enum
         status="sent_to_buffer",
@@ -89,85 +104,144 @@ def _insert_leg(platform: str, title: str, caption: str, storage_path: str) -> s
         caption=caption,
         media_type="video",
         media_urls=[storage_path],
-        metadata={
-            "source": "manual_upload",
-            "storage_cleanup_status": "pending",
-        },
+        metadata=_leg_metadata(job_id),
     )
     return insert_post(post)
 
 
-def _stamp_buffer_id(post_id: str, buffer_post_id: str) -> None:
-    """Record the Buffer post id on a leg's row, matching route.ts's shape."""
-    update_post(
-        post_id,
-        platform_post_id=buffer_post_id,
-        metadata={
-            "source": "manual_upload",
-            "buffer_post_id": buffer_post_id,
-            "storage_cleanup_status": "pending",
-        },
+def _already_posted(job_id: str, platform: str) -> str | None:
+    """Return the Buffer id of a leg already sent for (job_id, platform), or None.
+
+    The per-leg idempotency guard for finding #2: the job row is only flipped to
+    'done' after ALL three legs finish, so if the process dies after — say —
+    TikTok is queued but before the done write, a re-run would otherwise fan out
+    from the top and double-post TikTok. We instead check, per leg, whether a
+    posts row for this job already carries a Buffer id, and skip the send if so.
+
+    Matches on metadata->>video_batch_job_id (set by _leg_metadata) and a
+    non-null platform_post_id (only stamped AFTER Buffer accepts the post).
+    """
+    from core.database import get_client
+
+    res = (
+        get_client()
+        .table("posts")
+        .select("platform_post_id")
+        .eq("platform", platform)
+        .filter("metadata->>video_batch_job_id", "eq", job_id)
+        .not_.is_("platform_post_id", "null")
+        .limit(1)
+        .execute()
     )
+    rows = res.data or []
+    return rows[0]["platform_post_id"] if rows else None
 
 
-def fanout_video(storage_path: str, title: str, caption: str) -> dict:
+def _send_leg(
+    job_id: str,
+    platform: str,
+    channel_id: str,
+    caption: str,
+    storage_path: str,
+    *,
+    title: str,
+    youtube: dict | None = None,
+    caption_limit: int | None = None,
+) -> str:
+    """Send one leg to Buffer idempotently. Returns the Buffer post id.
+
+    Order per leg: idempotency check → insert row → send → record handoff.
+      * If this leg was already posted for this job (a crash-and-rerun), skip
+        the send and return the existing Buffer id (finding #2).
+      * Insert-before-send so the /api/media/<id> proxy URL resolves when Buffer
+        validates the media synchronously.
+      * On send failure, roll back the row we just inserted and re-raise — the
+        caller decides whether that's fatal (TikTok) or best-effort (YT/X).
+        This rollback now applies to EVERY leg, including TikTok (finding #10).
+      * On success, record the handoff via record_buffer_handoff so the row
+        carries a buffer_replay block and buffer_reconcile can re-send it if
+        Buffer later fails to publish (finding #5).
+    """
+    existing = _already_posted(job_id, platform)
+    if existing:
+        logger.info(
+            "Leg %s already posted for job %s (Buffer %s) — skipping re-send",
+            platform, job_id, existing,
+        )
+        return existing
+
+    post_id = _insert_leg(job_id, platform, title, caption, storage_path)
+    try:
+        buffer_id = send_to_buffer(
+            channel_id, caption, build_proxy_url(post_id), "video",
+            youtube=youtube, caption_limit=caption_limit,
+        )
+    except Exception:
+        # Buffer never queued it — drop the orphan row so storage cleanup isn't
+        # left waiting forever for a sentAt that never comes.
+        _delete_post(post_id)
+        raise
+
+    record_buffer_handoff(
+        post_id, buffer_id,
+        channel_id=channel_id,
+        body=caption,
+        media_type="video",
+        youtube=youtube,
+        caption_limit=caption_limit,
+        base_metadata=_leg_metadata(job_id),
+    )
+    logger.info("%s queued on Buffer: %s", platform, buffer_id)
+    return buffer_id
+
+
+def fanout_video(job_id: str, storage_path: str, title: str, caption: str) -> dict:
     """Fan one video out to Buffer for TikTok + YouTube Shorts + X.
 
     Replicates dashboard/src/app/api/tiktok/manual-upload/route.ts leg-for-leg.
     TikTok is the primary leg — if it fails, raises so the job is marked failed.
     YouTube and X are best-effort (partial success): a failure there is
-    recorded in the returned dict but doesn't fail the whole job, because the
-    TikTok post is already queued on Buffer and can't be un-queued.
+    recorded in the returned dict (as `<platform>_error`) but doesn't fail the
+    whole job, because the TikTok post is already queued on Buffer and can't be
+    un-queued. process_job uses the presence of any `*_error` key to mark the
+    job 'done_partial' rather than 'done' (finding #11).
 
-    Insert-before-send order per leg so the /api/media/<id> proxy URL resolves
-    when Buffer validates the media synchronously.
+    Each leg goes through _send_leg, which is idempotent per (job_id, platform)
+    so a crashed-and-rerun process can't double-post (finding #2).
     """
     result: dict = {}
 
     # ── TikTok (primary) ──────────────────────────────────────────────────
-    tiktok_post_id = _insert_leg("tiktok", title, caption, storage_path)
-    tiktok_channel_id = get_channel_id(service="tiktok")
-    tiktok_buffer_id = send_to_buffer(
-        tiktok_channel_id, caption, build_proxy_url(tiktok_post_id), "video",
+    # No try/except: a TikTok failure must propagate so the job is marked
+    # failed. _send_leg already rolled back its row before re-raising.
+    result["tiktok_buffer_id"] = _send_leg(
+        job_id, "tiktok", get_channel_id(service="tiktok"),
+        caption, storage_path, title=title,
     )
-    _stamp_buffer_id(tiktok_post_id, tiktok_buffer_id)
-    result["tiktok_buffer_id"] = tiktok_buffer_id
-    logger.info("TikTok queued on Buffer: %s", tiktok_buffer_id)
 
     # ── YouTube Shorts (best-effort) ──────────────────────────────────────
-    yt_post_id = _insert_leg("youtube", title, caption, storage_path)
     try:
-        yt_channel_id = get_channel_id(service="youtube")
-        yt_buffer_id = send_to_buffer(
-            yt_channel_id, caption, build_proxy_url(yt_post_id), "video",
+        result["youtube_buffer_id"] = _send_leg(
+            job_id, "youtube", get_channel_id(service="youtube"),
+            caption, storage_path, title=title,
             youtube={"title": title, **YOUTUBE_DEFAULTS},
             caption_limit=_YOUTUBE_CAPTION_LIMIT,
         )
-        _stamp_buffer_id(yt_post_id, yt_buffer_id)
-        result["youtube_buffer_id"] = yt_buffer_id
-        logger.info("YouTube queued on Buffer: %s", yt_buffer_id)
     except Exception as e:
         result["youtube_error"] = sanitize_error_message(str(e))
         logger.error("YouTube leg failed: %s", result["youtube_error"])
-        # Drop the row we inserted — Buffer never queued it, and leaving it
-        # would make storage cleanup wait forever for a sentAt that never comes.
-        _delete_post(yt_post_id)
 
     # ── X / acq_official (best-effort) ────────────────────────────────────
-    x_post_id = _insert_leg("x_acq_official", title, caption, storage_path)
     try:
-        x_channel_id = get_channel_id(service="twitter", name=_X_CHANNEL_NAME)
-        x_buffer_id = send_to_buffer(
-            x_channel_id, caption, build_proxy_url(x_post_id), "video",
+        result["x_buffer_id"] = _send_leg(
+            job_id, "x_acq_official",
+            get_channel_id(service="twitter", name=_X_CHANNEL_NAME),
+            caption, storage_path, title=title,
             caption_limit=_X_CAPTION_LIMIT,
         )
-        _stamp_buffer_id(x_post_id, x_buffer_id)
-        result["x_buffer_id"] = x_buffer_id
-        logger.info("X queued on Buffer: %s", x_buffer_id)
     except Exception as e:
         result["x_error"] = sanitize_error_message(str(e))
         logger.error("X leg failed: %s", result["x_error"])
-        _delete_post(x_post_id)
 
     return result
 
@@ -204,17 +278,39 @@ def process_job(job_id: str) -> dict:
         title = generate_title(transcript)
         caption = pick_caption(transcript)
 
-        fanout = fanout_video(storage_path, title, caption)
+        fanout = fanout_video(job_id, storage_path, title, caption)
 
-        update_video_batch_job(
-            job_id,
-            status="done",
-            title=title,
-            caption=caption,
-            transcript=transcript,
-        )
-        logger.info("Job %s done: title=%r", job_id, title)
-        return {"job_id": job_id, "status": "done", "title": title,
+        # A best-effort leg (YouTube/X) failing is recorded as a `<plat>_error`
+        # key. TikTok (the primary leg) is already queued at this point, so the
+        # job succeeded — but partially. Surface that distinctly (finding #11)
+        # so the UI/API can flag "scheduled, but a platform didn't queue."
+        partial = any(key.endswith("_error") for key in fanout)
+        status = "done_partial" if partial else "done"
+
+        # Wrap the terminal status write (finding #2): the fan-out has already
+        # happened — TikTok is queued and the posts rows are written. A transient
+        # DB blip on THIS write must NOT bubble up to main()'s except, which
+        # would flip a successfully-fanned-out job to 'failed' AND (worse) leave
+        # it re-runnable. Mirror scheduler.process_due_posts's nested-try: log
+        # the double-fault and still return success. The row stays 'processing';
+        # the per-leg idempotency guard means even a re-run can't double-post.
+        try:
+            update_video_batch_job(
+                job_id,
+                status=status,
+                title=title,
+                caption=caption,
+                transcript=transcript,
+            )
+        except Exception as db_err:
+            logger.error(
+                "Job %s fanned out OK (status=%s) but the status write failed: "
+                "%s — leaving row 'processing', NOT marking failed",
+                job_id, status, db_err,
+            )
+
+        logger.info("Job %s %s: title=%r", job_id, status, title)
+        return {"job_id": job_id, "status": status, "title": title,
                 "caption": caption, **fanout}
     finally:
         # Always clean up the temp mp3, success or failure.
@@ -226,6 +322,15 @@ def process_job(job_id: str) -> dict:
 
 
 def main() -> None:
+    # Install the log redaction filter BEFORE anything can log (finding #3).
+    # Every cron entrypoint does this; the batch processor skipped it. It
+    # matters here especially because the failure path below logs the traceback
+    # (exc_info=True), and ffmpeg/Deepgram/Supabase exceptions routinely carry
+    # the signed Storage URL or an Authorization header in their text — without
+    # the filter those land in Render's durable logs verbatim. Idempotent and
+    # must run after logging.basicConfig (done at import), which it is.
+    install_log_sanitizer()
+
     parser = argparse.ArgumentParser(description="Process one video batch job.")
     parser.add_argument("--job-id", required=True, help="video_batch_jobs row id")
     args = parser.parse_args()

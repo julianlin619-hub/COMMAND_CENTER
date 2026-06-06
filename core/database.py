@@ -101,6 +101,8 @@ def record_buffer_handoff(
     media_type: str | None,
     facebook_post_type: str | None = None,
     instagram_post_type: str | None = None,
+    youtube: dict | None = None,
+    caption_limit: int | None = None,
     base_metadata: dict | None = None,
 ) -> None:
     """Stamp a successful Buffer handoff and persist a replay payload.
@@ -111,6 +113,13 @@ def record_buffer_handoff(
     from the row because the Buffer body differs from `posts.caption` — the
     fan-out legs publish a constant hook ("Agree?") while `caption` stores the
     tweet text for dedup, and channel_id / post-type aren't on the row at all.
+
+    `youtube` and `caption_limit` exist for the batch-video fan-out: a YouTube
+    leg can't be re-sent without its publisher metadata block (Buffer rejects a
+    YouTube post with no category), and the YouTube/X legs use non-default
+    caption limits (5000 / 280) that must survive a replay or reconcile would
+    re-truncate to TikTok's 150. Both are persisted only when set, so the
+    other Buffer paths are unaffected.
 
     `metadata` is set wholesale by update_post (it's a single jsonb column), so
     we merge `buffer_replay` into `base_metadata` — the metadata the row was
@@ -127,6 +136,10 @@ def record_buffer_handoff(
         replay["facebook_post_type"] = facebook_post_type
     if instagram_post_type:
         replay["instagram_post_type"] = instagram_post_type
+    if youtube:
+        replay["youtube"] = youtube
+    if caption_limit is not None:
+        replay["caption_limit"] = caption_limit
 
     metadata = {**(base_metadata or {}), "buffer_replay": replay}
     update_post(post_id, platform_post_id=buffer_post_id, metadata=metadata)
@@ -412,12 +425,30 @@ def claim_video_batch_job(job_id: str) -> bool:
 
 
 def update_video_batch_job(job_id: str, **fields) -> None:
-    """Update fields on a job row. Sanitizes error_message before storing."""
+    """Update fields on a job row. Sanitizes error_message before storing.
+
+    Raises RuntimeError if the update touches zero rows (row missing or RLS
+    blocked the write), mirroring update_post — a silent no-op here would let a
+    job sit forever in 'processing' while everything looked healthy, hiding a
+    real DB/RLS misconfiguration.
+
+    IMPORTANT for callers in a failure path: core.video_batch marks a job
+    'failed' from inside an `except` block. A zero-row RuntimeError there would
+    SHADOW the original error, so that call site wraps this in its own
+    try/except (see core/video_batch.main) — same pattern as
+    scheduler.process_due_posts wrapping update_post.
+    """
     client = get_client()
     fields["updated_at"] = datetime.now(timezone.utc).isoformat()
     if fields.get("error_message"):
         fields["error_message"] = sanitize_error_message(fields["error_message"])
-    client.table("video_batch_jobs").update(fields).eq("id", job_id).execute()
+    result = (
+        client.table("video_batch_jobs").update(fields).eq("id", job_id).execute()
+    )
+    if not result.data:
+        raise RuntimeError(
+            f"update_video_batch_job({job_id}) returned no rows — row missing or RLS blocked"
+        )
 
 
 def list_post_captions(platform: str) -> set[str]:

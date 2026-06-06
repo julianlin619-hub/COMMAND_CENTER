@@ -29,6 +29,8 @@ import logging
 
 import anthropic
 
+from core.retry import raise_for_retryable_status, with_retry
+
 logger = logging.getLogger(__name__)
 
 _MAX_TITLE_CHARS = 100  # YouTube's hard ceiling for video titles.
@@ -137,14 +139,7 @@ def generate_title(
     if client is None:
         client = anthropic.Anthropic()
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=128,
-        thinking={"type": "disabled"},
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": transcript}],
-        output_config={"format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}},
-    )
+    response = _create_title_message(client, transcript)
 
     text = next(b.text for b in response.content if b.type == "text")
     parsed = json.loads(text)
@@ -156,6 +151,38 @@ def generate_title(
         title = _truncate_on_space(title, _MAX_TITLE_CHARS)
 
     return title
+
+
+@with_retry()
+def _create_title_message(client: anthropic.Anthropic, transcript: str):
+    """Call Claude to generate the title, retrying transient failures.
+
+    Wrapped in @with_retry so a transient Anthropic blip (a 429, a 5xx, or a
+    dropped connection) is retried with backoff instead of sinking the whole
+    batch job on the first miss. We translate an APIStatusError into our
+    exception hierarchy (raise_for_retryable_status) so a 429/5xx retries while
+    a deterministic 4xx — e.g. a malformed request — fails fast without burning
+    retries. Connection/timeout errors aren't APIStatusErrors, so they fall
+    through to @with_retry's generic backoff path.
+    """
+    try:
+        return client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=128,
+            thinking={"type": "disabled"},
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": transcript}],
+            output_config={"format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}},
+        )
+    except anthropic.APIStatusError as e:
+        # Honor a Retry-After header when the SDK surfaces one on the response.
+        retry_after = None
+        raw = getattr(getattr(e, "response", None), "headers", {}) or {}
+        try:
+            retry_after = float(raw.get("retry-after")) if raw.get("retry-after") else None
+        except (TypeError, ValueError):
+            retry_after = None
+        raise_for_retryable_status(e.status_code, retry_after=retry_after, body=str(e))
 
 
 def _truncate_on_space(text: str, limit: int) -> str:

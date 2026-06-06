@@ -30,7 +30,11 @@ import random
 from collections.abc import Callable
 from typing import TypeVar
 
-from core.exceptions import NonRetryablePlatformError, PlatformRateLimitError
+from core.exceptions import (
+    NonRetryablePlatformError,
+    PlatformAPIError,
+    PlatformRateLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +143,47 @@ def with_retry(
         return sync_wrapper  # type: ignore[return-value]
 
     return decorator
+
+
+def raise_for_retryable_status(
+    status_code: int,
+    *,
+    retry_after: float | None = None,
+    body: str = "",
+) -> None:
+    """Map an HTTP status onto our exception hierarchy so @with_retry reacts right.
+
+    The retry helper above keys off exception *type*: PlatformRateLimitError
+    honors a server wait hint, NonRetryablePlatformError is re-raised
+    immediately, and any other Exception (here PlatformAPIError) gets the
+    exponential-backoff treatment. This helper centralises the classification
+    so every external HTTP caller (Deepgram, OpenAI embeddings, …) wrapped in
+    @with_retry retries the SAME way:
+
+      - 429              → PlatformRateLimitError (honor Retry-After)
+      - 5xx              → PlatformAPIError        (transient → retried)
+      - other 4xx        → NonRetryablePlatformError (deterministic → no retry)
+
+    A 2xx/3xx status is left alone (no raise). `body` is only used to make the
+    error message useful; callers store it via sanitize_error_message, so a
+    leaked token in a body is redacted before it lands anywhere durable.
+    """
+    if status_code == 429:
+        raise PlatformRateLimitError(
+            f"rate limited (HTTP 429): {body}".strip(), retry_after=retry_after
+        )
+    if 500 <= status_code < 600:
+        # Server-side hiccup — worth retrying with backoff.
+        raise PlatformAPIError(
+            f"server error (HTTP {status_code}): {body}".strip(),
+            status_code=status_code,
+        )
+    if 400 <= status_code < 500:
+        # Client error (bad request, auth, not found) — retrying won't fix it.
+        raise NonRetryablePlatformError(
+            f"client error (HTTP {status_code}): {body}".strip(),
+            status_code=status_code,
+        )
 
 
 def _calc_delay(attempt: int, base_delay: float, max_delay: float) -> float:

@@ -120,6 +120,10 @@ def _resend(post: dict, replay: dict) -> str:
         # Use the permanent proxy URL — it re-signs on every request, so it
         # never expires regardless of how long the post stays in Buffer's queue.
         url = build_proxy_url(post["id"])
+        # Carry the YouTube publisher block + per-platform caption limit when
+        # present (batch-video legs persist these). Without the YouTube block a
+        # re-sent YouTube post is rejected for a missing category; without the
+        # caption_limit a YouTube/X caption would be re-truncated to TikTok's 150.
         return send_to_buffer(
             replay["channel_id"],
             replay["body"],
@@ -127,6 +131,8 @@ def _resend(post: dict, replay: dict) -> str:
             media_type=media_type,
             facebook_post_type=replay.get("facebook_post_type"),
             instagram_post_type=replay.get("instagram_post_type"),
+            youtube=replay.get("youtube"),
+            caption_limit=replay.get("caption_limit"),
         )
 
     adapter_cls = _SCHEDULER_BUFFER_ADAPTERS.get(platform)

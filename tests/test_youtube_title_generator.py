@@ -48,7 +48,13 @@ class TestGenerateTitle:
         assert schema["required"] == ["title"]
         assert schema["additionalProperties"] is False
 
-    def test_sdk_error_propagates(self):
+    def test_sdk_error_propagates(self, monkeypatch):
+        # The SDK call is now wrapped in @with_retry, so a non-status error is
+        # retried with backoff and then re-raised unchanged. Patch sleep so the
+        # retries don't actually wait, and assert the original error surfaces.
+        import time
+
+        monkeypatch.setattr(time, "sleep", lambda *_a, **_k: None)
         client = MagicMock()
         client.messages.create.side_effect = RuntimeError("boom")
         with pytest.raises(RuntimeError, match="boom"):

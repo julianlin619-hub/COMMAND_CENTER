@@ -23,6 +23,7 @@ import sys
 
 from core.database import get_client
 from core.embeddings import EMBEDDING_DIM, embed_batch
+from core.retry import with_retry
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -108,23 +109,40 @@ def main() -> None:
     inserted = 0
     for start in range(0, len(rows), _BATCH_SIZE):
         chunk = rows[start : start + _BATCH_SIZE]
-        vectors = embed_batch([r["text"] for r in chunk])
-        payload = [
-            {
-                "tweet_id": r["tweet_id"],
-                "text": r["text"],
-                "favorite_count": r["favorite_count"],
-                "embedding": vec,
-            }
-            for r, vec in zip(chunk, vectors, strict=True)
-        ]
-        # upsert on tweet_id so a partial previous run (or a duplicate id in
-        # the CSV) updates rather than erroring on the unique constraint.
-        client.table("tweet_bank").upsert(payload, on_conflict="tweet_id").execute()
-        inserted += len(payload)
+        # _process_chunk is wrapped in @with_retry so a transient OpenAI/Supabase
+        # blip on one of ~90 chunks doesn't abandon the whole backfill partway
+        # through — the run is idempotent (upsert on tweet_id), so a retried
+        # chunk just re-writes the same rows. embed_batch also retries its own
+        # HTTP internally; this outer wrap additionally covers the upsert.
+        inserted += _process_chunk(client, chunk)
         logger.info("Embedded %d/%d", inserted, len(rows))
 
     logger.info("Done. Embedded %d tweets.", inserted)
+
+
+@with_retry()
+def _process_chunk(client, chunk: list[dict]) -> int:
+    """Embed one chunk of tweets and upsert them. Returns the rows written.
+
+    Retried as a unit so a transient failure on either the embedding call or
+    the upsert is recovered without aborting the backfill. Safe to retry: the
+    upsert keys on tweet_id, so re-running a chunk overwrites rather than
+    duplicates.
+    """
+    vectors = embed_batch([r["text"] for r in chunk])
+    payload = [
+        {
+            "tweet_id": r["tweet_id"],
+            "text": r["text"],
+            "favorite_count": r["favorite_count"],
+            "embedding": vec,
+        }
+        for r, vec in zip(chunk, vectors, strict=True)
+    ]
+    # upsert on tweet_id so a partial previous run (or a duplicate id in
+    # the CSV) updates rather than erroring on the unique constraint.
+    client.table("tweet_bank").upsert(payload, on_conflict="tweet_id").execute()
+    return len(payload)
 
 
 if __name__ == "__main__":

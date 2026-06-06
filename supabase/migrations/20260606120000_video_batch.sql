@@ -23,7 +23,10 @@ CREATE EXTENSION IF NOT EXISTS vector;
 -- its own table (not the CSV) because the RAG lookup needs the vectors in
 -- Postgres where pgvector can rank them — re-embedding 18K tweets on every
 -- upload would be far too slow and expensive.
-CREATE TABLE tweet_bank (
+-- IF NOT EXISTS on every CREATE so re-running the migration (e.g. a repeated
+-- `supabase db push` against a partially-applied DB) is a no-op rather than a
+-- hard error — matches the idempotent posture the backfill script already has.
+CREATE TABLE IF NOT EXISTS tweet_bank (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     -- The original tweet id from the CSV. Unique so the backfill is
     -- idempotent (re-running skips tweets already inserted via upsert).
@@ -37,20 +40,32 @@ CREATE TABLE tweet_bank (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- IVFFlat index for approximate nearest-neighbour search by cosine distance.
--- `lists` trades index build time / memory for query speed; 100 is a sane
--- default for ~18K rows. The index only helps once the table is populated —
--- build it after the backfill if you want optimal centroids, but creating it
--- here is harmless (it just stays empty until rows land).
-CREATE INDEX idx_tweet_bank_embedding
-    ON tweet_bank USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
+-- HNSW index for approximate nearest-neighbour search by cosine distance.
+-- Why HNSW over IVFFlat here: an IVFFlat index built on an EMPTY table has no
+-- rows to cluster, so it falls back to a single list (probes=1) and gives poor
+-- recall until rebuilt after the backfill. HNSW is a graph index that needs no
+-- training data — it builds fine on an empty table and grows correctly as the
+-- backfill inserts rows, so the recall is good without a manual post-backfill
+-- rebuild step. Slightly more memory/build cost than IVFFlat, negligible at
+-- ~18K rows.
+CREATE INDEX IF NOT EXISTS idx_tweet_bank_embedding
+    ON tweet_bank USING hnsw (embedding vector_cosine_ops);
 
 -- ── match_tweet_bank RPC ─────────────────────────────────────────────────
 -- Returns the `match_count` tweets whose embedding is closest (cosine) to the
 -- query embedding. Called from Python via client.rpc("match_tweet_bank", ...).
 -- similarity = 1 - cosine_distance, so higher is more similar (easier for the
 -- caller to reason about than a raw distance).
+-- SET search_path = '' pins the function's name resolution so a caller can't
+-- prepend a malicious schema to their session search_path and shadow
+-- `tweet_bank` with a lookalike table (a classic SECURITY-context trick, and a
+-- Supabase linter warning even for non-SECURITY-DEFINER functions). With an
+-- empty path EVERYTHING must be schema-qualified: the table as
+-- `public.tweet_bank`, and the pgvector cosine-distance operator as
+-- `OPERATOR(public.<=>)` (the `vector` extension is created in `public` above,
+-- so its operator lives there). The `vector(1536)` types in the signature
+-- resolve at CREATE time under the migration's own search_path, so they don't
+-- need qualifying.
 CREATE OR REPLACE FUNCTION match_tweet_bank(
     query_embedding vector(1536),
     match_count int DEFAULT 10
@@ -62,17 +77,24 @@ RETURNS TABLE (
     similarity float
 )
 LANGUAGE sql STABLE
+SET search_path = ''
 AS $$
     SELECT
         tb.tweet_id,
         tb.text,
         tb.favorite_count,
-        1 - (tb.embedding <=> query_embedding) AS similarity
-    FROM tweet_bank tb
+        1 - (tb.embedding OPERATOR(public.<=>) query_embedding) AS similarity
+    FROM public.tweet_bank tb
     WHERE tb.embedding IS NOT NULL
-    ORDER BY tb.embedding <=> query_embedding
+    ORDER BY tb.embedding OPERATOR(public.<=>) query_embedding
     LIMIT match_count;
 $$;
+
+-- Lock the RPC down to the service role. The anon/authenticated roles (the keys
+-- a browser could ever hold) have no business querying the tweet bank — the RAG
+-- lookup runs only in the service-key-backed Python processor. Postgres grants
+-- EXECUTE on new functions to PUBLIC by default, so we explicitly REVOKE it.
+REVOKE EXECUTE ON FUNCTION match_tweet_bank(vector, int) FROM PUBLIC, anon, authenticated;
 
 -- ── Video batch jobs ─────────────────────────────────────────────────────
 -- One row per uploaded mp4 in the batch pathway. The dashboard inserts a row
@@ -82,15 +104,17 @@ $$;
 -- Buffer, and finally marks it done (or failed). The row doubles as the UI's
 -- progress record and as an idempotency guard: claim_video_batch_job() only
 -- succeeds on a 'pending' row, so a double-click or retry can't double-post.
-CREATE TABLE video_batch_jobs (
+CREATE TABLE IF NOT EXISTS video_batch_jobs (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     -- Clerk user id of the uploader (from the dashboard session). Stored so
     -- the storage-path ownership check has a record and the UI can scope.
     user_id         TEXT NOT NULL,
     -- Supabase Storage path of the uploaded mp4 (tiktok/manual/<userId>/...).
     storage_path    TEXT NOT NULL,
-    -- pending → processing → done | failed. Plain TEXT (not an enum) so we can
-    -- add states without a migration, matching cron_runs.job_type's rationale.
+    -- pending → processing → done | done_partial | failed. Plain TEXT (not an
+    -- enum) so we can add states without a migration, matching cron_runs.
+    -- job_type's rationale. `done_partial` means TikTok (the primary leg)
+    -- published but at least one best-effort leg (YouTube/X) failed to queue.
     status          TEXT NOT NULL DEFAULT 'pending',
     -- Filled in by the processor once generated, so the UI can show them.
     title           TEXT,
@@ -110,6 +134,23 @@ CREATE TABLE video_batch_jobs (
 -- Partial index over just the unclaimed jobs — the only ones a claim query
 -- scans. Stays small as completed jobs accumulate (same pattern as
 -- idx_schedules_due).
-CREATE INDEX idx_video_batch_jobs_pending
+CREATE INDEX IF NOT EXISTS idx_video_batch_jobs_pending
     ON video_batch_jobs (created_at)
     WHERE status = 'pending';
+
+-- ── Row Level Security ───────────────────────────────────────────────────
+-- Every table-creating migration in this repo enables RLS with no anon/auth
+-- policies, so the anon key gets ZERO access and only the service_role key
+-- (used by all server-side code) can touch the rows. The service key bypasses
+-- RLS automatically; the explicit policy documents the intent and keeps the
+-- access model uniform across tables. Mirrors 20260412105433_rls_and_dedup.sql.
+ALTER TABLE tweet_bank ENABLE ROW LEVEL SECURITY;
+ALTER TABLE video_batch_jobs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Service role full access on tweet_bank"
+    ON tweet_bank FOR ALL
+    USING (auth.role() = 'service_role');
+
+CREATE POLICY "Service role full access on video_batch_jobs"
+    ON video_batch_jobs FOR ALL
+    USING (auth.role() = 'service_role');

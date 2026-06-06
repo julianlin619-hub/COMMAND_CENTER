@@ -23,6 +23,8 @@ import os
 
 import httpx
 
+from core.retry import raise_for_retryable_status, with_retry
+
 logger = logging.getLogger(__name__)
 
 OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
@@ -69,6 +71,26 @@ def embed_batch(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
 
+    data = _embeddings_request(texts).get("data", [])
+    if len(data) != len(texts):
+        raise RuntimeError(
+            f"OpenAI returned {len(data)} embeddings for {len(texts)} inputs"
+        )
+    ordered = sorted(data, key=lambda d: d["index"])
+    return [item["embedding"] for item in ordered]
+
+
+@with_retry()
+def _embeddings_request(texts: list[str]) -> dict:
+    """POST to OpenAI's embeddings endpoint, returning the parsed JSON body.
+
+    Wrapped in @with_retry so a transient OpenAI hiccup (429 rate limit, 5xx,
+    or a dropped connection) is retried with backoff rather than failing the
+    caller outright — a single transient error used to sink an entire upload or
+    a whole backfill chunk. raise_for_retryable_status maps the HTTP status onto
+    our exception hierarchy so 429/5xx retry (honoring Retry-After) but a 4xx
+    like a bad key fails fast.
+    """
     resp = httpx.post(
         OPENAI_EMBEDDINGS_URL,
         headers={
@@ -78,11 +100,19 @@ def embed_batch(texts: list[str]) -> list[list[float]]:
         json={"model": EMBEDDING_MODEL, "input": texts},
         timeout=_TIMEOUT,
     )
-    resp.raise_for_status()
-    data = resp.json().get("data", [])
-    if len(data) != len(texts):
-        raise RuntimeError(
-            f"OpenAI returned {len(data)} embeddings for {len(texts)} inputs"
+    if not resp.is_success:
+        retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+        raise_for_retryable_status(
+            resp.status_code, retry_after=retry_after, body=resp.text
         )
-    ordered = sorted(data, key=lambda d: d["index"])
-    return [item["embedding"] for item in ordered]
+    return resp.json()
+
+
+def _parse_retry_after(raw: str | None) -> float | None:
+    """Coerce a Retry-After header (seconds) to a float, or None if absent/bad."""
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
