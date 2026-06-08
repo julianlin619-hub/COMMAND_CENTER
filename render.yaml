@@ -165,26 +165,6 @@ services:
       - key: TIKTOK_BANK_MIN_LIKES  # optional — default 6500
         sync: false
 
-  # Reclaims Supabase Storage for manual TikTok uploads once every post in
-  # the fan-out group has status='published' in the DB (set by buffer_reconcile).
-  # No age window — deletes as soon as all platform copies are confirmed live.
-  # Runs weekly on Monday.
-  - type: cron
-    name: manual-upload-storage-cleanup
-    runtime: python
-    buildCommand: pip install -r requirements.txt && pip install -e .
-    startCommand: python -m cron.tiktok_storage_cleanup
-    schedule: "0 3 * * 1"  # weekly on Monday at 03:00 UTC
-    envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_KEY
-        sync: false
-      - key: BUFFER_ACCESS_TOKEN
-        sync: false
-      - key: BUFFER_ORG_ID
-        sync: false
-
   # Reconciles posts handed to Buffer's queue against Buffer's actual publish
   # state. Buffer accepts a post immediately but may fail to publish it days
   # later (e.g. expired media URL); send_to_buffer never checks back. This
