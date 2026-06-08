@@ -48,6 +48,13 @@ logger = logging.getLogger(__name__)
 # perfect tweet is in the candidate set, at the cost of more rerank input tokens.
 _TOP_K = 10
 
+# Hard cap on caption length, independent of the meaning rerank. ~1100 chars is
+# roughly 150-200 words — past that a tweet makes an unwieldy caption, no matter
+# how well it matches. Applied to the retrieved neighbourhood before both the
+# rerank and the engagement fallback, so an over-length tweet can never be
+# selected by either path.
+_MAX_CAPTION_CHARS = 1100
+
 # text-embedding-3-small has an ~8191-token input ceiling; OpenAI rejects
 # anything longer with a 400. English text averages ~4 chars/token, so we cap
 # the transcript well under that (~6K tokens) before embedding. A multi-minute
@@ -124,13 +131,26 @@ def pick_caption(
             "embedded? Run scripts/embed_tweet_bank.py."
         )
 
+    # Drop over-length tweets so neither the rerank nor the fallback can pick
+    # one. If every retrieved neighbour is over the cap (rare — the bank is
+    # overwhelmingly short tweets), keep the full set rather than fail the
+    # upload; a long caption beats no caption.
+    eligible = [m for m in matches if len(m.get("text", "")) <= _MAX_CAPTION_CHARS]
+    if not eligible:
+        logger.warning(
+            "All %d retrieved tweets exceed %d chars — keeping full set so the "
+            "upload still gets a caption",
+            len(matches), _MAX_CAPTION_CHARS,
+        )
+        eligible = matches
+
     # Precision step: let the LLM pick the best meaning-match among the
     # retrieved neighbours. None means "rerank unavailable" → fall back to the
     # engagement heuristic (every candidate is already on-sentiment, so the
     # strongest proven line is a safe default rather than failing the upload).
-    chosen = _rerank_by_meaning(query_text, matches, client=client)
+    chosen = _rerank_by_meaning(query_text, eligible, client=client)
     if chosen is None:
-        chosen = max(matches, key=lambda m: m.get("favorite_count") or 0)
+        chosen = max(eligible, key=lambda m: m.get("favorite_count") or 0)
         logger.warning(
             "Caption rerank unavailable — fell back to highest-engagement match"
         )

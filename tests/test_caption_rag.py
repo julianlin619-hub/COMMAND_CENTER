@@ -113,6 +113,50 @@ def test_fallback_handles_null_favorite_count(monkeypatch):
     assert rag.pick_caption("transcript", client=fake_llm) == "some"
 
 
+def test_over_length_tweet_excluded_from_rerank_prompt(monkeypatch):
+    # A tweet over the 1100-char cap must never reach the model: it's dropped
+    # before the candidates are numbered, so the rerank judges only short ones.
+    long_text = "x" * (rag._MAX_CAPTION_CHARS + 1)
+    matches = [
+        {"tweet_id": "1", "text": long_text, "favorite_count": 10, "similarity": 0.99},
+        {"tweet_id": "2", "text": "short and punchy", "favorite_count": 5, "similarity": 0.80},
+    ]
+    _patch_retrieval(monkeypatch, matches)
+    # After filtering, only the short tweet remains → it is candidate #1.
+    fake_llm = _FakeAnthropic(index=1)
+    assert rag.pick_caption("transcript", client=fake_llm) == "short and punchy"
+    sent = fake_llm.calls[0]["messages"][0]["content"]
+    assert long_text not in sent
+    assert "short and punchy" in sent
+
+
+def test_fallback_skips_over_length_tweet(monkeypatch):
+    # The over-length tweet has the most likes, but the cap is hard: the
+    # engagement fallback must choose the best tweet *within* the cap instead.
+    matches = [
+        {"tweet_id": "1", "text": "y" * (rag._MAX_CAPTION_CHARS + 1), "favorite_count": 9999, "similarity": 0.99},
+        {"tweet_id": "2", "text": "within the cap", "favorite_count": 3, "similarity": 0.70},
+    ]
+    _patch_retrieval(monkeypatch, matches)
+    fake_llm = _FakeAnthropic(index=99)  # nonsense index → force fallback
+    assert rag.pick_caption("transcript", client=fake_llm) == "within the cap"
+
+
+def test_all_over_cap_degrades_instead_of_failing(monkeypatch):
+    # If every retrieved tweet exceeds the cap, we keep the full set rather than
+    # fail the upload — a long caption beats no caption.
+    a = "a" * (rag._MAX_CAPTION_CHARS + 1)
+    b = "b" * (rag._MAX_CAPTION_CHARS + 5)
+    matches = [
+        {"tweet_id": "1", "text": a, "favorite_count": 1, "similarity": 0.9},
+        {"tweet_id": "2", "text": b, "favorite_count": 50, "similarity": 0.8},
+    ]
+    _patch_retrieval(monkeypatch, matches)
+    fake_llm = _FakeAnthropic(index=99)  # force fallback over the degraded set
+    # Highest-engagement of the full set wins; a caption is still returned.
+    assert rag.pick_caption("transcript", client=fake_llm) == b
+
+
 def test_passes_embedding_and_match_count_to_rpc(monkeypatch):
     client = _patch_retrieval(monkeypatch, _MATCHES, embedding=[0.5] * 4)
     rag.pick_caption("transcript", client=_FakeAnthropic(index=1))
