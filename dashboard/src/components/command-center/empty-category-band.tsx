@@ -11,10 +11,10 @@
  * it, Next.js refuses to pass function props from the server tree.
  */
 import { Plus } from "lucide-react";
-import type { FormatGroup } from "@/lib/command-center-config";
+import type { CommandCenterCategory } from "@/lib/command-center-config";
 
 interface EmptyCategoryBandProps {
-  category: FormatGroup;
+  category: CommandCenterCategory;
   label: string;
   color: string;
 }

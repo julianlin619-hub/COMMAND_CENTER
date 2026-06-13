@@ -9,11 +9,11 @@
 
 import path from "path";
 import fs from "fs/promises";
-import Link from "next/link";
-import { ArrowLeftIcon } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { DetailPageHeader } from "@/components/command-center/detail-page-header";
 import { LeilaLinkedInDesignTool } from "@/components/leila-linkedin-design-tool";
 import { getSupabaseClient } from "@/lib/supabase";
+import { CATEGORY_COLORS } from "@/lib/command-center-config";
 import {
   DEFAULT_TEMPLATE_CONFIG,
   validateTemplateConfig,
@@ -68,31 +68,22 @@ export default async function LeilaLinkedInDesignPage() {
 
   return (
     <AppShell>
-      {/* Page header — mono eyebrow over a large tracked title with a
-          terracotta period, matching the refined terracotta detail-page
-          voice. Revealed first, before the tool itself. */}
-      <div className="cc-reveal mb-8" style={{ animationDelay: "0s" }}>
-        <Link
-          href="/leila/linkedin"
-          className="mb-5 inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-white/40 transition-colors hover:text-white/70"
-        >
-          <ArrowLeftIcon className="size-3.5" />
-          Back to Leila — LinkedIn
-        </Link>
-        <div>
-          <div className="cc-eyebrow mb-1.5">Template Sandbox</div>
-          <h1 className="text-[40px] font-semibold leading-none tracking-[-0.025em] text-[#edeae0]">
-            Graphics Design
-            <span style={{ color: "var(--terracotta)" }}>.</span>
-          </h1>
-          <p className="mt-2 text-sm text-white/55">
-            Iterate on the quote-card template for Leila&apos;s LinkedIn —
-            tweak knobs, watch the preview, copy the config when ready.
-          </p>
-        </div>
+      {/* Shared hero header. This is a graphics surface, so it wears the
+          graphics category color (rose) as its accent rather than terracotta,
+          and its back-link returns to the LinkedIn pathway page it spun off
+          from instead of the home screen. */}
+      <div className="cc-reveal">
+        <DetailPageHeader
+          accent={CATEGORY_COLORS.graphics}
+          backHref="/leila/linkedin"
+          backLabel="Back to Leila — LinkedIn"
+          eyebrow="Template Sandbox"
+          title="Graphics Design"
+          subtitle="Iterate on the quote-card template for Leila's LinkedIn — tweak knobs, watch the preview, copy the config when ready."
+        />
       </div>
 
-      <div className="cc-reveal" style={{ animationDelay: "0.06s" }}>
+      <div className="cc-reveal mt-7" style={{ animationDelay: "0.06s" }}>
         <LeilaLinkedInDesignTool
           initialConfig={startingConfig}
           defaultHeaderImageDataUrl={defaultHeaderDataUrl}

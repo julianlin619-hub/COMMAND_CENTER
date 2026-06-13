@@ -8,11 +8,12 @@
  */
 
 import Link from "next/link";
-import { ArrowLeftIcon, PaletteIcon } from "lucide-react";
+import { PaletteIcon } from "lucide-react";
 import { getSupabaseClient } from "@/lib/supabase";
 import { AppShell } from "@/components/app-shell";
 import { PlatformIcon } from "@/components/platform-icon";
 import { PathwayCard, type PathwayLastRun } from "@/components/pathway-card";
+import { DetailPageHeader } from "@/components/command-center/detail-page-header";
 
 export const dynamic = "force-dynamic";
 
@@ -52,37 +53,22 @@ export default async function LeilaLinkedInPage() {
 
   return (
     <AppShell>
-      {/* Page header — staggered reveal, mono eyebrow above a large
-          tracked title with a terracotta period, matching the refined
-          terracotta voice used across detail pages. */}
-      <div className="cc-reveal mb-8" style={{ animationDelay: "0s" }}>
-        <Link
-          href="/"
-          className="mb-5 inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-white/40 transition-colors hover:text-white/70"
-        >
-          <ArrowLeftIcon className="size-3.5" />
-          Back to Overview
-        </Link>
-        <div className="flex items-center gap-3.5">
-          <PlatformIcon platform="linkedin" className="size-8" />
-          <div>
-            <div className="cc-eyebrow mb-1.5">Leila Pathway</div>
-            <h1 className="text-[40px] font-semibold leading-none tracking-[-0.025em] text-[#edeae0]">
-              LinkedIn
-              <span style={{ color: "var(--terracotta)" }}>.</span>
-            </h1>
-            <p className="mt-2 text-sm text-white/55">
-              Quote-card images from recent @LeilaHormozi tweets
-            </p>
-          </div>
-        </div>
+      {/* Shared hero header — mirrors the Threads pathway page so both Leila
+          detail pages read as siblings of each other and of the home screen. */}
+      <div className="cc-reveal">
+        <DetailPageHeader
+          icon={<PlatformIcon platform="linkedin" className="size-8" />}
+          eyebrow="Leila Pathway"
+          title="LinkedIn"
+          subtitle="Quote-card images from recent @LeilaHormozi tweets"
+        />
       </div>
 
       {/* Run cadence + flow notes — kept inline (not split into its own
           component) because nothing else on the page needs them. Now a
           cc-surface so it shares the elevated card language. */}
       <div
-        className="cc-reveal cc-surface mb-5 px-5 py-4 text-xs text-white/65"
+        className="cc-reveal cc-surface mb-5 mt-7 px-5 py-4 text-xs text-white/65"
         style={{ animationDelay: "0.06s" }}
       >
         <div className="flex flex-wrap gap-x-6 gap-y-1.5">

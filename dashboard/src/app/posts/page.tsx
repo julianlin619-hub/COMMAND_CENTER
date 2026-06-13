@@ -8,10 +8,10 @@
 
 import { getSupabaseClient } from "@/lib/supabase";
 import { AppShell } from "@/components/app-shell";
+import { DetailPageHeader } from "@/components/command-center/detail-page-header";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Separator } from "@/components/ui/separator";
 import {
   Table,
   TableCell,
@@ -210,51 +210,28 @@ export default async function PostsPage() {
 
   return (
     <AppShell>
-      {/* Page header — eyebrow + big display title pattern from the design
-          system. Staggered reveal blocks give the page a calm entrance. */}
-      <div className="cc-reveal mb-8">
-        <div className="cc-eyebrow mb-2">Publishing Log</div>
-        <h2 className="text-[40px] font-semibold leading-none tracking-[-0.025em] text-[#edeae0]">
-          Posts
-          <span style={{ color: "var(--terracotta)" }}>.</span>
-        </h2>
-        <p className="mt-3 text-sm text-white/55">
-          Manage posts across all platforms
-        </p>
-      </div>
-
-      {/* Summary counts — mono labels with tabular numerals so the figures
-          line up and read as instrument-panel stats rather than chips.
-          Each count is tinted with its matching pill foreground token. */}
-      <div
-        className="cc-reveal mb-6 flex items-center gap-4 font-mono text-[12px]"
-        style={{ animationDelay: "0.06s" }}
-      >
-        <span className="text-white/55">
-          <span className="tabular font-semibold text-[#edeae0]">
-            {posts.length}
-          </span>{" "}
-          total
-        </span>
-        <Separator
-          orientation="vertical"
-          className="h-4"
-          style={{ backgroundColor: "var(--surface-border)" }}
+      {/* Shared hero header. The total/published/failed figures that used to
+          sit in a separate summary row now ride in the header's stat cluster
+          — the same instrument-panel tally treatment as the home page — with
+          published/failed pips tinted to their pill-status tokens. */}
+      <div className="cc-reveal">
+        <DetailPageHeader
+          eyebrow="Publishing Log"
+          title="Posts"
+          subtitle="Manage posts across all platforms"
+          stats={[
+            { label: "Total", value: posts.length },
+            { label: "Published", value: published.length, pip: "static", pipColor: "var(--pill-ok-fg)" },
+            { label: "Failed", value: failed.length, pip: "static", pipColor: "var(--pill-warn-fg)" },
+          ]}
         />
-        <span style={{ color: "var(--pill-ok-fg)" }}>
-          <span className="tabular font-semibold">{published.length}</span>{" "}
-          published
-        </span>
-        <span style={{ color: "var(--pill-warn-fg)" }}>
-          <span className="tabular font-semibold">{failed.length}</span> failed
-        </span>
       </div>
 
       {/* Workflow tabs */}
       <Tabs
         defaultValue="all"
-        className="cc-reveal"
-        style={{ animationDelay: "0.12s" }}
+        className="cc-reveal mt-7"
+        style={{ animationDelay: "0.06s" }}
       >
         {/* The default TabsList bg resolves to --muted (warm surface-raised),
             so the tabs already sit on the right tone; the active tab picks up

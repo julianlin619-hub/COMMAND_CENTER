@@ -17,14 +17,12 @@
  *   not "posts we queued and hope Buffer ran".
  */
 
-import Link from "next/link";
 import { getSupabaseClient } from "@/lib/supabase";
 import { AppShell } from "@/components/app-shell";
 import { PlatformIcon } from "@/components/platform-icon";
 import { PathwayCard, type PathwayLastRun } from "@/components/pathway-card";
-import { Card, CardContent } from "@/components/ui/card";
+import { DetailPageHeader } from "@/components/command-center/detail-page-header";
 import { parseBankFile, pickRandomUnused } from "@/lib/tweet-bank";
-import { ArrowLeftIcon } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -110,33 +108,6 @@ async function getStats(): Promise<PipelineStats> {
   };
 }
 
-function StatTile({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-}) {
-  return (
-    <Card size="sm">
-      <CardContent>
-        {/* Label as a mono uppercase eyebrow; the value is a count that
-            changes between fetches, so it gets `tabular` to stop the
-            digits from shifting width as the page refreshes. */}
-        <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-white/40">
-          {label}
-        </div>
-        <div className="mt-1.5 font-heading text-2xl font-semibold tabular text-[#edeae0]">
-          {value}
-        </div>
-        {hint && <div className="mt-1 text-xs text-white/55">{hint}</div>}
-      </CardContent>
-    </Card>
-  );
-}
-
 export default async function SnapchatPage() {
   const [lastRun, stats] = await Promise.all([getLatestRun(), getStats()]);
 
@@ -151,36 +122,24 @@ export default async function SnapchatPage() {
 
   return (
     <AppShell>
-      <div className="mb-8 cc-reveal">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 text-[12px] text-white/55 transition-colors hover:text-white/85"
-        >
-          <ArrowLeftIcon className="size-3.5" />
-          Back to Command Center
-        </Link>
-
-        <div className="mt-6 flex items-center gap-3">
-          <PlatformIcon platform="snapchat" className="size-8" />
-          <div>
-            {/* Eyebrow names the platform in the shared mono voice; we tint
-                it Snapchat-yellow rather than the default terracotta so the
-                page wears its platform identity. */}
-            <div
-              className="cc-eyebrow"
-              style={{ ["--terracotta-hover" as never]: SNAP } as React.CSSProperties}
-            >
-              Snapchat
-            </div>
-            <h1 className="mt-1.5 text-[40px] font-semibold leading-none tracking-[-0.025em] text-[#edeae0]">
-              Spotlight
-              <span style={{ color: SNAP }}>.</span>
-            </h1>
-            <p className="mt-2 text-[13px] text-white/55">
-              Tweet-to-Spotlight via Playwright
-            </p>
-          </div>
-        </div>
+      {/* Shared hero header. The Snapchat-yellow accent flows to the eyebrow,
+          title period, rule, and the live pip via the single `accent` prop.
+          The three pipeline counts live in the header's stat cluster — the
+          same live/paused tally treatment as the home page — so the page no
+          longer needs a separate "Pipeline Health" tile grid. */}
+      <div className="cc-reveal">
+        <DetailPageHeader
+          accent={SNAP}
+          icon={<PlatformIcon platform="snapchat" className="size-8" />}
+          eyebrow="Snapchat"
+          title="Spotlight"
+          subtitle="Tweet-to-Spotlight via Playwright"
+          stats={[
+            { label: "Scheduled · 7d", value: stats.scheduled7d },
+            { label: "Published · 7d", value: stats.published7d, pip: "live", pipColor: "var(--pill-ok-fg)" },
+            { label: "Bank left", value: stats.bankRemaining },
+          ]}
+        />
       </div>
 
       {/* No CronCountdown on this page — the publisher runs hourly (cron
@@ -191,51 +150,16 @@ export default async function SnapchatPage() {
           add a CRON_SCHEDULES entry for snapchat and put CronCountdown
           back here. */}
 
-      {/* Section header — mono eyebrow + uppercase tracked head + animated
-          rule, the shared section-rail treatment. Rule is tinted with the
-          Snapchat accent so the divider carries platform identity. */}
-      <div
-        className="mb-4 flex items-center gap-3 cc-reveal"
-        style={{ animationDelay: "0.06s" }}
-      >
-        <span className="text-[13px] font-semibold uppercase tracking-[0.18em] text-[#edeae0]">
-          Pipeline Health
-        </span>
-        <span
-          className="cc-rule"
-          style={{ ["--rule-color" as never]: SNAP } as React.CSSProperties}
-        />
-      </div>
-
-      <div
-        className="mb-4 grid grid-cols-1 gap-3 cc-reveal sm:grid-cols-3"
-        style={{ animationDelay: "0.12s" }}
-      >
-        <StatTile
-          label="Scheduled · 7d"
-          value={stats.scheduled7d.toString()}
-          hint="Scheduled, publishing, or published"
-        />
-        <StatTile
-          label="Published · 7d"
-          value={stats.published7d.toString()}
-          hint="Confirmed by Snapchat success page"
-        />
-        <StatTile
-          label="Bank remaining"
-          value={stats.bankRemaining.toString()}
-          hint={`${stats.bankUsed} used of ${stats.bankTotal} (${bankPct}% left)`}
-        />
-      </div>
-
       {/* Flow notes — kept inline (not its own component) since nothing else
           on the page needs them. Documents the storage_state recovery flow
           so the operator sees it on the page that surfaces the failure.
           Promoted to the shared .cc-surface so it reads as the same card
-          family as the home page tiles. */}
+          family as the home page tiles. The bank used/total detail (which
+          used to be a tile hint) now lives here so it survives the move of
+          the headline counts into the header. */}
       <div
-        className="cc-surface mb-5 px-4 py-3 text-xs text-white/65 cc-reveal"
-        style={{ animationDelay: "0.18s" }}
+        className="cc-surface mb-5 mt-7 px-4 py-3 text-xs text-white/65 cc-reveal"
+        style={{ animationDelay: "0.12s" }}
       >
         <div className="flex flex-wrap gap-x-6 gap-y-1.5">
           <span>
@@ -250,6 +174,12 @@ export default async function SnapchatPage() {
             <span className="text-white/40">Destination</span>{" "}
             <span className="font-mono">Snapchat Spotlight (Playwright headless)</span>
           </span>
+          <span>
+            <span className="text-white/40">Bank</span>{" "}
+            <span className="font-mono">
+              {stats.bankUsed} used of {stats.bankTotal} ({bankPct}% left)
+            </span>
+          </span>
         </div>
         <p className="mt-2 text-white/45">
           Session cookies live in <code className="font-mono">platform_session_state</code> (one row, platform=snapchat).
@@ -259,7 +189,7 @@ export default async function SnapchatPage() {
         </p>
       </div>
 
-      <div className="cc-reveal" style={{ animationDelay: "0.24s" }}>
+      <div className="cc-reveal" style={{ animationDelay: "0.18s" }}>
       <PathwayCard
         title="X Bank Reel → Snapchat Spotlight"
         steps={[

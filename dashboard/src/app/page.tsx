@@ -2,9 +2,9 @@
  * Dashboard home — Command Center.
  *
  * A format-centric view. Content formats (Reposts, Crosspost, Tweet Cards,
- * …) are grouped into four length-based categories — Short, Written, Long,
- * Mid — and rendered as a stack of CategorySections. Empty categories
- * collapse to a single dashed band at the bottom of the page.
+ * …) are grouped into length-based categories — Short, Written, Mid (see
+ * CATEGORY_ORDER) — and rendered as a stack of CategorySections. Empty
+ * categories collapse to a single dashed band at the bottom of the page.
  *
  * The data is currently static (see `dashboard/src/lib/command-center-config.ts`)
  * because there's no DB schema for formats yet — when there is, swap the
@@ -23,7 +23,7 @@ import {
   CATEGORY_COLORS,
   CATEGORY_LABELS,
   parseCreatorParam,
-  type FormatGroup,
+  type CommandCenterCategory,
 } from "@/lib/command-center-config";
 import { fetchHealthCounts, buildHealthMap } from "@/lib/format-health";
 import { getSupabaseClient } from "@/lib/supabase";
@@ -63,11 +63,12 @@ export default async function DashboardHome({ searchParams }: DashboardHomeProps
   const counts = await fetchHealthCounts(supabase);
   const healthMap = buildHealthMap(visibleFormats, counts);
 
-  const byCategory: Record<FormatGroup, typeof FORMATS> = {
+  const byCategory: Record<CommandCenterCategory, typeof FORMATS> = {
     short: [],
     written: [],
     long: [],
     mid: [],
+    graphics: [],
   };
   for (const f of visibleFormats) byCategory[f.category].push(f);
 

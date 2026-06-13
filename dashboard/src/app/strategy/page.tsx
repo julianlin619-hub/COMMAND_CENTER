@@ -14,9 +14,10 @@
 // Status pills are read-only — the matrix shows distribution state from
 // the seed in strategy-config.ts. Clicking a show name opens the drawer.
 
-import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, ExternalLink, Plus, RefreshCw, X } from "lucide-react";
+
+import { DetailPageHeader } from "@/components/command-center/detail-page-header";
 
 import {
   FORMAT_GROUP_LABELS,
@@ -157,28 +158,17 @@ export default function StrategyPage() {
     : null;
 
   return (
-    <div className="mx-auto max-w-[1100px] px-6 py-10">
-      {/* Back link — the matrix design doesn't have its own home affordance
-          so we keep the small mono link above the page header. */}
-      <Link
-        href="/"
-        className="inline-flex items-center gap-1 text-[11px] font-mono tracking-[0.18em] uppercase text-[var(--overview-fg)]/45 hover:text-[var(--overview-fg)]/80 transition-colors mb-6"
-      >
-        ← Command Center
-      </Link>
-
-      {/* Header — Refined Terracotta voice: a mono eyebrow above a large
-          tracked display title with a terracotta period. Wrapped in
-          .cc-reveal so it rises in on load with the rest of the page. */}
-      <header className="mb-7 cc-reveal">
-        <div className="cc-eyebrow mb-2">Strategy</div>
-        <h1 className="text-[40px] font-semibold tracking-[-0.025em] leading-[1.05] text-[#edeae0]">
-          Media ecosystem<span className="text-[var(--terracotta)]">.</span>
-        </h1>
-      </header>
+    <div className="mx-auto max-w-[1100px] px-7 py-10">
+      {/* Shared hero header — same component the other detail pages use, so
+          the standalone strategy surface still reads as part of the family
+          (it has no AppShell of its own; the header's back link is the way
+          home). The animated rule under the title closes the header block. */}
+      <div className="cc-reveal">
+        <DetailPageHeader eyebrow="Strategy" title="Media ecosystem" />
+      </div>
 
       {/* Legend — staggered entrance after the header. */}
-      <div className="cc-reveal" style={{ animationDelay: "0.06s" }}>
+      <div className="cc-reveal mt-7" style={{ animationDelay: "0.06s" }}>
         <Legend />
       </div>
 

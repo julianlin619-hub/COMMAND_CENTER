@@ -15,12 +15,11 @@
  * the full rationale.
  */
 
-import Link from "next/link";
 import { getSupabaseClient } from "@/lib/supabase";
 import { AppShell } from "@/components/app-shell";
 import { PlatformIcon } from "@/components/platform-icon";
 import { PathwayCard, type PathwayLastRun } from "@/components/pathway-card";
-import { ArrowLeftIcon } from "lucide-react";
+import { DetailPageHeader } from "@/components/command-center/detail-page-header";
 
 export const dynamic = "force-dynamic";
 
@@ -71,38 +70,25 @@ export default async function TweetCardsPage() {
 
   return (
     <AppShell>
-      <div className="mb-8 cc-reveal">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 text-[12px] text-white/55 transition-colors hover:text-white/85"
-        >
-          <ArrowLeftIcon className="size-3.5" />
-          Back to Command Center
-        </Link>
-        <div className="mt-6 flex items-center gap-3">
-          {/* Three platform icons inline make the multi-platform nature of
-              this format obvious at a glance — one icon would have read
-              as TikTok-only, which is exactly the misconception the page
-              rename is correcting. */}
-          <div className="flex items-center gap-1.5">
-            <PlatformIcon platform="tiktok" className="size-7" />
-            <PlatformIcon platform="facebook" className="size-7" />
-            <PlatformIcon platform="linkedin" className="size-7" />
-            <PlatformIcon platform="instagram" className="size-7" />
-          </div>
-          <div>
-            {/* Mono eyebrow over the large display title with a terracotta
-                period — the shared page-title language. */}
-            <div className="cc-eyebrow">Multi-Platform Format</div>
-            <h1 className="mt-1.5 text-[40px] font-semibold leading-none tracking-[-0.025em] text-[#edeae0]">
-              Tweet Cards
-              <span style={{ color: "var(--terracotta)" }}>.</span>
-            </h1>
-            <p className="mt-2 text-[13px] text-white/55">
-              Turn viral tweets into multi-platform quote cards
-            </p>
-          </div>
-        </div>
+      {/* Shared hero header. No stat cluster — this page has no single-number
+          live counts; the per-pathway status lives on the PathwayCards below.
+          The four platform icons ride in the header's `icon` slot so the
+          multi-platform nature reads at a glance (one icon would have looked
+          TikTok-only, the misconception the page rename corrected). */}
+      <div className="cc-reveal">
+        <DetailPageHeader
+          icon={
+            <div className="flex items-center gap-1.5">
+              <PlatformIcon platform="tiktok" className="size-7" />
+              <PlatformIcon platform="facebook" className="size-7" />
+              <PlatformIcon platform="linkedin" className="size-7" />
+              <PlatformIcon platform="instagram" className="size-7" />
+            </div>
+          }
+          eyebrow="Multi-Platform Format"
+          title="Tweet Cards"
+          subtitle="Turn viral tweets into multi-platform quote cards"
+        />
       </div>
 
       {/* Run cadence + dedup notes — kept inline (not split into its own
@@ -110,7 +96,7 @@ export default async function TweetCardsPage() {
           worth of context belongs alongside the pathways it describes.
           Promoted to the shared .cc-surface card family. */}
       <div
-        className="cc-surface mb-5 px-4 py-3 text-xs text-white/65 cc-reveal"
+        className="cc-surface mb-5 mt-7 px-4 py-3 text-xs text-white/65 cc-reveal"
         style={{ animationDelay: "0.06s" }}
       >
         <div className="flex flex-wrap gap-x-6 gap-y-1.5">

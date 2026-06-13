@@ -13,7 +13,7 @@
  * colored section rules further down the page instead.
  */
 import Link from "next/link";
-import { ArrowUpRight, Compass } from "lucide-react";
+import { ArrowUpRight, Compass, ScrollText } from "lucide-react";
 
 interface PageHeaderProps {
   liveCount: number;
@@ -23,10 +23,11 @@ interface PageHeaderProps {
 export function PageHeader({ liveCount, pausedCount }: PageHeaderProps) {
   return (
     <header>
-      {/* Eyebrow row: brand label on the left, a faint Strategy link on the
-          right. Strategy lives on its own page (/strategy) — a planning
-          surface — so it stays reachable, but rendered small and muted here
-          so the title carries the visual weight. */}
+      {/* Eyebrow row: brand label on the left, faint secondary-surface links
+          on the right. Posts (the publishing log) and Strategy (the planning
+          surface) each live on their own page but stay reachable here —
+          rendered small and muted so the title carries the visual weight.
+          They share the exact same treatment so they read as a matched pair. */}
       <div className="flex items-center justify-between gap-4">
         <span
           className="font-mono text-[11px] uppercase"
@@ -34,17 +35,29 @@ export function PageHeader({ liveCount, pausedCount }: PageHeaderProps) {
         >
           Media · Command Center
         </span>
-        <Link
-          href="/strategy"
-          className="inline-flex items-center gap-1 font-mono text-[10.5px] uppercase tracking-[0.16em] text-white/35 transition-colors duration-150 hover:text-white/70"
-        >
-          {/* Compass glyph identifies this as the planning/strategy surface
-              at a glance — leads the label so the link reads as more than a
-              generic "go elsewhere" arrow. */}
-          <Compass className="h-3 w-3" aria-hidden />
-          Strategy
-          <ArrowUpRight className="h-3 w-3" aria-hidden />
-        </Link>
+        <div className="flex items-center gap-5">
+          <Link
+            href="/posts"
+            className="inline-flex items-center gap-1 font-mono text-[10.5px] uppercase tracking-[0.16em] text-white/35 transition-colors duration-150 hover:text-white/70"
+          >
+            {/* ScrollText reads as a log/ledger — fits the publishing-log
+                nature of the Posts page. */}
+            <ScrollText className="h-3 w-3" aria-hidden />
+            Posts
+            <ArrowUpRight className="h-3 w-3" aria-hidden />
+          </Link>
+          <Link
+            href="/strategy"
+            className="inline-flex items-center gap-1 font-mono text-[10.5px] uppercase tracking-[0.16em] text-white/35 transition-colors duration-150 hover:text-white/70"
+          >
+            {/* Compass glyph identifies this as the planning/strategy surface
+                at a glance — leads the label so the link reads as more than a
+                generic "go elsewhere" arrow. */}
+            <Compass className="h-3 w-3" aria-hidden />
+            Strategy
+            <ArrowUpRight className="h-3 w-3" aria-hidden />
+          </Link>
+        </div>
       </div>
 
       <div className="mt-3.5 flex items-end justify-between gap-8 flex-wrap">

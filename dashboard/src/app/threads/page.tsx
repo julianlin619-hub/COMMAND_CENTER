@@ -5,12 +5,11 @@
  * content sourcing (Apify) and publishing (Buffer).
  */
 
-import Link from "next/link";
 import { getSupabaseClient } from "@/lib/supabase";
 import { AppShell } from "@/components/app-shell";
 import { PlatformIcon } from "@/components/platform-icon";
 import { PathwayCard, type PathwayLastRun } from "@/components/pathway-card";
-import { ArrowLeftIcon } from "lucide-react";
+import { DetailPageHeader } from "@/components/command-center/detail-page-header";
 import { CATEGORY_COLORS } from "@/lib/command-center-config";
 
 export const dynamic = "force-dynamic";
@@ -87,61 +86,28 @@ export default async function ThreadsPage({
 
   return (
     <AppShell>
-      <div className="mb-8 cc-reveal">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 text-[12px] text-white/55 transition-colors hover:text-white/85"
-        >
-          <ArrowLeftIcon className="size-3.5" />
-          Back to Command Center
-        </Link>
-
-        {isFiltered ? (
-          // Command Center-style header: the format name carried in the
-          // Written category color so navigating between / and this filtered
-          // view feels continuous. Upgraded to the shared eyebrow + large
-          // display title language; the eyebrow's accent is tinted with the
-          // category color rather than the default terracotta.
-          <div className="mt-6">
-            <div
-              className="cc-eyebrow"
-              style={
-                { ["--terracotta-hover" as never]: writtenColor } as React.CSSProperties
-              }
-            >
-              Written · Threads
-            </div>
-            <h1
-              className="mt-1.5 text-[40px] font-semibold leading-none tracking-[-0.025em]"
-              style={{ color: writtenColor }}
-            >
-              {formatTitle}
-            </h1>
-            <p className="mt-2 text-[13px] text-white/55">{formatSubtitle}</p>
-          </div>
-        ) : (
-          // Unfiltered legacy header — kept for direct /threads visits so
-          // platform-centric navigation still makes sense. Same eyebrow +
-          // display-title treatment, terracotta period.
-          <div className="mt-6 flex items-center gap-3">
-            <PlatformIcon platform="threads" className="size-8" />
-            <div>
-              <div className="cc-eyebrow">Platform</div>
-              <h1 className="mt-1.5 text-[40px] font-semibold leading-none tracking-[-0.025em] text-[#edeae0]">
-                {formatTitle}
-                <span style={{ color: "var(--terracotta)" }}>.</span>
-              </h1>
-              <p className="mt-2 text-[13px] text-white/55">{formatSubtitle}</p>
-            </div>
-          </div>
-        )}
+      {/* One shared header drives both modes. When deep-linked to a single
+          pathway (the Command Center card case) the header wears the Written
+          category color and drops the period so it reads as a continuation of
+          the card the user clicked; the unfiltered /threads visit keeps the
+          platform icon and the default terracotta period. Both go through the
+          same component now instead of two hand-rolled header branches. */}
+      <div className="cc-reveal">
+        <DetailPageHeader
+          accent={isFiltered ? writtenColor : "var(--terracotta)"}
+          titlePeriod={!isFiltered}
+          icon={isFiltered ? undefined : <PlatformIcon platform="threads" className="size-8" />}
+          eyebrow={isFiltered ? "Written · Threads" : "Platform"}
+          title={formatTitle}
+          subtitle={formatSubtitle}
+        />
       </div>
 
       {/* Context band — schedule/account/channel + dedup notes. Promoted to
           the shared .cc-surface card family so it reads as the same surface
           as the home page tiles instead of a one-off hand-rolled box. */}
       <div
-        className="cc-surface mb-5 px-4 py-3 text-[12px] text-white/70 cc-reveal"
+        className="cc-surface mb-5 mt-7 px-4 py-3 text-[12px] text-white/70 cc-reveal"
         style={{ animationDelay: "0.06s" }}
       >
         <div className="flex flex-wrap gap-x-6 gap-y-1.5">

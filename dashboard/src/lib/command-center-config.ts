@@ -7,11 +7,20 @@
 // Supabase. The shape is JSON-serializable (string literal unions, plain
 // arrays), so moving to a DB later won't require touching the React tree.
 // ---------------------------------------------------------------------------
-import type { FormatGroup } from "@/app/strategy/strategy-config";
-
-// Re-export so the home page doesn't have to import from a sibling route's
-// internal config. `FormatGroup` is the existing taxonomy: long/mid/short/written.
-export type { FormatGroup };
+// The Command Center groups formats into its own category taxonomy. This
+// started out identical to the strategy page's `FormatGroup`
+// (long/mid/short/written), but the home page has since added "graphics"
+// (Tweet Cards, Bulk Tweet Cards, Playwright) — a visual-output bucket
+// that has no column in the strategy matrix. Rather than widen strategy's
+// `FormatGroup` (which would force a new matrix column and a new key on
+// every Show.distribution record), we define the Command Center's
+// categories locally here. The two taxonomies are free to diverge.
+export type CommandCenterCategory =
+  | "short"
+  | "written"
+  | "long"
+  | "mid"
+  | "graphics";
 
 // The set of platforms a format can publish to. Distinct from the
 // platform-enum the cron pipeline uses (which has variants like
@@ -61,7 +70,7 @@ export interface Format {
   id: string;
   name: string;
   subtitle: string;
-  category: FormatGroup;
+  category: CommandCenterCategory;
   status: "live" | "paused";
   creator: CreatorKey;
   platforms: FormatPlatform[];
@@ -99,18 +108,20 @@ export type FormatHealth = "healthy" | "failing" | "paused";
 // terracotta accent — the Command Center page introduces its own palette
 // because each category carries identity (Short feels different than Long).
 // Used in: pulse bars, chip tints, category labels, legend swatches.
-export const CATEGORY_COLORS: Record<FormatGroup, string> = {
+export const CATEGORY_COLORS: Record<CommandCenterCategory, string> = {
   short: "#16B68A", // teal-green
   written: "#A8A39A", // warm gray
   long: "#E5562C", // orange
   mid: "#7B6FE8", // purple
+  graphics: "#D76E9A", // rose — kept distinct from the four above
 };
 
-export const CATEGORY_LABELS: Record<FormatGroup, string> = {
-  short: "Short",
+export const CATEGORY_LABELS: Record<CommandCenterCategory, string> = {
+  short: "Shorts",
   written: "Written",
   long: "Long",
   mid: "Mid",
+  graphics: "Graphics",
 };
 
 // Command Center display order. Active sections render in this order, then
@@ -120,10 +131,16 @@ export const CATEGORY_LABELS: Record<FormatGroup, string> = {
 // (which is long→mid→short→written for the matrix). Here we front-load
 // "short" because that's where most active formats live today, and "mid"
 // is last because it's currently empty.
-export const CATEGORY_ORDER: FormatGroup[] = [
+//
+// "long" is intentionally omitted: there are no Long-form formats and we
+// don't want the empty "LONG — No formats configured" band on the home
+// page. The category still exists in CommandCenterCategory (and in
+// CATEGORY_LABELS/CATEGORY_COLORS); it just isn't surfaced here. Add it
+// back if a Long-form format ships.
+export const CATEGORY_ORDER: CommandCenterCategory[] = [
   "short",
   "written",
-  "long",
+  "graphics",
   "mid",
 ];
 
@@ -145,10 +162,8 @@ export const SUBGROUP_LABELS: Record<FormatSubgroup, string> = {
 export const FORMATS: Format[] = [
   // ──────────────────────────── Alex ────────────────────────────
   // Order within each category drives left-to-right placement in the
-  // home page's CategorySection grid. For "short" we keep the two live
-  // formats first (Crosspost, Tweet Cards) and the paused Reposts card
-  // last so it sits on the right edge — a visual cue that it's the
-  // odd-one-out until the auto-recycle workflow ships.
+  // home page's CategorySection grid. The visual-output formats (Tweet
+  // Cards, Bulk Tweet Cards, Playwright) live under "graphics" below.
   {
     id: "crosspost-short",
     name: "Crosspost",
@@ -185,7 +200,7 @@ export const FORMATS: Format[] = [
     id: "tweet-cards",
     name: "Tweet Cards",
     subtitle: "Short-form visuals",
-    category: "short",
+    category: "graphics",
     status: "live",
     creator: "alex",
     subgroup: "creation",
@@ -211,21 +226,6 @@ export const FORMATS: Format[] = [
     healthPlatforms: ["tiktok", "facebook", "linkedin", "instagram"],
   },
   {
-    id: "reposts",
-    name: "Reposts",
-    subtitle: "Auto-recycle top performers",
-    category: "short",
-    // Paused until the automation lands (see TODO.md). The card still
-    // renders for visibility but doesn't run the animated pulse, isn't
-    // counted in the header's "N live" tally, and has no href — clicking
-    // it is a no-op. Flip back to "live" and add an href when the
-    // auto-recycle workflow ships.
-    status: "paused",
-    creator: "alex",
-    subgroup: "distribution",
-    platforms: [{ id: "youtube", name: "YouTube" }],
-  },
-  {
     // Bulk Tweet Cards — the /instagram-2nd pipeline. Picks tweets from
     // the CSV bank, renders quote-card media (PNG/MP4), and queues them
     // to the "alexhighlights2026" Buffer channel (Instagram's 2nd
@@ -244,7 +244,7 @@ export const FORMATS: Format[] = [
     id: "bulk-tweet-cards",
     name: "Bulk Tweet Cards",
     subtitle: "Bank → 2nd Instagram",
-    category: "short",
+    category: "graphics",
     status: "paused",
     creator: "alex",
     subgroup: "creation",
@@ -267,8 +267,15 @@ export const FORMATS: Format[] = [
     id: "snapchat-playwright",
     name: "Playwright",
     subtitle: "Snapchat Spotlight via headless Chromium",
-    category: "short",
-    status: "live",
+    category: "graphics",
+    // Paused: both halves of the automation (the snapchat-content-pipeline
+    // trigger and the snapchat-pipeline Playwright publisher) are
+    // commented out in render.yaml — see "TEMPORARILY DEACTIVATED
+    // (2026-05-24)" there — and the Render services are suspended. The
+    // card renders muted, drops out of the header's live tally, and shows
+    // no live pulse; the /snapchat detail page still loads. Flip back to
+    // "live" when the render.yaml cron services are uncommented + resumed.
+    status: "paused",
     creator: "alex",
     subgroup: "distribution",
     platforms: [{ id: "snapchat", name: "Snapchat" }],

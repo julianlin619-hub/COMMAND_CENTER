@@ -22,9 +22,7 @@
  * blocks — and edits later (adding a stage, reordering) touch one place.
  * This is data shape, not abstraction.
  */
-import Link from "next/link";
 import {
-  ArrowLeftIcon,
   AudioWaveformIcon,
   ChevronRightIcon,
   ClapperboardIcon,
@@ -32,6 +30,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { DetailPageHeader } from "@/components/command-center/detail-page-header";
 
 // Short-category accent (matches the home page tile). Reused for stage
 // numbers and the icon ring so the page reads as "this is the Short ▸ L1
@@ -91,54 +90,36 @@ const STAGES: Stage[] = [
 export default function L1QAPage() {
   return (
     <AppShell>
-      {/* Header block — mirrors the language of the home page's
-          PageHeader (mono eyebrow, large display title, muted subtitle)
-          so navigating between / and /l1-qa feels continuous. */}
-      <div className="mb-10 cc-reveal">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 text-[12px] text-white/55 transition-colors hover:text-white/85"
-        >
-          <ArrowLeftIcon className="h-3.5 w-3.5" />
-          Back to Command Center
-        </Link>
-
-        <div className="mt-6 flex items-center gap-3">
-          {/* Eyebrow tinted with the Short category accent so the page
-              wears its category identity in the shared mono voice. */}
-          <div className="flex flex-col">
-            <div
-              className="cc-eyebrow"
-              style={{ ["--terracotta-hover" as never]: ACCENT } as React.CSSProperties}
+      {/* Shared hero header, tinted with the Short category accent so the page
+          wears its category identity. The "Planning" idle pill rides in the
+          header's actions slot — nothing is wired up behind this page yet. */}
+      <div className="cc-reveal">
+        <DetailPageHeader
+          accent={ACCENT}
+          eyebrow="Short · Pipeline Map"
+          title="L1 Q&A"
+          subtitle={
+            <>
+              Visual map of the planned automation. Nothing here is wired up
+              yet — edit{" "}
+              <code className="rounded bg-white/[0.06] px-1 py-0.5 font-mono text-[11px] text-white/75">
+                dashboard/src/app/l1-qa/page.tsx
+              </code>{" "}
+              to refine the flow.
+            </>
+          }
+          actions={
+            <span
+              className="rounded-full px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.18em]"
+              style={{
+                color: "var(--pill-idle-fg)",
+                backgroundColor: "var(--pill-idle-bg)",
+              }}
             >
-              Short · Pipeline Map
-            </div>
-            <h1 className="mt-1.5 text-[40px] font-semibold leading-none tracking-[-0.025em] text-[#edeae0]">
-              L1 Q&amp;A
-              <span style={{ color: ACCENT }}>.</span>
-            </h1>
-          </div>
-          {/* "Planning" reads as an idle/neutral status — render it as the
-              shared idle status pill rather than a category-tinted chip,
-              since nothing is running yet. */}
-          <span
-            className="self-end rounded-full px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.18em]"
-            style={{
-              color: "var(--pill-idle-fg)",
-              backgroundColor: "var(--pill-idle-bg)",
-            }}
-          >
-            Planning
-          </span>
-        </div>
-        <p className="mt-2 text-[13px] text-white/55">
-          Visual map of the planned automation. Nothing here is wired up
-          yet — edit{" "}
-          <code className="rounded bg-white/[0.06] px-1 py-0.5 font-mono text-[11px] text-white/75">
-            dashboard/src/app/l1-qa/page.tsx
-          </code>{" "}
-          to refine the flow.
-        </p>
+              Planning
+            </span>
+          }
+        />
       </div>
 
       {/* The pipeline canvas itself. flex-row on wide screens, flex-col on
@@ -147,7 +128,7 @@ export default function L1QAPage() {
           shared .cc-surface so the diagram reads as a dedicated card surface
           rather than floating directly on the page background. */}
       <section
-        className="cc-surface p-6 cc-reveal md:p-8"
+        className="cc-surface mt-9 p-6 cc-reveal md:p-8"
         style={{ animationDelay: "0.06s" }}
       >
         <div className="flex flex-col items-stretch gap-4 md:flex-row md:items-stretch md:gap-2">

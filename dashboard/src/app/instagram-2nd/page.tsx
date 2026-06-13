@@ -5,15 +5,13 @@
  * PNG/MP4 media, schedule to Instagram via Buffer (alexhighlights2026).
  */
 
-import Link from "next/link";
 import { getSupabaseClient } from "@/lib/supabase";
 import { AppShell } from "@/components/app-shell";
 import { PlatformIcon } from "@/components/platform-icon";
 import { PathwayCard, type PathwayLastRun } from "@/components/pathway-card";
-import { Card, CardContent } from "@/components/ui/card";
+import { DetailPageHeader } from "@/components/command-center/detail-page-header";
 import { CronCountdown } from "@/components/cron-countdown";
 import { parseBankFile, pickRandomUnused } from "@/lib/tweet-bank";
-import { ArrowLeftIcon } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -92,33 +90,6 @@ async function getStats(): Promise<PipelineStats> {
   };
 }
 
-function StatTile({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-}) {
-  return (
-    <Card size="sm">
-      <CardContent>
-        {/* Label as a mono uppercase eyebrow; the value is a count that
-            changes between fetches, so it gets `tabular` to stop the
-            digits from shifting width as the page refreshes. */}
-        <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-white/40">
-          {label}
-        </div>
-        <div className="mt-1.5 font-heading text-2xl font-semibold tabular text-[#edeae0]">
-          {value}
-        </div>
-        {hint && <div className="mt-1 text-xs text-white/55">{hint}</div>}
-      </CardContent>
-    </Card>
-  );
-}
-
 export default async function InstagramSecondPage() {
   const [lastRun, stats] = await Promise.all([getLatestRun(), getStats()]);
 
@@ -128,77 +99,35 @@ export default async function InstagramSecondPage() {
 
   return (
     <AppShell>
-      <div className="mb-8 cc-reveal">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 text-[12px] text-white/55 transition-colors hover:text-white/85"
-        >
-          <ArrowLeftIcon className="size-3.5" />
-          Back to Command Center
-        </Link>
-
-        <div className="mt-6 flex items-center gap-3">
-          <PlatformIcon platform="instagram_2nd" className="size-8" />
-          <div>
-            {/* Mono eyebrow over a large display title with a terracotta
-                period — the shared page-title language. */}
-            <div className="cc-eyebrow">Instagram · 2nd</div>
-            <h1 className="mt-1.5 text-[40px] font-semibold leading-none tracking-[-0.025em] text-[#edeae0]">
-              Tweet Reels
-              <span style={{ color: "var(--terracotta)" }}>.</span>
-            </h1>
-            <p className="mt-2 text-[13px] text-white/55">
-              Tweet-to-Instagram pipeline
-            </p>
-          </div>
-        </div>
+      {/* Shared hero header. The three pipeline counts ride in the header's
+          stat cluster (same treatment as the home live/paused tally), so the
+          page no longer needs a separate "Pipeline Health" tile grid. */}
+      <div className="cc-reveal">
+        <DetailPageHeader
+          icon={<PlatformIcon platform="instagram_2nd" className="size-8" />}
+          eyebrow="Instagram · 2nd"
+          title="Tweet Reels"
+          subtitle="Tweet-to-Instagram pipeline"
+          stats={[
+            { label: "Scheduled · 7d", value: stats.scheduled7d },
+            { label: "Scheduled · 30d", value: stats.scheduled30d },
+            { label: "Bank left", value: stats.bankRemaining },
+          ]}
+        />
       </div>
 
-      <div className="mb-4 cc-reveal" style={{ animationDelay: "0.06s" }}>
+      <div className="mb-4 mt-7 cc-reveal" style={{ animationDelay: "0.06s" }}>
         <CronCountdown platform="instagram_2nd" />
-      </div>
-
-      {/* Section header — mono eyebrow voice + animated terracotta rule. */}
-      <div
-        className="mb-4 flex items-center gap-3 cc-reveal"
-        style={{ animationDelay: "0.12s" }}
-      >
-        <span className="text-[13px] font-semibold uppercase tracking-[0.18em] text-[#edeae0]">
-          Pipeline Health
-        </span>
-        <span
-          className="cc-rule"
-          style={{ ["--rule-color" as never]: "var(--terracotta)" } as React.CSSProperties}
-        />
-      </div>
-
-      <div
-        className="mb-4 grid grid-cols-1 gap-3 cc-reveal sm:grid-cols-3"
-        style={{ animationDelay: "0.18s" }}
-      >
-        <StatTile
-          label="Scheduled · 7d"
-          value={stats.scheduled7d.toString()}
-          hint="Posts handed to Buffer's queue"
-        />
-        <StatTile
-          label="Scheduled · 30d"
-          value={stats.scheduled30d.toString()}
-          hint="Successful runs only"
-        />
-        <StatTile
-          label="Bank remaining"
-          value={stats.bankRemaining.toString()}
-          hint={`${stats.bankUsed} used of ${stats.bankTotal} (${bankPct}% left)`}
-        />
       </div>
 
       {/* Run cadence + flow notes — kept inline (not split into its own
           component) because nothing else on the page needs them. Promoted
-          to the shared .cc-surface card family. */}
+          to the shared .cc-surface card family. The bank used/total detail
+          (which used to be a tile hint) now lives here so it survives the
+          move of the headline counts into the header. */}
       <div
         className="cc-surface mb-5 px-4 py-3 text-xs text-white/65 cc-reveal"
-        style={{ animationDelay: "0.24s" }}
+        style={{ animationDelay: "0.12s" }}
       >
         <div className="flex flex-wrap gap-x-6 gap-y-1.5">
           <span>
@@ -213,6 +142,12 @@ export default async function InstagramSecondPage() {
             <span className="text-white/40">Channel</span>{" "}
             <span className="font-mono">Buffer · Instagram (alexhighlights2026)</span>
           </span>
+          <span>
+            <span className="text-white/40">Bank</span>{" "}
+            <span className="font-mono">
+              {stats.bankUsed} used of {stats.bankTotal} ({bankPct}% left)
+            </span>
+          </span>
         </div>
         <p className="mt-2 text-white/45">
           GitHub Actions schedule is commented out (<code className="font-mono">.github/workflows/ig-pipeline.yml</code>);
@@ -221,7 +156,7 @@ export default async function InstagramSecondPage() {
         </p>
       </div>
 
-      <div className="cc-reveal" style={{ animationDelay: "0.3s" }}>
+      <div className="cc-reveal" style={{ animationDelay: "0.18s" }}>
       <PathwayCard
         number={1}
         title="X Bank Reel (paused — manual)"

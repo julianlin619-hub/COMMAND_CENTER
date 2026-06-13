@@ -1,5 +1,7 @@
 # TODO
  
+ - Reposts (auto recycle top peformers)
+
 - TikTok Carousels with tweets automation
 
 - Create ongonig tweet supabase -> with tweets being added to it daily -> then automation can just pull fromt he database with one automation

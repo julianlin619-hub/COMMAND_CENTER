@@ -15,15 +15,14 @@
  * /youtube slot is archived.
  */
 
-import Link from "next/link";
-import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
+import { ExternalLinkIcon } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
+import { DetailPageHeader } from "@/components/command-center/detail-page-header";
 import { PlatformIcon } from "@/components/platform-icon";
 import { RunYouTubeCronButton } from "@/components/run-youtube-cron-button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import {
   Table,
   TableBody,
@@ -137,67 +136,31 @@ export default async function YouTubePage() {
   const failedCount = posts.filter((p) => p.status === "failed").length;
 
   return (
-    <AppShell>
-      {/* Page header — staggered reveal, mono eyebrow + large tracked title
-          with the terracotta period and platform glyph. */}
-      <div className="mb-8 cc-reveal">
-        <Link
-          href="/"
-          className="mb-5 inline-flex items-center gap-1.5 text-sm text-white/55 hover:text-foreground transition-colors"
-        >
-          <ArrowLeftIcon className="size-3.5" />
-          Back to Overview
-        </Link>
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <div className="cc-eyebrow mb-2">Platform · Studio-scheduled</div>
-            <div className="flex items-center gap-3">
-              <PlatformIcon platform="youtube" className="size-9" />
-              <div>
-                <h1 className="text-[40px] font-semibold leading-none tracking-[-0.025em] text-[#edeae0]">
-                  YouTube<span className="text-[var(--terracotta)]">.</span>
-                </h1>
-                <p className="mt-2.5 text-sm text-white/55">
-                  Drafts discovered in Studio and scheduled into canonical slots
-                </p>
-              </div>
-            </div>
-          </div>
-          <RunYouTubeCronButton />
-        </div>
-      </div>
-
-      {/* Summary counts. The "published" pill uses the shared ok tokens; the
-          tabular spans keep the figures from jittering as counts update. */}
-      <div
-        className="mb-4 cc-reveal flex items-center gap-3"
-        style={{ animationDelay: "0.06s" } as React.CSSProperties}
-      >
-        <Badge variant="outline" className="tabular">
-          {posts.length} total
-        </Badge>
-        <Separator orientation="vertical" className="h-4" />
-        <Badge variant="secondary" className="tabular">
-          {scheduledCount} scheduled
-        </Badge>
-        <Badge
-          className="border-transparent tabular"
-          style={{
-            backgroundColor: "var(--pill-ok-bg)",
-            color: "var(--pill-ok-fg)",
-          }}
-        >
-          {publishedCount} published
-        </Badge>
-        {failedCount > 0 && (
-          <Badge variant="destructive" className="tabular">
-            {failedCount} failed
-          </Badge>
-        )}
+    // Wider column than the home 1100 — this page is a six-column table that
+    // needs room to breathe, so it opts into the AppShell maxWidth escape
+    // hatch rather than horizontally scrolling inside the home column.
+    <AppShell maxWidth="1280px">
+      {/* Shared hero header. The summary counts move into the header's stat
+          cluster (published/failed tinted to their pill tokens) and the
+          "Run cron" button rides in the header's actions slot. */}
+      <div className="cc-reveal">
+        <DetailPageHeader
+          icon={<PlatformIcon platform="youtube" className="size-8" />}
+          eyebrow="Platform · Studio-scheduled"
+          title="YouTube"
+          subtitle="Drafts discovered in Studio and scheduled into canonical slots"
+          stats={[
+            { label: "Total", value: posts.length },
+            { label: "Scheduled", value: scheduledCount },
+            { label: "Published", value: publishedCount, pip: "static", pipColor: "var(--pill-ok-fg)" },
+            { label: "Failed", value: failedCount, pip: "static", pipColor: "var(--pill-warn-fg)" },
+          ]}
+          actions={<RunYouTubeCronButton />}
+        />
       </div>
 
       {error && (
-        <Card className="mb-4 p-4">
+        <Card className="mb-4 mt-7 p-4">
           <p className="text-sm text-destructive">
             Failed to load posts: {error.message}
           </p>
@@ -205,8 +168,8 @@ export default async function YouTubePage() {
       )}
 
       <Card
-        className="overflow-hidden cc-reveal"
-        style={{ animationDelay: "0.12s" } as React.CSSProperties}
+        className="mt-7 overflow-hidden cc-reveal"
+        style={{ animationDelay: "0.06s" } as React.CSSProperties}
       >
         <Table>
           <TableHeader>
