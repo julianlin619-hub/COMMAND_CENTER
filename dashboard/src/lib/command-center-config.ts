@@ -345,6 +345,27 @@ export const FORMATS: Format[] = [
     healthPlatforms: ["threads"],
   },
   {
+    // Tweet Extractor — a manual tool, not an automation. Point it at a local
+    // video/audio file and it returns a full transcript (with timestamps) to
+    // copy out. Tweet extraction itself is paused on the dashboard and now lives
+    // as a Claude skill on desktop, so this page just produces the transcript.
+    // There's no cron and it writes no `posts` rows, so it has no
+    // `healthPlatforms`: like L1 Q&A / Reposts, an untagged format resolves to a
+    // neutral "paused" health pill (see deriveFormatHealth in
+    // lib/format-health.ts) rather than a red "failing" one. The card stays
+    // clickable; status="live" keeps it from being dimmed as operator-suspended.
+    // The detail page is /tweet-extractor.
+    id: "tweet-extractor",
+    name: "Tweet Extractor",
+    subtitle: "Transcribe local media",
+    category: "written",
+    status: "live",
+    creator: "alex",
+    subgroup: "creation",
+    platforms: [{ id: "x", name: "X" }],
+    href: "/tweet-extractor",
+  },
+  {
     // Studio-first scheduling pipeline — discovers Private drafts in
     // YouTube Studio (2nd channel), generates transcript-based titles,
     // and assigns each video to a publish slot.

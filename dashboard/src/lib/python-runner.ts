@@ -15,7 +15,8 @@
  * available there).
  */
 
-import { execFile } from "child_process";
+import { execFile, spawn } from "child_process";
+import type { ChildProcessWithoutNullStreams } from "child_process";
 import { promisify } from "util";
 import { existsSync } from "fs";
 import path from "path";
@@ -78,12 +79,25 @@ export type PythonRunResult = {
   exitCode?: number | string;
 };
 
+export type RunPythonOptions = {
+  /** Hard kill the process after this many ms. Defaults to 5 minutes. */
+  timeoutMs?: number;
+  /**
+   * Text to pipe to the module's stdin (then close it). Use this instead of an
+   * argv entry for large inputs — a long string (e.g. a pasted transcript) can
+   * exceed the OS argument-length limit when passed as a CLI arg, but stdin has
+   * no such cap. Omit it and the child gets no stdin, exactly as before.
+   */
+  stdin?: string;
+};
+
 /**
  * Run `python3 -m <module> [...args]` from the project root.
  *
  * `moduleName` and `args` must be caller-controlled / validated — never raw
  * request input assembled into a module path. (Callers here pass a hard-coded
- * module and a server-generated UUID.)
+ * module and a server-generated UUID.) Large *data* inputs should go through
+ * `opts.stdin`, not `args` — see RunPythonOptions.stdin.
  *
  * Returns status + captured output rather than throwing on a non-zero exit:
  * Python scripts call sys.exit(1) on failure (which makes execFile throw), but
@@ -92,21 +106,31 @@ export type PythonRunResult = {
 export async function runPythonModule(
   moduleName: string,
   args: string[] = [],
-  timeoutMs = 300_000,
+  opts: RunPythonOptions = {},
 ): Promise<PythonRunResult> {
   await ensurePythonDeps();
   const startTime = Date.now();
+  const execOptions = {
+    cwd: projectRoot,
+    timeout: opts.timeoutMs ?? 300_000,
+    maxBuffer: 5 * 1024 * 1024, // 5 MB — output is usually small
+    env: pythonEnv(),
+  };
   try {
-    const { stdout, stderr } = await execFileAsync(
-      "python3",
-      ["-m", moduleName, ...args],
-      {
-        cwd: projectRoot,
-        timeout: timeoutMs,
-        maxBuffer: 5 * 1024 * 1024, // 5 MB — output is usually small
-        env: pythonEnv(),
-      },
-    );
+    // When the caller supplies stdin we can't use the promisified execFile
+    // (it doesn't expose the child process to write to), so we run execFile
+    // directly and pipe stdin ourselves. The no-stdin path keeps using
+    // execFileAsync so its behavior/error shape is unchanged for existing
+    // callers (api/cron/run, manual-upload batch).
+    const { stdout, stderr } =
+      opts.stdin !== undefined
+        ? await execFileWithStdin(
+            "python3",
+            ["-m", moduleName, ...args],
+            execOptions,
+            opts.stdin,
+          )
+        : await execFileAsync("python3", ["-m", moduleName, ...args], execOptions);
     return {
       status: "success",
       stdout: stdout ?? "",
@@ -128,6 +152,69 @@ export async function runPythonModule(
       exitCode: e.code,
     };
   }
+}
+
+/**
+ * Run execFile and pipe `stdin` to the child's stdin, then close it.
+ *
+ * promisify(execFile) hides the ChildProcess, so we can't write to its stdin —
+ * here we call execFile directly, resolve/reject in its callback (mirroring how
+ * promisify would), and write stdin to the live child. On a non-zero exit the
+ * Error already carries `.code`; we attach the captured `stdout`/`stderr` so the
+ * caller's catch block can still read them, exactly like execFileAsync does.
+ */
+function execFileWithStdin(
+  file: string,
+  args: string[],
+  options: Parameters<typeof execFile>[2],
+  stdin: string,
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(file, args, options, (err, stdout, stderr) => {
+      if (err) {
+        // Match execFileAsync's rejection shape: stdout/stderr hang off the err.
+        Object.assign(err, { stdout, stderr });
+        reject(err);
+      } else {
+        resolve({ stdout: String(stdout), stderr: String(stderr) });
+      }
+    });
+    // The child may have failed to spawn (no stdin stream); guard before use.
+    if (child.stdin) {
+      child.stdin.on("error", () => {
+        // EPIPE if the child exits before reading all input — the exit itself
+        // surfaces via the execFile callback, so swallow this to avoid an
+        // unhandled 'error' on the stdin stream.
+      });
+      child.stdin.end(stdin);
+    }
+  });
+}
+
+/**
+ * Spawn `python3 -m <module> [...args]` and return the live child process so the
+ * caller can STREAM its stdout (e.g. an SSE/NDJSON route). Unlike runPythonModule
+ * (which buffers and returns once the process exits), this hands back the process
+ * immediately. Same module/arg trust rules apply — never assemble the module path
+ * from raw request input.
+ */
+export async function spawnPythonModule(
+  moduleName: string,
+  args: string[] = [],
+  opts: { stdin?: string } = {},
+): Promise<ChildProcessWithoutNullStreams> {
+  await ensurePythonDeps();
+  const child = spawn("python3", ["-m", moduleName, ...args], {
+    cwd: projectRoot,
+    env: pythonEnv(),
+  });
+  if (opts.stdin !== undefined) {
+    // EPIPE if the child exits before reading all input — its exit surfaces via
+    // the 'close' event, so swallow the stdin error to avoid an unhandled throw.
+    child.stdin.on("error", () => {});
+    child.stdin.end(opts.stdin);
+  }
+  return child;
 }
 
 /** Merge stdout + stderr into a single string, trimming whitespace. */

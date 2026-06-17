@@ -23,6 +23,12 @@ playwright-stealth==2.0.3
 # the dashboard. httpx (already above) would work too, but requests is
 # the standard for three-line trigger scripts.
 requests>=2.31
+# Fast fuzzy string matching for the tweet-extractor's deterministic validator
+# (core/tweet_extractor.py). partial_ratio answers "does this quote appear as a
+# span of the transcript?" far faster and more accurately than stdlib difflib.
+# The module falls back to difflib if this isn't installed, so it's a
+# performance/quality dependency, not a hard one.
+rapidfuzz>=3.0
 # Bundled static ffmpeg binary for the batch-video manual-upload pathway
 # (core/transcription.py extracts audio from uploaded mp4s). We use the
 # bundled binary instead of a system ffmpeg because Render's Python build
