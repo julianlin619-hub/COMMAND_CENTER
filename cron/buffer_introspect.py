@@ -18,6 +18,7 @@ NOT registered in render.yaml — run manually:
     python -m cron.buffer_introspect [<buffer_post_id>]
 """
 
+import os
 import sys
 
 # _buffer_request is module-private but this diagnostic lives in the same
@@ -53,6 +54,37 @@ def _print_possible_types(type_name: str) -> None:
     print(f"  {type_name} (kind={t.get('kind')}): {names or '— no member types —'}")
 
 
+def _print_channels() -> None:
+    """Print all channels in the Buffer org, grouped by service."""
+    org = os.environ.get("BUFFER_ORG_ID", "")
+    if not org:
+        print("  BUFFER_ORG_ID not set — cannot list channels")
+        return
+    data = _buffer_request(
+        """
+        query GetChannels($orgId: OrganizationId!) {
+            channels(input: { organizationId: $orgId }) {
+                id
+                service
+                name
+            }
+        }
+        """,
+        {"orgId": org},
+    )
+    channels = data.get("channels", [])
+    if not channels:
+        print("  No channels found (check BUFFER_ORG_ID and BUFFER_ACCESS_TOKEN)")
+        return
+    # Group by service so LinkedIn × 2 is obvious at a glance.
+    by_service: dict[str, list[dict]] = {}
+    for c in channels:
+        by_service.setdefault(c.get("service", "unknown"), []).append(c)
+    for service in sorted(by_service):
+        for c in by_service[service]:
+            print(f"  {service:12s}  name={c.get('name')!r:30s}  id={c.get('id')}")
+
+
 def main() -> None:
     print("== Buffer schema introspection ==\n")
 
@@ -61,6 +93,9 @@ def main() -> None:
 
     print("\ncreatePost error types (should cover the fragments in send_to_buffer):")
     _print_possible_types("MutationError")
+
+    print("\nBuffer channels (all orgs → all connected accounts):")
+    _print_channels()
 
     # If a post id is supplied, show what get_buffer_post_state returns for a
     # real post — handy for eyeballing the actual `status` string in context.

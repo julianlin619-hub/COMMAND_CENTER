@@ -488,14 +488,17 @@ def resolve_extra_channel_ids() -> tuple[str | None, str | None, str | None]:
     `skipped_no_channel` short-circuit in fanout_extra_legs_for_one_tweet.
     """
     fb = _safe_channel_lookup("facebook")
-    li = _safe_channel_lookup("linkedin")
+    # Both TikTok pipelines post Alex's content — pin to Alex's LinkedIn channel
+    # so the lookup doesn't accidentally return Leila's (Buffer returns the first
+    # match when two LinkedIn channels exist in the same org).
+    li = _safe_channel_lookup("linkedin", name="alexhormozi")
     ig = _safe_channel_lookup("instagram")
     return fb, li, ig
 
 
-def _safe_channel_lookup(service: str) -> str | None:
+def _safe_channel_lookup(service: str, name: str | None = None) -> str | None:
     try:
-        return get_channel_id(service=service)
+        return get_channel_id(service=service, name=name)
     except Exception as e:
         logger.warning(
             "Could not resolve Buffer %s channel ID — leg will be skipped for this run: %s",
