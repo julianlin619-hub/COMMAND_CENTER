@@ -18,8 +18,8 @@ Phases (each logged as its own cron_runs row):
             template yet).
   Phase 2 — BUFFER: insert a `posts` row (status='sent_to_buffer') for each
             generated image and send it to Buffer's Leila LinkedIn queue
-            with a hardcoded "Agree?" caption — same engagement hook the
-            Alex Facebook/LinkedIn pipeline uses.
+            with an empty caption — the quote-card image is the whole post,
+            and we intentionally drop any text hook.
 
 Bypasses `core.scheduler.process_due_posts` because that path goes through
 platform adapters that don't handle media (the Threads adapter, for example,
@@ -92,9 +92,10 @@ def _is_unique_violation(exc: Exception) -> bool:
 # then paste its `id` here.
 LINKEDIN_LEILA_CHANNEL_ID = "69f8e8fb5c4c051afa0d487e"
 
-# Engagement hook — image is the focus, caption is just a question that
-# tends to drive comments. Same string Alex's Facebook + LinkedIn cron uses.
-LINKEDIN_LEILA_CAPTION = "Agree?"
+# Caption sent to Buffer for every Leila LinkedIn post. The quote-card image
+# is the entire post, so we publish with no caption text. (Previously this was
+# the "Agree?" engagement hook; removed per request to drop it from all posts.)
+LINKEDIN_LEILA_CAPTION = ""
 
 
 def _fetch_with_fallback(twitter_handle: str) -> tuple[list[dict], bool]:
@@ -300,7 +301,7 @@ def main() -> None:
         tweet_id = item.get("id", "")
         # Caption stored on the Post row is the original tweet text — that's
         # what `post_caption_exists` dedups against. The Buffer-facing caption
-        # is the engagement hook ("Agree?"), kept intentionally separate.
+        # is empty (no text hook), kept intentionally separate.
         tweet_text = text_by_id.get(tweet_id) or item.get("text", "")
         if not tweet_text or not tweet_text.strip():
             logger.warning("Skipping post with empty tweet text (storage: %s)", storage_path)

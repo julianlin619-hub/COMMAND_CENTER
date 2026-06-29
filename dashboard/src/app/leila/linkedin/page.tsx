@@ -3,8 +3,8 @@
  *
  * Single pathway: Apify-source @LeilaHormozi tweets → render 1080×1080 quote
  * cards (Alex's Facebook template, reused) → queue on Buffer's Leila LinkedIn
- * channel with caption "Agree?". The cron (linkedin-leila-cron) drives all
- * three phases sequentially in one invocation.
+ * channel with no caption (image-only). The cron (linkedin-leila-cron) drives
+ * all three phases sequentially in one invocation.
  */
 
 import Link from "next/link";
@@ -110,7 +110,7 @@ export default async function LeilaLinkedInPage() {
             "Wide fallback (only when primary returns 0): scrape up to 30 tweets ignoring time window (1-year lookback), pick exactly 1 fresh tweet — guarantees a post on quiet days",
             "Skip any whose source tweet text already exists in linkedin_leila posts (dedup)",
             "Render each as a 1080×1080 PNG quote card via /api/content-gen and upload to linkedin_leila/tweet-{uuid}.png",
-            "Queue to Buffer's Leila LinkedIn channel with caption \"Agree?\"",
+            "Queue to Buffer's Leila LinkedIn channel with no caption (image-only)",
           ]}
           actions={[{ url: "/api/cron/run", body: { job: "linkedin-leila-cron" } }]}
           lastRun={lastRun}
