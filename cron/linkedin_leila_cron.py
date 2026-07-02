@@ -98,34 +98,55 @@ LINKEDIN_LEILA_CHANNEL_ID = "69f8e8fb5c4c051afa0d487e"
 LINKEDIN_LEILA_CAPTION = ""
 
 
-def _fetch_with_fallback(twitter_handle: str) -> tuple[list[dict], bool]:
-    """Pull recent tweets, falling back to "latest 30, pick one" when the tight window is empty.
+def _select_postable(tweets: list[dict], *, wide: bool) -> tuple[list[dict], int, int]:
+    """Dedup against the posts table and filter to clean standalone quotes.
 
-    Try 24h first (matches Threads-Leila and the source repo's "today's
-    tweets" intent). If nothing comes back — Leila skipped a day, or the
-    Apify actor was rate-limited and yielded zero — fetch the latest 30
-    tweets ignoring time so the caller can post exactly one fresh tweet.
-    A single quiet day shouldn't lose us a LinkedIn post entirely.
+    Drops tweets that don't read as a clean standalone quote — retweets,
+    hyperlink-bearing posts, truncated fragments, and reply snippets. Cheap
+    regex rejects the obvious junk before any LLM call; the Claude judge in
+    core/tweet_filter handles the borderline cases (incomplete sentences,
+    screenshot captions, quotes of others). On failure (missing key, rate
+    limit, malformed response) the filter raises — we catch and skip the
+    tweet rather than letting an unfiltered post slip through.
 
-    The 1-year lookback on the wide call is a deliberate "effectively no
-    time filter" — the Apify actor is sorted Latest and capped at 30
-    items, so the date filter in core/content_sources.py becomes a no-op
-    for any account that's tweeted within the past year. Done this way to
-    avoid changing fetch_apify_tweets' signature, which Threads-Leila
-    also depends on.
-
-    Returns a (tweets, used_wide_fallback) tuple. When the bool is True,
-    the caller should cap output to a single fresh post.
+    Returns (new_tweets, duplicates, filtered). When wide=True, output is
+    capped to a single fresh post: the break fires only after an append, so
+    a rejected most-recent tweet keeps the scan going through the latest 30
+    until one passes. The goal on the wide path is "one LinkedIn post per
+    quiet day," not "burn down Leila's entire backlog."
     """
-    tweets = fetch_apify_tweets(twitter_handle, max_items=5, hours_lookback=24)
-    if tweets:
-        return tweets, False
-    logger.info(
-        "No tweets in 24h window for @%s — fetching latest 30 to pick one",
-        twitter_handle,
-    )
-    wide = fetch_apify_tweets(twitter_handle, max_items=30, hours_lookback=24 * 365)
-    return wide, True
+    new_tweets: list[dict] = []
+    duplicates = 0
+    filtered = 0
+    for tweet in tweets:
+        text = tweet["text"]
+        if post_caption_exists("linkedin_leila", text):
+            duplicates += 1
+            logger.debug("Skipping duplicate: %s...", text[:50])
+            continue
+        try:
+            is_clean, reason = is_postable_tweet(text)
+        except Exception as filter_err:
+            filtered += 1
+            logger.warning(
+                "Filter raised for tweet %s — skipping: %s",
+                tweet.get("id", "?"),
+                filter_err,
+            )
+            continue
+        if not is_clean:
+            filtered += 1
+            logger.info(
+                "Filtered tweet %s (%s): %s",
+                tweet.get("id", "?"),
+                reason,
+                text[:60],
+            )
+            continue
+        new_tweets.append(tweet)
+        if wide:
+            break
+    return new_tweets, duplicates, filtered
 
 
 def main() -> None:
@@ -170,54 +191,41 @@ def main() -> None:
     new_tweets: list[dict] = []
     try:
         twitter_handle = os.environ.get("APIFY_LEILA_TWITTER_HANDLE", "LeilaHormozi")
-        tweets, used_wide_fallback = _fetch_with_fallback(twitter_handle)
-        logger.info("Phase 0: fetched %d tweets from @%s", len(tweets), twitter_handle)
 
-        duplicates = 0
-        filtered = 0
-        for tweet in tweets:
-            text = tweet["text"]
-            if post_caption_exists("linkedin_leila", text):
-                duplicates += 1
-                logger.debug("Skipping duplicate: %s...", text[:50])
-                continue
-            # Drop tweets that don't read as a clean standalone quote — retweets,
-            # hyperlink-bearing posts, truncated fragments, and reply snippets.
-            # Cheap regex rejects the obvious junk before any LLM call; the
-            # Claude judge in core/tweet_filter handles the borderline cases
-            # (incomplete sentences, screenshot captions, quotes of others).
-            #
-            # On failure (missing key, rate limit, malformed response) the
-            # filter raises — we catch and skip the tweet rather than letting
-            # an unfiltered post slip through.
-            try:
-                is_clean, reason = is_postable_tweet(text)
-            except Exception as filter_err:
-                filtered += 1
-                logger.warning(
-                    "Filter raised for tweet %s — skipping: %s",
-                    tweet.get("id", "?"),
-                    filter_err,
-                )
-                continue
-            if not is_clean:
-                filtered += 1
-                logger.info(
-                    "Filtered tweet %s (%s): %s",
-                    tweet.get("id", "?"),
-                    reason,
-                    text[:60],
-                )
-                continue
-            new_tweets.append(tweet)
-            # Wide-fallback path posts exactly one fresh tweet — the goal is
-            # "one LinkedIn post per day even on quiet days," not "burn down
-            # Leila's entire backlog the next time she goes silent for 24h."
-            # The break is after append (not after dedup/filter), so if the
-            # most-recent tweet gets rejected we keep scanning the latest 30
-            # until we find one that passes.
-            if used_wide_fallback:
-                break
+        # Attempt 1: tight 24h window (matches Threads-Leila and the source
+        # repo's "today's tweets" intent).
+        tweets = fetch_apify_tweets(twitter_handle, max_items=5, hours_lookback=24)
+        logger.info(
+            "Phase 0: fetched %d tweets from @%s (24h window)", len(tweets), twitter_handle
+        )
+        new_tweets, duplicates, filtered = _select_postable(tweets, wide=False)
+        used_wide_fallback = False
+
+        # Attempt 2: fall back when NOTHING POSTABLE survived the 24h window —
+        # not just when Apify returned zero raw tweets. A day of only retweets,
+        # link posts, or already-published dupes used to slip through the old
+        # raw-count check and lose us a LinkedIn post entirely; keying the
+        # fallback on the postable count fixes that.
+        #
+        # The 1-year lookback on the wide call is a deliberate "effectively no
+        # time filter" — the Apify actor is sorted Latest and capped at 30
+        # items, so the date filter in core/content_sources.py becomes a no-op
+        # for any account that's tweeted within the past year. Done this way to
+        # avoid changing fetch_apify_tweets' signature, which Threads-Leila
+        # also depends on. _select_postable(wide=True) then caps output to a
+        # single fresh post so we don't burn down Leila's backlog.
+        if not new_tweets:
+            logger.info(
+                "No postable tweets in 24h window for @%s (%d raw, %d duplicates, "
+                "%d filtered) — fetching latest 30 to pick one",
+                twitter_handle,
+                len(tweets),
+                duplicates,
+                filtered,
+            )
+            wide = fetch_apify_tweets(twitter_handle, max_items=30, hours_lookback=24 * 365)
+            new_tweets, duplicates, filtered = _select_postable(wide, wide=True)
+            used_wide_fallback = True
 
         log_cron_finish(run_id, status="success", posts_processed=len(new_tweets))
         logger.info(
