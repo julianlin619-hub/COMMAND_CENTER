@@ -33,20 +33,29 @@ BUFFER_GRAPHQL_URL = "https://api.buffer.com/graphql"
 # GraphQL mutation ported from lib/buffer.ts in the original THREADS repo.
 # schedulingType: automatic lets Buffer pick the next optimal time slot.
 # mode: addToQueue appends to the queue instead of posting immediately.
+#
+# The whole input is passed as ONE `$input: CreatePostInput!` variable rather
+# than inlining per-field variables (`channelId: $channelId`) into the query
+# literal. The inline shape (declaring `$channelId: ChannelId!`) started failing
+# with "Argument input has invalid value {…}" after Buffer's 2026-05-25 API
+# change tightened the inner field typing — the inline `ChannelId!` usage was no
+# longer type-compatible at query-validation time. Wrapping the input in a single
+# variable defers field checks to value coercion (which still passes), matching
+# the shape core/buffer.py::send_to_buffer already uses.
 CREATE_POST_MUTATION = """
-  mutation CreatePost($channelId: ChannelId!, $text: String!) {
-    createPost(input: {
-      channelId: $channelId
-      text: $text
-      schedulingType: automatic
-      mode: addToQueue
-    }) {
+  mutation CreatePost($input: CreatePostInput!) {
+    createPost(input: $input) {
+      __typename
       ... on PostActionSuccess {
         post {
           id
           status
         }
       }
+      # Catch-all: every Buffer error type implements MutationError, so this
+      # fragment surfaces the message for ANY error member — including new
+      # types — instead of returning neither `post` nor `message`.
+      ... on MutationError { message }
       ... on InvalidInputError { message }
       ... on UnexpectedError { message }
       ... on LimitReachedError { message }
@@ -138,7 +147,17 @@ class Threads(PlatformBase):
                 },
                 json={
                     "query": CREATE_POST_MUTATION,
-                    "variables": {"channelId": self.channel_id, "text": text},
+                    # Pass the input as a single CreatePostInput variable (not
+                    # inlined per-field into the query) — see CREATE_POST_MUTATION.
+                    # Threads is text-only, so no `assets` key.
+                    "variables": {
+                        "input": {
+                            "channelId": self.channel_id,
+                            "text": text,
+                            "schedulingType": "automatic",
+                            "mode": "addToQueue",
+                        }
+                    },
                 },
                 timeout=30,
             )
