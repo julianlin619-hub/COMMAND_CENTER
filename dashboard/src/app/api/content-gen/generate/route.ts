@@ -8,9 +8,10 @@
  *   - Facebook / LinkedIn / Leila-LinkedIn: 1080x1080 square PNG quote
  *     card (no video conversion) — all read the Facebook template row
  *     and layer per-platform color overrides in code.
- *   - Instagram: 1080x1440 portrait PNG quote card (3:4) — reads its
- *     own dedicated template row so the height can diverge from FB's
- *     1:1 without affecting FB/LI.
+ *   - Instagram: 1080x1350 portrait PNG quote card (4:5, IG's max
+ *     portrait aspect — carousel slides all share one aspect ratio, so
+ *     crop-safe matters) — reads its own dedicated template row so the
+ *     height can diverge from FB's 1:1 without affecting FB/LI.
  *
  * Body: { tweets: [{ id, text }], platform?: 'tiktok' | 'facebook' |
  *         'linkedin' | 'linkedin_leila' | 'instagram' }
@@ -63,7 +64,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = (await req.json()) as {
-      tweets: { id: string; text: string }[];
+      // `swipe` marks a carousel title-card slide: rendered like any quote
+      // card but with a red "SWIPE →" pill below the text (see
+      // renderSquareQuoteCard's swipeBadge option). Only meaningful for
+      // square-template platforms; the TikTok branch ignores it.
+      tweets: { id: string; text: string; swipe?: boolean }[];
       platform?: string;
     };
     const { tweets, platform: rawPlatform = "tiktok" } = body;
@@ -107,12 +112,12 @@ export async function POST(req: NextRequest) {
     //     template row from Supabase, 1080×1080 base, layer per-platform
     //     color overrides on top (see below). None of them have a
     //     dedicated template row today.
-    //   - instagram → read its own template row (1080×1440 portrait),
-    //     seeded by the 20260522 migration. No color override — defaults
-    //     match Facebook. Instagram has its own row because the height
-    //     differs; using FB's row + an in-code height override would
-    //     work but defeats the operator's ability to tune IG dimensions
-    //     in the template designer later.
+    //   - instagram → read its own template row (1080×1350 portrait,
+    //     seeded by the 20260522 migration, resized by 20260723120001).
+    //     No color override — defaults match Facebook. Instagram has its
+    //     own row because the height differs; using FB's row + an
+    //     in-code height override would work but defeats the operator's
+    //     ability to tune IG dimensions in the template designer later.
     const usesSquareTemplate =
       platform === "facebook" ||
       platform === "linkedin" ||
@@ -121,7 +126,7 @@ export async function POST(req: NextRequest) {
     let fbTemplateConfig: TemplateConfig | null = null;
     if (usesSquareTemplate) {
       // Pick the template row + in-code fallback per platform. Instagram
-      // gets its own row + DEFAULT_INSTAGRAM_TEMPLATE_CONFIG (1080×1440);
+      // gets its own row + DEFAULT_INSTAGRAM_TEMPLATE_CONFIG (1080×1350);
       // everyone else reads Alex's Facebook row + DEFAULT_TEMPLATE_CONFIG
       // (1080×1080).
       const isInstagram = platform === "instagram";
@@ -211,7 +216,7 @@ export async function POST(req: NextRequest) {
 
           if (usesSquareTemplate) {
             // FB / LinkedIn / Leila-LinkedIn render a 1080×1080 PNG;
-            // Instagram renders 1080×1440. The exact dimensions come
+            // Instagram renders 1080×1350. The exact dimensions come
             // from `fbTemplateConfig` (width/height fields) so the
             // renderer adapts automatically. Storage path is namespaced
             // by `platform` so each platform's renders don't collide
@@ -220,7 +225,10 @@ export async function POST(req: NextRequest) {
             const pngBuffer = await renderSquareQuoteCard(
               normalized,
               fbTemplateConfig!,
-              { headerImageBuffer: platformHeaderBuffer },
+              {
+                headerImageBuffer: platformHeaderBuffer,
+                swipeBadge: tweet.swipe === true,
+              },
             );
             const storagePath = `${platform}/tweet-${tweet.id}.png`;
 

@@ -164,6 +164,51 @@ def test_can_resend():
     assert reconcile._can_resend({"platform": "threads", "media_urls": []}, {}) is False
 
 
+def test_resend_carousel_passes_indexed_proxy_urls(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_URL", "https://dash.example")
+    sent: dict = {}
+
+    def fake_send(channel_id, body, media_url, **kwargs):
+        sent.update(channel_id=channel_id, body=body, media_url=media_url, **kwargs)
+        return "newbuf"
+
+    monkeypatch.setattr(reconcile, "send_to_buffer", fake_send)
+
+    post = {
+        "id": "p1",
+        "platform": "instagram",
+        "media_urls": ["instagram/a.png", "instagram/b.png", "instagram/c.png"],
+    }
+    replay = {"channel_id": "ch1", "body": "", "media_type": "image", "instagram_post_type": "post"}
+
+    assert reconcile._resend(post, replay) == "newbuf"
+    # One indexed proxy URL per slide — a bare build_proxy_url would replay
+    # only the first image of the carousel.
+    assert sent["media_url"] == [
+        "https://dash.example/api/media/p1",
+        "https://dash.example/api/media/p1?index=1",
+        "https://dash.example/api/media/p1?index=2",
+    ]
+    assert sent["instagram_post_type"] == "post"
+
+
+def test_resend_single_media_still_passes_plain_url(monkeypatch):
+    monkeypatch.setenv("DASHBOARD_URL", "https://dash.example")
+    sent: dict = {}
+
+    def fake_send(channel_id, body, media_url, **kwargs):
+        sent["media_url"] = media_url
+        return "newbuf"
+
+    monkeypatch.setattr(reconcile, "send_to_buffer", fake_send)
+    post = {"id": "p2", "platform": "facebook", "media_urls": ["facebook/x.png"]}
+
+    assert reconcile._resend(post, _MEDIA_REPLAY) == "newbuf"
+    # Single-media rows keep the exact pre-carousel URL shape (a plain
+    # string, no ?index=).
+    assert sent["media_url"] == "https://dash.example/api/media/p2"
+
+
 def test_main_resends_failed_post_with_replay(monkeypatch):
     posts = [{
         "id": "a", "platform": "facebook", "platform_post_id": "old",

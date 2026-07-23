@@ -135,3 +135,46 @@ def test_get_buffer_post_state_still_queued(monkeypatch):
 def test_get_buffer_post_state_unknown_post(monkeypatch):
     monkeypatch.setattr(buffer, "_buffer_request", lambda *a, **k: {"post": None})
     assert buffer.get_buffer_post_state("nope") is None
+
+
+# ── send_to_buffer asset shapes (single vs carousel) ─────────────────────
+
+
+def _capture_create_post(monkeypatch):
+    """Stub _buffer_request to capture the CreatePost input and succeed."""
+    captured: dict = {}
+
+    def fake_request(query, variables=None):
+        captured.update((variables or {}).get("input", {}))
+        return {"createPost": {"post": {"id": "bp1"}}}
+
+    monkeypatch.setattr(buffer, "_buffer_request", fake_request)
+    return captured
+
+
+def test_send_to_buffer_single_url_unchanged(monkeypatch):
+    captured = _capture_create_post(monkeypatch)
+    post_id = buffer.send_to_buffer("ch1", "hello", "https://x/img.png", media_type="image")
+    assert post_id == "bp1"
+    assert captured["assets"] == [{"image": {"url": "https://x/img.png"}}]
+
+
+def test_send_to_buffer_url_list_builds_carousel_assets(monkeypatch):
+    captured = _capture_create_post(monkeypatch)
+    urls = [f"https://x/img{i}.png" for i in range(3)]
+    buffer.send_to_buffer(
+        "ch1", "", urls, media_type="image", instagram_post_type="post",
+    )
+    # One image asset per URL, in order — this is what Buffer's IG
+    # integration publishes as a carousel.
+    assert captured["assets"] == [{"image": {"url": u}} for u in urls]
+    assert captured["metadata"]["instagram"] == {
+        "type": "post",
+        "shouldShareToFeed": True,
+    }
+
+
+def test_send_to_buffer_empty_url_list_raises(monkeypatch):
+    _capture_create_post(monkeypatch)
+    with pytest.raises(ValueError, match="at least one media URL"):
+        buffer.send_to_buffer("ch1", "", [], media_type="image")

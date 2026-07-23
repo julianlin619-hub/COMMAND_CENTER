@@ -136,6 +136,11 @@ services:
         sync: false
       - key: TIKTOK_MAX_ITEMS  # optional — default 30
         sync: false
+      # optional — 'off' (default) | 'video' | 'image'. The IG tweet-card
+      # leg is paused ('off') in favour of the instagram-carousel cron;
+      # set 'video' to restore the old MP4-reel cross-post.
+      - key: IG_TWEET_CARD_FORMAT
+        sync: false
 
   - type: cron
     name: tweet-reel-bank
@@ -163,6 +168,52 @@ services:
       - key: CONTENT_BANK_PATH  # optional — default data/TweetMasterBank.csv
         sync: false
       - key: TIKTOK_BANK_MIN_LIKES  # optional — default 6500
+        sync: false
+      # optional — 'off' (default) | 'video' | 'image'. See tweet-reel-recent.
+      - key: IG_TWEET_CARD_FORMAT
+        sync: false
+
+  - type: cron
+    name: instagram-carousel
+    runtime: python
+    buildCommand: pip install -r requirements.txt && pip install -e .
+    startCommand: python -m cron.instagram_carousel_pipeline
+    # Instagram carousel pathway — daily "Brutally honest advice to my
+    # younger self (Day N)" carousel: a title card with a SWIPE → pill,
+    # then 5 outlier tweets all >= 6500 likes (recent Apify outliers
+    # first, bank top-up). Renders 1080×1350 quote cards and queues ONE
+    # 6-slide Buffer carousel to Alex's main IG channel. Owns Instagram
+    # now that the tweet-card IG reel leg defaults to 'off'.
+    # 11:30 UTC — after tweet-reel-recent (11:00) and tweet-reel-bank (11:15)
+    # so its dashboard render call doesn't fight their ffmpeg jobs, and
+    # before leila-linkedin (11:45).
+    schedule: "30 11 * * *"
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: APIFY_API_KEY
+        sync: false
+      - key: APIFY_TWITTER_HANDLE  # optional — defaults to AlexHormozi
+        sync: false
+      - key: BUFFER_ACCESS_TOKEN
+        sync: false
+      - key: BUFFER_ORG_ID
+        sync: false
+      - key: DASHBOARD_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: CONTENT_BANK_PATH  # optional — default data/TweetMasterBank.csv
+        sync: false
+      - key: CAROUSEL_MIN_LIKES  # optional — default 6500 (every slide)
+        sync: false
+      - key: CAROUSEL_TWEET_COUNT  # optional — default 5 tweets after the title
+        sync: false
+      - key: CAROUSEL_TITLE_TEMPLATE  # optional — override the Day-N title text
+        sync: false
+      - key: CAROUSEL_DRY_RUN  # optional — "1" = pick + render only, no send
         sync: false
 
   - type: cron

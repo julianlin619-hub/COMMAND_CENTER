@@ -29,13 +29,27 @@ const BUCKET = "media";
 const REDIRECT_TTL_SECONDS = 3600;
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
 
   if (!id) {
     return NextResponse.json({ error: "Missing post id" }, { status: 400 });
+  }
+
+  // Carousel posts store several storage paths on one row; ?index=N selects
+  // which one to serve (each Buffer asset gets its own indexed proxy URL —
+  // see core/media.py build_proxy_url). No index param means index 0, which
+  // keeps every pre-carousel URL working unchanged. The index adds nothing
+  // guessable, so the endpoint's unauthenticated posture is unaffected.
+  const rawIndex = req.nextUrl.searchParams.get("index");
+  const index = rawIndex === null ? 0 : Number(rawIndex);
+  if (!Number.isInteger(index) || index < 0) {
+    return NextResponse.json(
+      { error: `Invalid media index: ${rawIndex}` },
+      { status: 400 },
+    );
   }
 
   const supabase = getSupabaseClient();
@@ -53,7 +67,7 @@ export async function GET(
   }
 
   const mediaUrls = post.media_urls as string[] | null;
-  const storagePath = mediaUrls?.[0];
+  const storagePath = mediaUrls?.[index];
   if (!storagePath) {
     return NextResponse.json(
       { error: "No media attached to this post" },

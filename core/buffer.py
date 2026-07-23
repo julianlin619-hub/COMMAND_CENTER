@@ -240,7 +240,8 @@ def get_channel_id(
 
 
 def send_to_buffer(
-    channel_id: str, caption: str, media_url: str, media_type: str = "video",
+    channel_id: str, caption: str, media_url: str | list[str],
+    media_type: str = "video",
     facebook_post_type: str | None = None,
     instagram_post_type: str | None = None,
     youtube: dict | None = None,
@@ -255,8 +256,13 @@ def send_to_buffer(
     Args:
         channel_id: Buffer channel ID (from get_channel_id).
         caption: Post caption text (truncated to caption_limit, default 150).
-        media_url: Public URL of the media file (Supabase signed URL).
+        media_url: Public URL of the media file (Supabase signed URL), or a
+            list of URLs for a multi-image post. Multiple image URLs on an
+            Instagram channel become ONE carousel post — Buffer's assets
+            input is already a list, one entry per media file. All existing
+            single-media callers keep passing a plain string.
         media_type: 'video' or 'image' — determines Buffer asset format.
+            Applies to every URL in a list (a carousel is all images).
         youtube: Optional YouTube publisher metadata block (title, categoryId,
             privacy, madeForKids, notifySubscribers, embeddable, license, and
             optional tags). Required for the YouTube channel — Buffer rejects a
@@ -270,6 +276,7 @@ def send_to_buffer(
         The Buffer post ID on success.
 
     Raises:
+        ValueError: If media_url is an empty list.
         RuntimeError: If Buffer returns an error (auth, rate limit, etc.)
     """
     # Build the assets payload based on media type.
@@ -277,11 +284,13 @@ def send_to_buffer(
     # For images: same flow, but Buffer uses the image upload path.
     # Buffer's assets input is a list of single-field items, one per media file
     # (e.g. `[{"image": {"url": …}}]`). Migrated from the legacy object shape
-    # ({"images": [...]}) per Buffer's 2026-05-25 API change.
-    if media_type == "image":
-        assets = [{"image": {"url": media_url}}]
-    else:
-        assets = [{"video": {"url": media_url}}]
+    # ({"images": [...]}) per Buffer's 2026-05-25 API change. The carousel
+    # pipeline passes a list of URLs, which maps 1:1 onto that list shape.
+    urls = [media_url] if isinstance(media_url, str) else list(media_url)
+    if not urls:
+        raise ValueError("send_to_buffer requires at least one media URL")
+    asset_key = "image" if media_type == "image" else "video"
+    assets = [{asset_key: {"url": u}} for u in urls]
 
     # Buffer nests platform-specific fields under metadata, not on the
     # top-level input. Build it up only with the keys that apply so we never

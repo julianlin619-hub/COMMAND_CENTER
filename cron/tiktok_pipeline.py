@@ -71,6 +71,7 @@ from cron._tweet_card_legs import (
     BUFFER_CAPTION,
     _is_unique_violation,
     fanout_extra_legs_for_one_tweet,
+    instagram_card_format,
     render_extra_platforms,
     resolve_extra_channel_ids,
     summarize_leg_failures,
@@ -382,7 +383,10 @@ def _render_summary(extra_paths: dict[str, dict[str, str]]) -> str | None:
     missing: list[str] = []
     if not extra_paths.get("facebook"):
         missing.append("facebook")
-    if not extra_paths.get("instagram"):
+    # An IG render only happens in 'image' mode — in 'video' mode the leg
+    # reuses the TikTok MP4 and in 'off' mode it's paused, so an empty IG
+    # dict is expected there, not a failure worth flagging.
+    if instagram_card_format() == "image" and not extra_paths.get("instagram"):
         missing.append("instagram")
     if not missing:
         return None

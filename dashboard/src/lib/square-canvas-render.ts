@@ -110,6 +110,101 @@ export interface RenderOptions {
    * `loadImage` accepts Buffers directly.
    */
   headerImageBuffer?: Buffer;
+  /**
+   * Draw a red "SWIPE →" pill badge below the text. Used by the
+   * Instagram carousel pipeline's title card (slide 1) to signal the
+   * post is a carousel. The badge participates in the auto-fit layout:
+   * its height is reserved before the text sizing loop runs, and the
+   * whole block (header + text + badge) is vertically centered together.
+   */
+  swipeBadge?: boolean;
+}
+
+// ── Swipe badge geometry ────────────────────────────────────────────────
+// Sized for the 1080-wide canvas. The pill mimics the reference design:
+// saturated red rounded-full pill, white uppercase text, right arrow.
+// Only the 400-weight Libre Franklin file is registered, so the "bold"
+// look comes from stroking the text with its own fill color.
+const SWIPE_BADGE = {
+  height: 96,
+  paddingX: 44,
+  gapAboveBadge: 64, // space between the last text line and the pill
+  fontSize: 46,
+  letterSpacing: 3,
+  color: "#EE3B2E",
+  textColor: "#ffffff",
+  label: "SWIPE",
+  // Hand-drawn arrow (not the "→" glyph — Libre Franklin's arrow is thin
+  // and inconsistent across weights; drawing it keeps it chunky like the
+  // reference).
+  arrowLength: 52,
+  arrowHead: 14,
+  arrowStroke: 7,
+  gapTextArrow: 22, // space between "SWIPE" and the arrow
+};
+
+/** Total vertical space the swipe badge adds to the content block. */
+function swipeBadgeBlockHeight(): number {
+  return SWIPE_BADGE.gapAboveBadge + SWIPE_BADGE.height;
+}
+
+/**
+ * Draw the "SWIPE →" pill. `x` is the pill's left edge, `y` its top.
+ * Returns nothing — pure canvas drawing.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function drawSwipeBadge(ctx: any, x: number, y: number): number {
+  const b = SWIPE_BADGE;
+  ctx.save();
+
+  ctx.font = `400 ${b.fontSize}px "Libre Franklin"`;
+  const labelWidth = measureText(ctx, b.label, b.letterSpacing);
+  const pillWidth =
+    b.paddingX * 2 + labelWidth + b.gapTextArrow + b.arrowLength;
+
+  // Rounded-full pill (radius = half height).
+  const r = b.height / 2;
+  ctx.fillStyle = b.color;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + pillWidth - r, y);
+  ctx.arc(x + pillWidth - r, y + r, r, -Math.PI / 2, Math.PI / 2);
+  ctx.lineTo(x + r, y + b.height);
+  ctx.arc(x + r, y + r, r, Math.PI / 2, (3 * Math.PI) / 2);
+  ctx.closePath();
+  ctx.fill();
+
+  // Label — fill + stroke in the same color to fake a bold weight from
+  // the single 400-weight font file.
+  const centerY = y + b.height / 2;
+  ctx.fillStyle = b.textColor;
+  ctx.strokeStyle = b.textColor;
+  ctx.lineWidth = 2.5;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  let cx = x + b.paddingX;
+  for (const char of b.label) {
+    ctx.fillText(char, cx, centerY);
+    ctx.strokeText(char, cx, centerY);
+    cx += ctx.measureText(char).width + b.letterSpacing;
+  }
+
+  // Arrow: shaft + open chevron head, drawn after the label.
+  const shaftStart = x + b.paddingX + labelWidth + b.gapTextArrow;
+  const shaftEnd = shaftStart + b.arrowLength;
+  ctx.lineWidth = b.arrowStroke;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(shaftStart, centerY);
+  ctx.lineTo(shaftEnd, centerY);
+  ctx.moveTo(shaftEnd - b.arrowHead, centerY - b.arrowHead);
+  ctx.lineTo(shaftEnd, centerY);
+  ctx.lineTo(shaftEnd - b.arrowHead, centerY + b.arrowHead);
+  ctx.stroke();
+
+  ctx.restore();
+  return pillWidth;
 }
 
 export async function renderSquareQuoteCard(
@@ -208,6 +303,10 @@ export async function renderSquareQuoteCard(
   ctx.font = `400 ${config.minFontSize}px "Libre Franklin"`;
   let bestLines = wrapText(ctx, text, maxTextWidth, config.letterSpacing);
 
+  // The swipe badge (title-card slides) reserves its space up front so the
+  // auto-fit loop can never size text into the pill's footprint.
+  const badgeBlockH = options.swipeBadge ? swipeBadgeBlockHeight() : 0;
+
   for (
     let fontSize = config.maxFontSize;
     fontSize >= config.minFontSize;
@@ -218,7 +317,8 @@ export async function renderSquareQuoteCard(
     const lineHeight = fontSize * lineHeightMult;
     const textHeight = calcTextHeight(lines, lineHeight);
     const { h: scaledH } = scaledHeaderForFont(fontSize);
-    const totalBlockHeight = scaledH + (headerImg ? config.headerGap : 0) + textHeight;
+    const totalBlockHeight =
+      scaledH + (headerImg ? config.headerGap : 0) + textHeight + badgeBlockH;
 
     if (totalBlockHeight <= maxContentHeight) {
       bestFontSize = fontSize;
@@ -230,10 +330,11 @@ export async function renderSquareQuoteCard(
   // 5. Compute final header dimensions for the chosen font size
   const { h: headerDrawHeight, w: headerDrawW } = scaledHeaderForFont(bestFontSize);
 
-  // 6. Vertically center the entire block (header + gap + text) on the canvas
+  // 6. Vertically center the entire block (header + gap + text + badge)
   const lineHeight = bestFontSize * lineHeightMult;
   const textHeight = calcTextHeight(bestLines, lineHeight);
-  const totalBlockHeight = headerDrawHeight + (headerImg ? config.headerGap : 0) + textHeight;
+  const totalBlockHeight =
+    headerDrawHeight + (headerImg ? config.headerGap : 0) + textHeight + badgeBlockH;
   const blockTopY = (config.height - totalBlockHeight) / 2;
 
   // 7. Draw header image at the top of the centered block (left-aligned)
@@ -273,6 +374,19 @@ export async function renderSquareQuoteCard(
       // Blank line — use paragraph spacing multiplier
       cumulativeY += lineHeight * paragraphMult;
     }
+  }
+
+  // 9. Swipe badge (title-card slides) — below the text, aligned with it.
+  // Left-aligned to paddingLeft like the header and (default) text, so the
+  // whole card reads as one left-anchored column.
+  if (options.swipeBadge) {
+    const badgeTop =
+      blockTopY +
+      headerDrawHeight +
+      (headerImg ? config.headerGap : 0) +
+      textHeight +
+      SWIPE_BADGE.gapAboveBadge;
+    drawSwipeBadge(ctx, config.paddingLeft, badgeTop);
   }
 
   return canvas.toBuffer("image/png");

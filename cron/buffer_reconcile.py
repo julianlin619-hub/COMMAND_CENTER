@@ -117,9 +117,13 @@ def _resend(post: dict, replay: dict) -> str:
     media_type = replay.get("media_type")
 
     if media_type and media_urls:
-        # Use the permanent proxy URL — it re-signs on every request, so it
-        # never expires regardless of how long the post stays in Buffer's queue.
-        url = build_proxy_url(post["id"])
+        # Use permanent proxy URLs — they re-sign on every request, so they
+        # never expire regardless of how long the post stays in Buffer's queue.
+        # Carousel rows carry several media_urls entries; one indexed proxy URL
+        # per entry re-sends the full carousel (a bare build_proxy_url would
+        # silently replay only the first slide). Single-media rows produce the
+        # same lone URL as before.
+        urls = [build_proxy_url(post["id"], i) for i in range(len(media_urls))]
         # Carry the YouTube publisher block + per-platform caption limit when
         # present (batch-video legs persist these). Without the YouTube block a
         # re-sent YouTube post is rejected for a missing category; without the
@@ -127,7 +131,7 @@ def _resend(post: dict, replay: dict) -> str:
         return send_to_buffer(
             replay["channel_id"],
             replay["body"],
-            url,
+            urls[0] if len(urls) == 1 else urls,
             media_type=media_type,
             facebook_post_type=replay.get("facebook_post_type"),
             instagram_post_type=replay.get("instagram_post_type"),

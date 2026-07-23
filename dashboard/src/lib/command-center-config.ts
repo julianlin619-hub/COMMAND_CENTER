@@ -165,6 +165,22 @@ export const FORMATS: Format[] = [
   // home page's CategorySection grid. The visual-output formats (Tweet
   // Cards, Bulk Tweet Cards, Playwright) live under "graphics" below.
   {
+    // Reposts — surfaces the account's best-performing Instagram posts by
+    // saves count. Manually triggered from /instagram-reposts: upload CSV →
+    // Apify scrapes each reel → Deepgram transcribes → RAG caption from tweet
+    // bank → queues to Buffer (alexhighlights2026). No healthPlatforms because
+    // there's no scheduled automation; the card stays neutral/paused.
+    id: "instagram-reposts",
+    name: "Reposts",
+    subtitle: "Top saves → Instagram",
+    category: "short",
+    status: "paused",
+    creator: "alex",
+    subgroup: "distribution",
+    platforms: [{ id: "instagram", name: "Instagram" }],
+    href: "/instagram-reposts",
+  },
+  {
     id: "crosspost-short",
     name: "Crosspost",
     subtitle: "Multi-platform syndication",
@@ -208,22 +224,25 @@ export const FORMATS: Format[] = [
       { id: "tiktok", name: "TikTok" },
       { id: "facebook", name: "Facebook" },
       { id: "linkedin", name: "LinkedIn" },
-      { id: "instagram", name: "Instagram" },
     ],
     // /tweet-cards hosts both unified pathways: "X Outlier Reel" (Apify
     // scrape of @AlexHormozi) and "X Bank Reel" (random pick from
     // TweetMasterBank.csv). Each pathway renders the source tweet 3 ways
     // — 1080×1920 MP4 (TikTok), 1080×1080 PNG (Facebook), 1080×1080 PNG
-    // with LinkedIn color overrides — and fans out to four Buffer
-    // channels in a single cron run. Instagram's leg reuses the Facebook
-    // PNG byte-for-byte and queues as instagram_post_type='post' (feed
-    // post — no Reel cross-post anymore).
+    // with LinkedIn color overrides — and fans out to three Buffer
+    // channels in a single cron run. The Instagram leg is PAUSED
+    // (IG_TWEET_CARD_FORMAT defaults to 'off'): Instagram is now fed by
+    // the standalone carousel cron (cron/instagram_carousel_pipeline.py),
+    // which ships a daily 6-slide 1080×1350 carousel — a "Brutally honest
+    // advice to my younger self (Day N)" title card with a SWIPE → pill,
+    // then 5 outlier tweets all >= 6500 likes.
     href: "/tweet-cards",
     // Cron writes one post row per platform per run (see
-    // cron/_tweet_card_legs.py): tiktok / facebook / linkedin /
-    // instagram. Any of the four producing a row in the last 24h marks
-    // the format healthy.
-    healthPlatforms: ["tiktok", "facebook", "linkedin", "instagram"],
+    // cron/_tweet_card_legs.py): tiktok / facebook / linkedin. Any of
+    // the three producing a row in the last 24h marks the format healthy.
+    // (instagram rows now come from the carousel cron, so it no longer
+    // belongs to this card's health signal.)
+    healthPlatforms: ["tiktok", "facebook", "linkedin"],
   },
   {
     // Bulk Tweet Cards — the /instagram-2nd pipeline. Picks tweets from

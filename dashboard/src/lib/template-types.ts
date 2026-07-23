@@ -129,11 +129,12 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
 
 /**
  * Instagram default — identical to the Facebook default except for the
- * canvas height. Instagram feed posts render at 1080×1440 (3:4 portrait)
- * so the same quote-card design has more vertical dead space than the
- * Facebook 1:1 version. Note: Instagram's documented max portrait aspect
- * is 4:5 (1080×1350); 3:4 may be cropped by the IG client at display
- * time, but the operator explicitly chose this size for the extra room.
+ * canvas height. Instagram cards render at 1080×1350 (4:5 portrait),
+ * Instagram's documented max portrait aspect. The carousel pipeline
+ * depends on this: IG forces one aspect ratio across every slide of a
+ * carousel, so a crop-safe 4:5 keeps all five cards intact. (An earlier
+ * 1080×1440 / 3:4 size risked client-side cropping and was retired with
+ * the 20260723120001 migration.)
  *
  * Used as the in-code fallback for /api/content-gen/generate when
  * platform="instagram" and either the DB row is missing or its config
@@ -143,5 +144,5 @@ export const DEFAULT_TEMPLATE_CONFIG: TemplateConfig = {
  */
 export const DEFAULT_INSTAGRAM_TEMPLATE_CONFIG: TemplateConfig = {
   ...DEFAULT_TEMPLATE_CONFIG,
-  height: 1440,
+  height: 1350,
 };

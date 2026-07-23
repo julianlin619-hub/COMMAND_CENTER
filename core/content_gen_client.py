@@ -45,7 +45,9 @@ def generate_content(
     Args:
         dashboard_url: Base URL of the dashboard (trailing slash ok).
         cron_secret: Bearer token for the Authorization header.
-        tweets: Iterable of {"id", "text"} mappings.
+        tweets: Iterable of {"id", "text"} mappings. An optional "swipe": True
+            marks a carousel title-card slide — the route renders it with the
+            red "SWIPE →" pill below the text.
         platform: "tiktok" (1080x1920 MP4) or "facebook" (1080x1080 PNG).
 
     Returns:
@@ -56,9 +58,15 @@ def generate_content(
         httpx.RequestError on network failure after retries exhaust.
     """
     generate_url = f"{dashboard_url.rstrip('/')}/api/content-gen/generate"
+    # Rebuild each tweet dict from an explicit allowlist (not a passthrough)
+    # so stray keys the pipelines carry internally (like_count, normalized…)
+    # never leak into the API payload. "swipe" rides along only when set.
     payload: dict[str, Any] = {
         "platform": platform,
-        "tweets": [{"id": t["id"], "text": t["text"]} for t in tweets],
+        "tweets": [
+            {"id": t["id"], "text": t["text"], **({"swipe": True} if t.get("swipe") else {})}
+            for t in tweets
+        ],
     }
     headers = {
         "Content-Type": "application/json",
