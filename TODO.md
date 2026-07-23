@@ -1,14 +1,12 @@
 # TODO
- 
- - Reposts (auto recycle top peformers)
+
+ - Davinci resolve MCP already works - can then automate that 
 
 - TikTok Carousels with tweets automation
 
 - Create ongonig tweet supabase -> with tweets being added to it daily -> then automation can just pull fromt he database with one automation
 
 - [ ] YouTube community post automation (playwright)
-
-- [ ] YT long form video editor - adds CTA (pre edited) + banner 
 
 - [ ] IG way to trim down hotlines / Q&As - cut each CAM to each individual biz owner. Directly ffmpeg input and output mp4. And then later down the line use remotion tob   splice both together 
 - Then subset of that is be able to screen for clips that are high TAM and select them out (and clipper would produce descript cut)
@@ -36,9 +34,3 @@ https://acquisition.clickup.com/90131181233/docs/2ky3tbnh-20593/2ky3tbnh-5973
 
 work on claude outputting more meanigniful reuslts- structured outputs e.g .json format etc
 - Clipper tool teach it to have understand context eg no random sentences or phrases - only full sentences or hey words so it’s not piecing together random strings
-
-- Claude premiere plugin
-
-- some rag system where we have all videos -> able to find reposts 
-
-- YouTube repost automatino (with all videos downloaded)

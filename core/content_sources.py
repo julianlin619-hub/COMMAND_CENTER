@@ -210,6 +210,85 @@ def fetch_apify_tweets(
     return tweets
 
 
+# ── Apify Instagram Scraping ──────────────────────────────────────────
+
+
+def fetch_apify_instagram_post(post_url: str) -> dict | None:
+    """Scrape one Instagram post via Apify. Returns scraped data or None.
+
+    Uses the apify/instagram-scraper actor with directUrls input so we fetch
+    a specific post rather than an account feed. Follows the same auth and
+    error-handling conventions as fetch_apify_tweets (Bearer header, defensive
+    logging, returns None on any HTTP error so the caller can skip gracefully).
+
+    Args:
+        post_url: Full Instagram permalink (https://www.instagram.com/reel/…).
+
+    Returns:
+        Dict with keys: video_url (str), caption (str), timestamp (str),
+        likes_count (int). None if the post is not a video, is private, or
+        if the Apify request fails.
+    """
+    api_key = os.environ.get("APIFY_API_KEY", "")
+    if not api_key:
+        logger.warning("APIFY_API_KEY not set — skipping Instagram scrape")
+        return None
+
+    apify_headers = {"Authorization": f"Bearer {api_key}"}
+
+    try:
+        # directUrls + resultsType=posts tells the actor to fetch a specific
+        # post (rather than scraping an account or hashtag feed).
+        actor_input = {
+            "directUrls": [post_url],
+            "resultsType": "posts",
+            "resultsLimit": 1,
+        }
+
+        run_resp = httpx.post(
+            "https://api.apify.com/v2/acts/apify~instagram-scraper/runs",
+            params={"waitForFinish": 300},
+            headers=apify_headers,
+            json=actor_input,
+            timeout=360,
+        )
+        run_resp.raise_for_status()
+        dataset_id = run_resp.json()["data"]["defaultDatasetId"]
+
+        items_resp = httpx.get(
+            f"https://api.apify.com/v2/datasets/{dataset_id}/items",
+            headers=apify_headers,
+            timeout=60,
+        )
+        items_resp.raise_for_status()
+        items = items_resp.json()
+    except httpx.HTTPError as e:
+        logger.error("Apify Instagram request failed: %s", e)
+        return None
+
+    if not items:
+        logger.warning("Apify returned no items for %s", post_url)
+        return None
+
+    item = items[0]
+    # Log the keys so schema drift is visible immediately in logs.
+    logger.info("Apify Instagram item keys: %s", sorted(item.keys()))
+
+    video_url = item.get("videoUrl")
+    if not video_url:
+        logger.info(
+            "No videoUrl for %s — image post or private account, skipping", post_url
+        )
+        return None
+
+    return {
+        "video_url": video_url,
+        "caption": item.get("caption", ""),
+        "timestamp": item.get("timestamp", ""),
+        "likes_count": int(item.get("likesCount", 0)),
+    }
+
+
 # ── Content Bank ──────────────────────────────────────────────────────
 
 
