@@ -245,6 +245,31 @@ export const FORMATS: Format[] = [
     healthPlatforms: ["tiktok", "facebook", "linkedin"],
   },
   {
+    // Instagram Carousels — the daily "Brutally honest advice to my
+    // younger self (Day N)" carousel (cron/instagram_carousel_pipeline.py,
+    // Render cron `instagram-carousel`, 11:30 UTC). Each run ships ONE
+    // 6-slide 1080×1350 carousel to Alex's main IG via Buffer: a Day-N
+    // title card with a SWIPE → pill, then 5 outlier tweets all >= 6500
+    // likes (recent Apify outliers first, bank top-up). Replaced the
+    // tweet-card fan-out's IG reel leg (paused via IG_TWEET_CARD_FORMAT).
+    // No href yet — there's no detail page for this pipeline, so the
+    // card is a status surface only (the schema treats a missing href as
+    // a deliberate no-op, same as other pages-less formats).
+    id: "instagram-carousels",
+    name: "Instagram Carousels",
+    subtitle: "Day-N outlier carousels",
+    category: "graphics",
+    status: "live",
+    creator: "alex",
+    subgroup: "creation",
+    platforms: [{ id: "instagram", name: "Instagram" }],
+    // The pipeline writes one posts row per carousel under
+    // platform="instagram" (metadata.source='carousel'). With the reel
+    // leg paused, carousels are the only automation writing plain
+    // "instagram" rows, so a 24h count is an accurate health signal.
+    healthPlatforms: ["instagram"],
+  },
+  {
     // Bulk Tweet Cards — the /instagram-2nd pipeline. Picks tweets from
     // the CSV bank, renders quote-card media (PNG/MP4), and queues them
     // to the "alexhighlights2026" Buffer channel (Instagram's 2nd
