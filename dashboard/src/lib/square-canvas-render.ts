@@ -131,7 +131,10 @@ const SWIPE_BADGE = {
   gapAboveBadge: 64, // space between the last text line and the pill
   fontSize: 46,
   letterSpacing: 3,
-  color: "#EE3B2E",
+  // Matches the verified-checkmark blue in Header.png (sampled dominant
+  // pixel), so the pill reads as part of the tweet card rather than an
+  // external CTA color.
+  color: "#4A99EE",
   textColor: "#ffffff",
   label: "SWIPE",
   // Hand-drawn arrow (not the "→" glyph — Libre Franklin's arrow is thin
