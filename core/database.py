@@ -15,8 +15,11 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
+import httpx
+from postgrest.exceptions import APIError
 from supabase import Client, create_client
 
 from core.models import Post
@@ -40,6 +43,61 @@ def get_client() -> Client:
         key = os.environ["SUPABASE_SERVICE_KEY"]
         _client = create_client(url, key)
     return _client
+
+
+# ── Transient-error retry ───────────────────────────────────────────────
+# Supabase occasionally has short outages (e.g. Cloudflare 522 "origin timed
+# out" while the project's pooler restarts). Those surface as a postgrest
+# APIError with a 5xx code, or as an httpx network error. They resolve on
+# their own within a minute — but without a retry, a single blip at the top
+# of a cron run (log_cron_start is the very first DB call) kills the whole
+# job. This helper retries only errors that look transient; real problems
+# (bad schema, RLS, 4xx) still raise immediately on the first attempt.
+#
+# Why not reuse core/retry.py's @with_retry? That decorator is tuned for
+# platform API calls: it retries EVERY exception type (a schema mistake
+# would be retried 3 times before surfacing) and logs the raw exception
+# text, which for these failures is a full-page Cloudflare HTML dump.
+
+
+def _is_transient_db_error(exc: Exception) -> bool:
+    """True if the error is a server-side/network blip worth retrying."""
+    if isinstance(exc, APIError):
+        # APIError.code is PostgREST's error code for real API errors, but
+        # for non-JSON responses (like Cloudflare's HTML error page) the
+        # client stuffs the HTTP status code in — 5xx means "their side."
+        code = str(exc.code or "")
+        return code.isdigit() and int(code) >= 500
+    # Connection failures, timeouts, TLS hiccups — all worth a retry.
+    return isinstance(exc, httpx.HTTPError)
+
+
+def _with_transient_retry(operation, description: str, attempts: int = 3):
+    """Run `operation` (a zero-arg callable), retrying transient DB errors.
+
+    Waits 5s then 15s between attempts. Each failed attempt can itself take
+    ~20s (Cloudflare's connect timeout), so worst case is about 1.5 minutes
+    — acceptable for a cron job, and far better than failing the whole run.
+    """
+    delays = (5, 15)
+    for attempt in range(attempts):
+        try:
+            return operation()
+        except Exception as e:
+            if attempt == attempts - 1 or not _is_transient_db_error(e):
+                raise
+            delay = delays[min(attempt, len(delays) - 1)]
+            # Log the class name, not str(e) — a failed response can embed a
+            # full HTML error page (and raw errors can leak tokens to logs).
+            logger.warning(
+                "%s hit transient DB error (%s); retrying in %ss (attempt %d/%d)",
+                description,
+                type(e).__name__,
+                delay,
+                attempt + 1,
+                attempts,
+            )
+            time.sleep(delay)
 
 
 # ── Posts ────────────────────────────────────────────────────────────────
@@ -642,10 +700,15 @@ def clear_title_fallback_tracker(channel_id: str, video_id: str) -> None:
 def log_cron_start(platform: str, job_type: str) -> str:
     """Log the start of a cron run. Returns the run ID."""
     client = get_client()
-    result = (
-        client.table("cron_runs")
-        .insert({"platform": platform, "job_type": job_type, "status": "running"})
-        .execute()
+    # This is the first DB call of every cron run, so a transient Supabase
+    # outage here would otherwise fail the entire job before it does anything.
+    result = _with_transient_retry(
+        lambda: (
+            client.table("cron_runs")
+            .insert({"platform": platform, "job_type": job_type, "status": "running"})
+            .execute()
+        ),
+        description=f"log_cron_start({platform}/{job_type})",
     )
     if not result.data:
         raise RuntimeError(
@@ -701,6 +764,13 @@ def log_cron_finish(
     # outcome with a DB error and leave operators chasing the wrong cause.
     # A transient Supabase blip should not hide the underlying success/fail.
     try:
-        client.table("cron_runs").update(data).eq("id", run_id).execute()
+        _with_transient_retry(
+            lambda: client.table("cron_runs").update(data).eq("id", run_id).execute(),
+            description=f"log_cron_finish(run_id={run_id})",
+        )
     except Exception as e:
-        logger.error("log_cron_finish failed for run_id=%s: %s", run_id, e)
+        # Log the class name, not str(e) — the message can embed a full HTML
+        # error page or leak credentials from HTTP-library exception text.
+        logger.error(
+            "log_cron_finish failed for run_id=%s: %s", run_id, type(e).__name__
+        )
