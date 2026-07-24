@@ -29,8 +29,15 @@ import { normalizeTweetText } from "@/lib/tweet-normalize";
 import { renderTweetToBuffer } from "@/lib/canvas-render";
 import { renderPngToVideo } from "@/lib/video-render";
 import { renderSquareQuoteCard } from "@/lib/square-canvas-render";
+import { auth } from "@clerk/nextjs/server";
 import { getSupabaseClient } from "@/lib/supabase";
-import { verifyApiAuth } from "@/lib/auth";
+import { verifyApiAuth, isCronRequest } from "@/lib/auth";
+import {
+  rateLimit,
+  tooManyRequests,
+  rateLimitHeaders,
+  type RateLimitResult,
+} from "@/lib/rate-limit";
 import type { TemplateConfig } from "@/lib/template-types";
 import {
   DEFAULT_TEMPLATE_CONFIG,
@@ -60,6 +67,26 @@ async function loadPlatformHeader(platform: string): Promise<Buffer | undefined>
 export async function POST(req: NextRequest) {
   if (!(await verifyApiAuth(req))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Rate limit dashboard users on this expensive route: each request can run
+  // canvas rendering + an ffmpeg video encode (CPU-heavy) plus Storage uploads.
+  // Trusted cron callers (Bearer CRON_SECRET) are EXEMPT — they run controlled
+  // batches and throttling them would stall the pipeline.
+  //
+  // NOTE: this caps a single user's request RATE, not total concurrent encodes
+  // across users (the real CPU bottleneck). A global concurrency cap/queue
+  // around renderPngToVideo is the proper fix and is tracked as a follow-up.
+  let rateLimitResult: RateLimitResult | null = null;
+  if (!isCronRequest(req)) {
+    const { userId } = await auth();
+    rateLimitResult = rateLimit(`content-gen:${userId ?? "unknown"}`, {
+      limit: 10,
+      windowMs: 60_000,
+    });
+    if (!rateLimitResult.allowed) {
+      return tooManyRequests(rateLimitResult);
+    }
   }
 
   try {
@@ -295,7 +322,13 @@ export async function POST(req: NextRequest) {
 
     // Return partial results. Caller decides what constitutes failure
     // (e.g., `errors.length > 0 && generated.length === 0` = total failure).
-    return NextResponse.json({ generated, errors });
+    // Surface RateLimit-* headers on success too (absent for exempt cron
+    // callers) so dashboard clients can see their remaining budget and
+    // self-throttle before hitting a 429.
+    return NextResponse.json(
+      { generated, errors },
+      rateLimitResult ? { headers: rateLimitHeaders(rateLimitResult) } : undefined,
+    );
   } catch (e) {
     console.error("Content-gen generate error:", e);
     return NextResponse.json(

@@ -19,8 +19,17 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/supabase";
+import { rateLimit, getClientIp, tooManyRequests } from "@/lib/rate-limit";
 
 const BUCKET = "media";
+
+// This route is public and unauthenticated, so the client IP is the only
+// identity we can rate-limit on. 60 requests/minute/IP is generous for Buffer's
+// real fetch pattern (a handful of media fetches around each scheduled slot)
+// while still capping an attacker hammering the DB lookup + signed-URL signing.
+// Tune after observing real traffic. See lib/rate-limit.ts for the (spoof-
+// resistant) IP-source rationale.
+const MEDIA_RATE_LIMIT = { limit: 60, windowMs: 60_000 };
 
 // 1-hour TTL for the signed URL we redirect to. Buffer follows the redirect
 // immediately after fetching this endpoint, so a short window is fine — it
@@ -33,6 +42,16 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+
+  // Rate limit by client IP before doing any work (DB lookup + URL signing).
+  // Keyed on the trusted IP from getClientIp() — NOT the spoofable leftmost
+  // X-Forwarded-For — so an attacker can't evade the limit by rotating a forged
+  // header. Denied callers get a 429 with Retry-After.
+  const ip = getClientIp(req);
+  const rl = rateLimit(`media:${ip}`, MEDIA_RATE_LIMIT);
+  if (!rl.allowed) {
+    return tooManyRequests(rl);
+  }
 
   if (!id) {
     return NextResponse.json({ error: "Missing post id" }, { status: 400 });
