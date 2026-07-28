@@ -178,16 +178,20 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.instagram_carousel_pipeline
-    # Instagram carousel pathway — daily "Brutally honest advice to my
-    # younger self (Day N)" carousel: a title card with a SWIPE → pill,
-    # then 5 outlier tweets all >= 6500 likes (recent Apify outliers
-    # first, bank top-up). Renders 1080×1350 quote cards and queues ONE
-    # 6-slide Buffer carousel to Alex's main IG channel. Owns Instagram
-    # now that the tweet-card IG reel leg defaults to 'off'.
+    # Instagram carousel pathway — every-2-days "Brutally honest advice
+    # to my younger self (Day N)" carousel: a title card with a SWIPE →
+    # pill, then 9 outlier tweets all >= 6500 likes (recent Apify
+    # outliers first, bank top-up). Renders 1080×1350 quote cards and
+    # queues ONE 10-slide Buffer carousel (IG's max) to Alex's main IG
+    # channel. Owns Instagram now that the tweet-card IG reel leg
+    # defaults to 'off'.
     # 11:30 UTC — after tweet-reel-recent (11:00) and tweet-reel-bank (11:15)
     # so its dashboard render call doesn't fight their ffmpeg jobs, and
     # before leila-linkedin (11:45).
-    schedule: "30 11 * * *"
+    # Day-of-month */2 = odd days (1st, 3rd, ... 31st) — in 31-day months
+    # the 31st and the 1st run back-to-back; accepted quirk since Day-N
+    # numbering counts shipped carousels, not calendar days.
+    schedule: "30 11 */2 * *"
     envVars:
       - key: SUPABASE_URL
         sync: false
@@ -209,7 +213,7 @@ services:
         sync: false
       - key: CAROUSEL_MIN_LIKES  # optional — default 6500 (every slide)
         sync: false
-      - key: CAROUSEL_TWEET_COUNT  # optional — default 5 tweets after the title
+      - key: CAROUSEL_TWEET_COUNT  # optional — default 9 tweets after the title
         sync: false
       - key: CAROUSEL_TITLE_TEMPLATE  # optional — override the Day-N title text
         sync: false

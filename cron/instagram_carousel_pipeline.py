@@ -1,19 +1,20 @@
-"""Instagram Carousel pipeline — daily cron job.
+"""Instagram Carousel pipeline — every-2-days cron job.
 
 Replaces the paused Instagram reel leg of the tweet-card fan-out (see
-IG_TWEET_CARD_FORMAT in cron/_tweet_card_legs.py) with a daily
+IG_TWEET_CARD_FORMAT in cron/_tweet_card_legs.py) with an every-2-days
 "Brutally honest advice to my younger self (Day N)" carousel:
 
   Slide 1     — TITLE CARD: same 1080×1350 quote-card design, fixed text
                 "Brutally honest advice to my younger self (Day N)" plus a
                 red "SWIPE →" pill (renderSquareQuoteCard's swipeBadge).
                 N advances by one for every carousel that actually ships.
-  Slides 2-6  — five outlier tweets, each >= CAROUSEL_MIN_LIKES likes
+  Slides 2-10 — nine outlier tweets, each >= CAROUSEL_MIN_LIKES likes
                 (default 6500): recent Apify outliers first, topped up
-                from the CSV bank when fewer than five fresh ones exist.
+                from the CSV bank when fewer than nine fresh ones exist.
+                1 + 9 = 10 slides, Instagram's carousel maximum.
 
 The carousel always ships with exactly 1 + CAROUSEL_TWEET_COUNT slides —
-if five unused qualifying tweets can't be found, or any slide fails to
+if nine unused qualifying tweets can't be found, or any slide fails to
 render, the run skips/fails cleanly and nothing is posted (the "Day N"
 series never ships a short set).
 
@@ -31,8 +32,8 @@ rows) + 1. A buffer_error row drops out of that count, so a failed day is
 retried under the same number the next run.
 
 Three cron_runs phases, platform='instagram':
-  Phase 1 — carousel_pick:     day number + 5 outlier tweets
-  Phase 2 — carousel_generate: render title card + 5 tweet cards
+  Phase 1 — carousel_pick:     day number + 9 outlier tweets
+  Phase 2 — carousel_generate: render title card + 9 tweet cards
   Phase 3 — carousel_send:     insert posts row + one Buffer carousel send
 
 Run locally with:  python -m cron.instagram_carousel_pipeline
@@ -230,7 +231,8 @@ def main() -> None:
     # One likes bar for BOTH pathways — the operator wants every slide to be
     # a >= 6500-like proven performer, regardless of where it came from.
     min_likes = int(os.environ.get("CAROUSEL_MIN_LIKES", "6500"))
-    tweet_count = int(os.environ.get("CAROUSEL_TWEET_COUNT", "5"))
+    # 9 tweets + the title card = 10 slides, Instagram's carousel maximum.
+    tweet_count = int(os.environ.get("CAROUSEL_TWEET_COUNT", "9"))
     max_items = int(os.environ.get("CAROUSEL_MAX_ITEMS", "15"))
     title_template = os.environ.get("CAROUSEL_TITLE_TEMPLATE", DEFAULT_TITLE_TEMPLATE)
     # Mirrors YOUTUBE_STUDIO_DRY_RUN: pick + render for real, log the
@@ -244,7 +246,7 @@ def main() -> None:
         sys.exit(1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # PHASE 1: Day number + pick 5 outlier tweets
+    # PHASE 1: Day number + pick the outlier tweets
     # ─────────────────────────────────────────────────────────────────────
     run_id = log_cron_start(platform="instagram", job_type="carousel_pick")
     try:

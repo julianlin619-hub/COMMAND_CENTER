@@ -25,7 +25,7 @@ import {
   parseCreatorParam,
   type CommandCenterCategory,
 } from "@/lib/command-center-config";
-import { fetchHealthCounts, buildHealthMap } from "@/lib/format-health";
+import { fetchHealthTimestamps, buildHealthMap } from "@/lib/format-health";
 import { getSupabaseClient } from "@/lib/supabase";
 import { PageHeader } from "@/components/command-center/page-header";
 import { CategorySection } from "@/components/command-center/category-section";
@@ -60,8 +60,8 @@ export default async function DashboardHome({ searchParams }: DashboardHomeProps
   // the map over `visibleFormats` only (rather than FORMATS) so we
   // don't pay to evaluate the other creator's cards on every load.
   const supabase = getSupabaseClient();
-  const counts = await fetchHealthCounts(supabase);
-  const healthMap = buildHealthMap(visibleFormats, counts);
+  const timestamps = await fetchHealthTimestamps(supabase, visibleFormats);
+  const healthMap = buildHealthMap(visibleFormats, timestamps);
 
   const byCategory: Record<CommandCenterCategory, typeof FORMATS> = {
     short: [],

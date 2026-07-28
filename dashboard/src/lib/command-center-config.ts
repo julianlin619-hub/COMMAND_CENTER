@@ -93,12 +93,17 @@ export interface Format {
   // (Bulk Tweet Cards, Scheduling) so flipping `status` back to "live"
   // immediately surfaces real counts.
   healthPlatforms?: string[];
+  // How many hours of post history count as "healthy" for this format.
+  // Defaults to 24 in lib/format-health.ts — only set this on formats
+  // whose cron runs less than daily (e.g. the every-2-days carousel
+  // needs 48, or its card would read "failing" every off-day).
+  healthWindowHours?: number;
 }
 
 // Card health, derived at request time on the home page. Driven by:
 //   - `paused` when `format.status === "paused"` (operator-disabled).
 //   - `healthy` when ≥ 1 post on any of the format's `healthPlatforms`
-//     in the last 24h.
+//     within its health window (`healthWindowHours`, default 24h).
 //   - `failing` otherwise (live but nothing has gone out).
 // Exported here so the health helpers (lib/format-health.ts) and the
 // FormatCard pill share one definition.
@@ -245,12 +250,13 @@ export const FORMATS: Format[] = [
     healthPlatforms: ["tiktok", "facebook", "linkedin"],
   },
   {
-    // Instagram Carousels — the daily "Brutally honest advice to my
-    // younger self (Day N)" carousel (cron/instagram_carousel_pipeline.py,
-    // Render cron `instagram-carousel`, 11:30 UTC). Each run ships ONE
-    // 6-slide 1080×1350 carousel to Alex's main IG via Buffer: a Day-N
-    // title card with a SWIPE → pill, then 5 outlier tweets all >= 6500
-    // likes (recent Apify outliers first, bank top-up). Replaced the
+    // Instagram Carousels — the every-2-days "Brutally honest advice to
+    // my younger self (Day N)" carousel (cron/instagram_carousel_pipeline.py,
+    // Render cron `instagram-carousel`, 11:30 UTC on odd days of the
+    // month). Each run ships ONE 10-slide 1080×1350 carousel to Alex's
+    // main IG via Buffer: a Day-N title card with a SWIPE → pill, then
+    // 9 outlier tweets all >= 6500 likes (recent Apify outliers first,
+    // bank top-up). Replaced the
     // tweet-card fan-out's IG reel leg (paused via IG_TWEET_CARD_FORMAT).
     // No href yet — there's no detail page for this pipeline, so the
     // card is a status surface only (the schema treats a missing href as
@@ -266,8 +272,10 @@ export const FORMATS: Format[] = [
     // The pipeline writes one posts row per carousel under
     // platform="instagram" (metadata.source='carousel'). With the reel
     // leg paused, carousels are the only automation writing plain
-    // "instagram" rows, so a 24h count is an accurate health signal.
+    // "instagram" rows. 48h window because the cron runs every 2 days —
+    // a 24h count would flag "failing" on every off-day.
     healthPlatforms: ["instagram"],
+    healthWindowHours: 48,
   },
   {
     // Bulk Tweet Cards — the /instagram-2nd pipeline. Picks tweets from

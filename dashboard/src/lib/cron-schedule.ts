@@ -30,7 +30,13 @@ export const CRON_SCHEDULES: Record<string, CronScheduleInfo> = {
   // trigger in .github/workflows/ig-pipeline.yml is uncommented.
   instagram_2nd: { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT", paused: true },
   facebook:      { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
-  instagram:     { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
+  // Instagram = the every-2-days carousel cron (render.yaml
+  // `instagram-carousel`). Day-of-month */2 = odd days only. NOTE:
+  // getNextRun() below ignores the day-of-month field, so a countdown
+  // rendered from this entry would be wrong on off-days — no page
+  // currently shows one for "instagram"; teach getNextRun about
+  // day-of-month before adding it.
+  instagram:     { schedule: "30 11 */2 * *", description: "Every 2 days at 4:30 AM PDT" },
   // Paused 2026-05-02 — re-enable when render.yaml linkedin-pipeline
   // schedule is restored to "0 12 * * *".
   linkedin:      { schedule: "0 12 * * *",  description: "Daily at 5:00 AM PDT", paused: true },
