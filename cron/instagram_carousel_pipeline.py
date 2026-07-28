@@ -11,7 +11,9 @@ IG_TWEET_CARD_FORMAT in cron/_tweet_card_legs.py) with an every-2-days
   Slides 2-10 — nine outlier tweets, each >= CAROUSEL_MIN_LIKES likes
                 (default 6500): recent Apify outliers first, topped up
                 from the CSV bank when fewer than nine fresh ones exist.
-                1 + 9 = 10 slides, Instagram's carousel maximum.
+                1 + 9 = 10 slides, Instagram's carousel maximum. Slides
+                are always ordered most likes -> least likes, regardless
+                of which pathway a tweet came from.
 
 The carousel always ships with exactly 1 + CAROUSEL_TWEET_COUNT slides —
 if nine unused qualifying tweets can't be found, or any slide fails to
@@ -135,9 +137,12 @@ def _pick_carousel_tweets(
       - text not a fingerprint-duplicate of a tweet picked earlier this run.
 
     Returns dicts of {'tweet_id', 'text', 'normalized', 'favorite_count',
-    'source': 'outlier'|'bank'}, Apify picks first (newest-first), then
-    bank picks. May return fewer than `count` — the caller decides that a
-    short set skips the run.
+    'source': 'outlier'|'bank'}, sorted by favorite_count DESCENDING —
+    the returned order IS the slide order, and the operator wants the
+    carousel to open on its strongest tweet. Selection precedence is
+    still Apify-first-then-bank; only the final ordering is by likes.
+    May return fewer than `count` — the caller decides that a short set
+    skips the run.
     """
     picked: list[dict] = []
     seen_fps: set[str] = set()
@@ -176,7 +181,7 @@ def _pick_carousel_tweets(
         min_favorites=min_likes,
     ):
         if len(picked) >= count:
-            return picked
+            break
         consider(str(tweet["id"]), tweet["text"], tweet.get("like_count", 0), "outlier")
 
     if len(picked) < count:
@@ -198,6 +203,11 @@ def _pick_carousel_tweets(
                 "bank",
             )
 
+    # Rank the slides most-liked first. This runs on every return path so
+    # the requirement holds even for an all-Apify pick that never touched
+    # the bank. Python's sort is stable, so equal-likes tweets keep their
+    # Apify-before-bank pick order.
+    picked.sort(key=lambda t: t["favorite_count"], reverse=True)
     return picked
 
 

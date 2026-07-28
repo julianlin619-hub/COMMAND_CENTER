@@ -144,6 +144,19 @@ def test_pick_applies_all_three_dedup_gates(monkeypatch):
     assert [t["tweet_id"] for t in picked] == ["a3", "a5"]
 
 
+def test_pick_ranks_slides_by_likes_descending(monkeypatch):
+    # The returned order IS the slide order: most-liked first, across
+    # BOTH pathways — a huge bank tweet outranks a smaller Apify one
+    # even though Apify wins at selection time.
+    picked = _pick(
+        monkeypatch,
+        apify=[_apify("a1", "Recent one.", likes=8000), _apify("a2", "Recent two.", likes=12000)],
+        bank=[_bank("b1", "Bank one.", likes=20000), _bank("b2", "Bank two.", likes=9000), _bank("b3", "Bank three.", likes=7000)],
+    )
+    assert [t["tweet_id"] for t in picked] == ["b1", "a2", "b2", "a1", "b3"]
+    assert [t["favorite_count"] for t in picked] == [20000, 12000, 9000, 8000, 7000]
+
+
 def test_pick_returns_short_set_when_exhausted(monkeypatch):
     # Caller (main) treats < count as "skip the run" — the helper just
     # reports what it found.
