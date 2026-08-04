@@ -178,7 +178,7 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.instagram_carousel_pipeline
-    # Instagram carousel pathway — every-2-days "Brutally honest advice
+    # Instagram carousel pathway — daily "Brutally honest advice
     # to my younger self (Day N)" carousel: a title card with a SWIPE →
     # pill, then 9 outlier tweets all >= 6500 likes (recent Apify
     # outliers first, bank top-up). Renders 1080×1350 quote cards and
@@ -188,10 +188,9 @@ services:
     # 11:30 UTC — after tweet-reel-recent (11:00) and tweet-reel-bank (11:15)
     # so its dashboard render call doesn't fight their ffmpeg jobs, and
     # before leila-linkedin (11:45).
-    # Day-of-month */2 = odd days (1st, 3rd, ... 31st) — in 31-day months
-    # the 31st and the 1st run back-to-back; accepted quirk since Day-N
-    # numbering counts shipped carousels, not calendar days.
-    schedule: "30 11 */2 * *"
+    # Day-N numbering counts shipped carousels, not calendar days, so the
+    # counter advances one per successful run regardless of cadence.
+    schedule: "30 11 * * *"  # Daily at 11:30 AM UTC = 4:30 AM PDT
     envVars:
       - key: SUPABASE_URL
         sync: false

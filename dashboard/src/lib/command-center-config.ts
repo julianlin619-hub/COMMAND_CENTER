@@ -95,8 +95,8 @@ export interface Format {
   healthPlatforms?: string[];
   // How many hours of post history count as "healthy" for this format.
   // Defaults to 24 in lib/format-health.ts — only set this on formats
-  // whose cron runs less than daily (e.g. the every-2-days carousel
-  // needs 48, or its card would read "failing" every off-day).
+  // whose cron runs less than daily (e.g. a cron that runs every 2 days
+  // needs 48, or its card would read "failing" on every off-day).
   healthWindowHours?: number;
 }
 
@@ -250,10 +250,10 @@ export const FORMATS: Format[] = [
     healthPlatforms: ["tiktok", "facebook", "linkedin"],
   },
   {
-    // Instagram Carousels — the every-2-days "Brutally honest advice to
+    // Instagram Carousels — the daily "Brutally honest advice to
     // my younger self (Day N)" carousel (cron/instagram_carousel_pipeline.py,
-    // Render cron `instagram-carousel`, 11:30 UTC on odd days of the
-    // month). Each run ships ONE 10-slide 1080×1350 carousel to Alex's
+    // Render cron `instagram-carousel`, 11:30 UTC daily). Each run ships
+    // ONE 10-slide 1080×1350 carousel to Alex's
     // main IG via Buffer: a Day-N title card with a SWIPE → pill, then
     // 9 outlier tweets all >= 6500 likes (recent Apify outliers first,
     // bank top-up). Replaced the
@@ -272,10 +272,9 @@ export const FORMATS: Format[] = [
     // The pipeline writes one posts row per carousel under
     // platform="instagram" (metadata.source='carousel'). With the reel
     // leg paused, carousels are the only automation writing plain
-    // "instagram" rows. 48h window because the cron runs every 2 days —
-    // a 24h count would flag "failing" on every off-day.
+    // "instagram" rows. Daily cadence, so the default 24h health window
+    // applies — a fresh carousel is expected every day.
     healthPlatforms: ["instagram"],
-    healthWindowHours: 48,
   },
   {
     // Bulk Tweet Cards — the /instagram-2nd pipeline. Picks tweets from
