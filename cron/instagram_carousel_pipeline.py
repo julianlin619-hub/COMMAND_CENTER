@@ -1,7 +1,7 @@
-"""Instagram Carousel pipeline — every-2-days cron job.
+"""Instagram Carousel pipeline — daily cron job.
 
 Replaces the paused Instagram reel leg of the tweet-card fan-out (see
-IG_TWEET_CARD_FORMAT in cron/_tweet_card_legs.py) with an every-2-days
+IG_TWEET_CARD_FORMAT in cron/_tweet_card_legs.py) with a daily
 "Brutally honest advice to my younger self (Day N)" carousel:
 
   Slide 1     — TITLE CARD: same 1080×1350 quote-card design, fixed text
