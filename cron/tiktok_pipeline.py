@@ -1,75 +1,57 @@
 """Tweet Card Outlier pipeline — automated cron job.
 
 Runs daily at 11:00 UTC (4:00 AM PDT) to scrape viral @AlexHormozi tweets
-and fan them out as quote-card content across four platform legs:
+and fan them out as quote-card content across the platform legs:
 
-  * TikTok    — 1080×1920 MP4 video
   * Facebook  — 1080×1080 PNG image (Alex's square template)
-  * LinkedIn  — 1080×1080 PNG image (LinkedIn color overrides; reuses
-                the Facebook render bytes — no separate render call)
-  * Instagram — 1080×1440 portrait PNG image (own template row; rendered
-                independently from Facebook so the IG height can diverge
-                without affecting FB/LI)
+  * LinkedIn  — 1080×1080 PNG image (reuses the Facebook render bytes —
+                no separate render call)
+  * Instagram — paused by default (IG_TWEET_CARD_FORMAT='off'); the
+                standalone carousel cron owns Instagram now. Setting
+                'image' restores the 1080×1440 portrait PNG feed post.
 
-Before this consolidation, the same source tweets were processed by three
-separate crons running on a stagger (TikTok 11:00, Facebook 11:30,
-LinkedIn 12:00) where Facebook and LinkedIn re-read TikTok's database
-rows from the previous 24h. That chain was fragile — a metadata.source
-filter bug on the FB/LI hop could silently break the entire fan-out.
-We now run the whole flow in-process so the platforms can't get out of
-sync, and so we can reason about partial failures in one place.
+The TikTok leg (1080×1920 MP4 reel, formerly the primary leg) was
+RETIRED in Aug 2026 — the operator stopped publishing to TikTok.
+Facebook is the anchor leg now: Phase-2 dedup keys on facebook posts
+rows, and the run aborts if the Facebook render produces nothing
+(LinkedIn reuses the FB bytes, so without them nothing can ship at
+all). Restore the leg from git history if TikTok ever comes back.
 
-Three cron_runs phases are preserved so the dashboard's getLastRun()
-query keeps working without schema changes:
+cron_runs.platform stays "tiktok" and the three job_type phases keep
+their historical names — that's the orchestrator's identity, and the
+dashboard's getLastRun() query and the run history key on it. Renaming
+would orphan the history without buying anything. Same reason the
+module keeps its tiktok_pipeline name and render.yaml keeps the
+tweet-reel-recent service name.
 
   Phase 1 — content_fetch: scrape outlier tweets from X via Apify
-  Phase 2 — content_generate: render TikTok MP4 + FB PNG + IG PNG
-  Phase 3 — buffer_send: TikTok → FB → LI → IG fan-out per tweet
-
-cron_runs.platform stays "tiktok" because it's the orchestrator's
-identity, not the leg. Per-leg outcomes land in the `posts` table (one
-row per platform per tweet shipped) — there is no metadata column on
-cron_runs (verified in supabase/migrations/20260412105430_initial_schema.sql).
-The Phase-3 cron_runs.error_message string summarises non-fatal FB/LI/IG
-leg failures.
+  Phase 2 — content_generate: render FB PNG (+ IG PNG in 'image' mode)
+  Phase 3 — buffer_send: FB → LI → IG fan-out per tweet
 
 Failure rules:
   - Phase 1 fail (Apify) — abort the run.
-  - Phase 2 fail for TikTok render — abort. We can't ship the FB/LI/IG
-    legs on their own because dedup ties them to the TikTok caption.
-  - Phase 2 fail for FB render — log a warning; FB+LI legs skip per
-    tweet (LI reuses FB bytes). IG leg still ships if its render
-    succeeded. TikTok publishes go ahead.
+  - Phase 2 fail for FB render — abort. LinkedIn reuses the FB bytes
+    and dedup anchors on facebook, so there is nothing to ship.
   - Phase 2 fail for IG render — log a warning; only the IG leg skips
-    per tweet. FB/LI legs still ship. TikTok publishes go ahead.
-  - Phase 3 fail per tweet (TikTok) — increment error counter; continue.
-  - Phase 3 FB/LI/IG leg failure — recorded in posts table (buffer_error
-    status releases the row from the dedup index for retry); counts go
-    into the run's error_message summary.
+    per tweet. FB/LI legs still ship.
+  - Phase 3 leg failure — recorded in posts table (buffer_error status
+    releases the row from the dedup index for retry); counts go into
+    the run's error_message summary.
 """
 
 import logging
 import os
 import sys
 
-from core.buffer import get_channel_id, send_to_buffer
-from core.content_gen_client import generate_content
 from core.database import (
-    insert_post,
     log_cron_finish,
     log_cron_start,
     post_caption_exists,
-    record_buffer_handoff,
-    update_post,
 )
 from core.env_diag import log_env_diagnostics
-from core.media import build_proxy_url
-from core.models import Post
 from core.text_utils import normalize_tweet_text
 from core.content_sources import fetch_apify_tweets
 from cron._tweet_card_legs import (
-    BUFFER_CAPTION,
-    _is_unique_violation,
     fanout_extra_legs_for_one_tweet,
     instagram_card_format,
     render_extra_platforms,
@@ -85,8 +67,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Tag the row's metadata so future audits can tell outlier rows from
-# bank rows. Nothing reads this downstream anymore (the chain to FB/LI
-# is gone) but it's cheap to keep, and the dashboard filters on it.
+# bank rows. Nothing reads this downstream anymore but it's cheap to
+# keep, and the dashboard filters on it.
 SOURCE_TAG = "outlier"
 
 
@@ -142,202 +124,114 @@ def main():
         return
 
     # ─────────────────────────────────────────────────────────────────────
-    # PHASE 2 (in-memory): Normalize + per-platform TikTok dedup
+    # PHASE 2 (in-memory): Normalize + Facebook dedup
     # ─────────────────────────────────────────────────────────────────────
-    # We dedup against TikTok here because TikTok is the "primary" leg —
-    # if its caption is already shipped, there's nothing for the fan-out
-    # to anchor on. FB/LI legs do their own per-platform dedup later
-    # inside the fan-out helper (post_caption_exists call there).
+    # We dedup against Facebook because it's the anchor leg now that the
+    # TikTok leg is retired — LinkedIn reuses the FB bytes, so a caption
+    # already shipped to FB has nothing left to anchor on. LI/IG legs do
+    # their own per-platform dedup later inside the fan-out helper
+    # (post_caption_exists call there). Tweets that shipped to TikTok in
+    # the past but whose FB leg failed or skipped will surface again here
+    # — that's intentional (FB never got them).
     new_tweets = []
     for tweet in tweets:
         normalized = normalize_tweet_text(tweet["text"])
-        if post_caption_exists("tiktok", normalized):
-            logger.debug("Skipping duplicate (tiktok): %s...", normalized[:50])
+        if post_caption_exists("facebook", normalized):
+            logger.debug("Skipping duplicate (facebook): %s...", normalized[:50])
             continue
         tweet["normalized"] = normalized
         new_tweets.append(tweet)
 
     logger.info(
-        "Phase 2: %d new tweets after TikTok dedup (%d filtered)",
+        "Phase 2: %d new tweets after Facebook dedup (%d filtered)",
         len(new_tweets), len(tweets) - len(new_tweets),
     )
 
     if not new_tweets:
-        logger.info("All tweets already scheduled on TikTok — nothing to generate. Exiting.")
+        logger.info("All tweets already scheduled on Facebook — nothing to generate. Exiting.")
         return
 
     # ─────────────────────────────────────────────────────────────────────
     # PHASE 3: Generate content via dashboard API
-    #   3a. TikTok MP4s   (fatal on failure — nothing to anchor the fan-out)
-    #   3b. Facebook PNGs (1080×1080, also shipped to LI; non-fatal —
-    #                      empty map skips FB + LI legs per tweet)
-    #   3c. Instagram PNGs (1080×1440 portrait, IG-only; non-fatal —
-    #                      empty map skips just the IG leg per tweet)
+    #   Facebook PNGs (1080×1080, also shipped to LI; fatal on an empty
+    #   result — nothing can ship without them) and, in 'image' mode
+    #   only, Instagram PNGs (1080×1440 portrait; non-fatal — empty map
+    #   skips just the IG leg per tweet).
     # ─────────────────────────────────────────────────────────────────────
     run_id = log_cron_start(platform="tiktok", job_type="content_generate")
     try:
-        # 3a. TikTok render — same call shape as the legacy pipeline.
-        data = generate_content(
-            dashboard_url=dashboard_url,
-            cron_secret=cron_secret,
-            tweets=[{"id": t["id"], "text": t["text"]} for t in new_tweets],
-            platform="tiktok",
-        )
-        if data.get("error"):
-            raise RuntimeError(data["error"])
-
-        for i, err in enumerate(data.get("errors", []) or []):
-            logger.warning("  tiktok render error[%d]: %s", i, err)
-
-        generated = data.get("generated", []) or []
-        if not generated:
-            raise RuntimeError(
-                f"TikTok render returned no items (API errors: {data.get('errors', [])})"
-            )
-        logger.info("Phase 3a: generated %d TikTok videos", len(generated))
-
-        # 3b + 3c. Facebook render (also reused for LinkedIn) + Instagram
-        # render (portrait, IG-only). One call per platform inside the
-        # helper. The helper never raises; a failed render for either
-        # platform yields an empty sub-dict and the fan-out skips that
-        # platform's per-tweet leg.
         extra_paths = render_extra_platforms(
             dashboard_url=dashboard_url,
             cron_secret=cron_secret,
             tweets=new_tweets,
         )
+        # render_extra_platforms never raises (per-platform best-effort),
+        # so promote an empty Facebook map to a phase failure here — FB is
+        # the anchor render and LI ships its bytes.
+        if not extra_paths["facebook"]:
+            raise RuntimeError("Facebook render returned no images — nothing to ship")
+        logger.info("Phase 3: rendered %d Facebook images", len(extra_paths["facebook"]))
 
-        # Phase succeeded as long as TikTok rendered something — the FB
-        # and IG renders are both best-effort. Surface their counts in
-        # the success record for observability (see _render_summary).
         log_cron_finish(
             run_id,
             status="success",
-            posts_processed=len(generated),
-            error_message=_render_summary(extra_paths) if _render_summary(extra_paths) else None,
+            posts_processed=len(extra_paths["facebook"]),
+            error_message=_render_summary(extra_paths),
         )
     except Exception as e:
         logger.error("Phase 3 failed (generate): %s", e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
 
-    if not generated:
-        logger.info("No videos generated — nothing to send. Exiting.")
-        return
-
     # ─────────────────────────────────────────────────────────────────────
-    # PHASE 4: Send to Buffer's TikTok queue, then fan out to FB + LI
+    # PHASE 4: Fan out to FB + LI (+ IG in 'image' mode) via Buffer
     # ─────────────────────────────────────────────────────────────────────
     run_id = log_cron_start(platform="tiktok", job_type="buffer_send")
-    sent_count = 0
+    sent_count = 0   # tweets where at least one leg shipped
     error_count = 0
     leg_results: list[dict] = []
 
-    # Resolve all three channel IDs up-front. The TikTok channel is
-    # required; FB and LI failures degrade gracefully (per-leg skip).
-    try:
-        tiktok_channel_id = get_channel_id(service="tiktok")
-    except Exception as e:
-        logger.error("Phase 4 failed — could not resolve TikTok channel: %s", e, exc_info=True)
-        log_cron_finish(run_id, status="failed", error_message=str(e))
-        sys.exit(1)
-
+    # Channel lookups degrade gracefully: a None channel id means that
+    # leg is skipped for the whole run (skipped_no_channel).
     fb_channel_id, li_channel_id, ig_channel_id = resolve_extra_channel_ids()
 
-    for item in generated:
-        storage_path = item["storagePath"]
-        caption = item["text"]
+    for tweet in new_tweets:
+        tweet_id = str(tweet["id"])
+        # The normalized text is byte-identical to what the render API
+        # stamped on the images and returned as `text` (core.text_utils
+        # mirrors the dashboard's normalizeTweetText), so dedup keys stay
+        # consistent with rows written before the TikTok-leg removal.
+        caption = tweet["normalized"]
 
         if not caption or not caption.strip():
-            logger.warning("Skipping tweet with empty caption (storage: %s)", storage_path)
+            logger.warning("Skipping tweet %s with empty caption", tweet_id)
             error_count += 1
             continue
 
-        # ─── TIKTOK LEG (insert first, then send) ────────────────────────
-        # Insert-before-send closes the race window where two concurrent
-        # runs could both queue the same caption in Buffer. The partial
-        # unique index from migration 004 arbitrates: only one insert
-        # wins. On Buffer failure we flip to buffer_error so the row
-        # releases from the dedup index for retry.
-        post = Post(
-            platform="tiktok",
-            status="sent_to_buffer",
-            media_type="video",
-            media_urls=[storage_path],
-            caption=caption,
-            metadata={"source": SOURCE_TAG},
-        )
-        try:
-            post_id = insert_post(post)
-        except Exception as e:
-            if _is_unique_violation(e):
-                logger.info("Skipping duplicate (DB constraint): %s...", caption[:50])
-                continue
-            logger.error("TikTok insert failed for %s: %s", storage_path, e, exc_info=True)
-            error_count += 1
-            continue
+        fb_path = extra_paths["facebook"].get(tweet_id)
+        ig_path = extra_paths["instagram"].get(tweet_id)
 
-        try:
-            video_url = build_proxy_url(post_id)
-            buffer_post_id = send_to_buffer(
-                tiktok_channel_id, BUFFER_CAPTION, video_url, media_type="video",
-            )
-            # Persist the replay payload so buffer_reconcile can re-send this
-            # exact post if Buffer later fails to publish it.
-            record_buffer_handoff(
-                post_id, buffer_post_id,
-                channel_id=tiktok_channel_id,
-                body=BUFFER_CAPTION,
-                media_type="video",
-                base_metadata={"source": SOURCE_TAG},
-            )
-            sent_count += 1
-            logger.info("[tiktok] sent to Buffer: %s (Buffer post %s)", storage_path, buffer_post_id)
-        except Exception as e:
-            logger.error("[tiktok] Buffer send failed for %s: %s", storage_path, e, exc_info=True)
-            try:
-                update_post(post_id, status="buffer_error", error_message=str(e)[:500])
-            except Exception as db_err:
-                logger.error("[tiktok] also failed to mark buffer_error: %s", db_err)
-            error_count += 1
-            # Skip the fan-out for this tweet — we don't want FB/LI to
-            # ship a tweet whose TikTok leg blew up. Next-day run will
-            # retry the whole tweet.
-            continue
-
-        # ─── FACEBOOK + LINKEDIN + INSTAGRAM FAN-OUT ─────────────────────
-        # Look up the Facebook + Instagram storage paths from the Phase-3
-        # result. `id` here is the Apify tweet id we passed into
-        # generate_content. LinkedIn reuses the Facebook PNG; Instagram
-        # has its own 1080×1440 render with its own storage path. Each
-        # `.get()` returns None if that platform's render dropped this
-        # tweet, and the fan-out skips that leg individually.
-        #
         # The whole fan-out call is wrapped in try/except because
         # `_send_or_skip` calls `post_caption_exists()` (a bare Supabase
         # query) BEFORE the protected `send_leg()` body — a transient
-        # Supabase blip on any of the three legs would otherwise unwind
-        # out of the for-loop and skip `log_cron_finish` below, leaving
+        # Supabase blip on any leg would otherwise unwind out of the
+        # for-loop and skip `log_cron_finish` below, leaving
         # `cron_runs.status='running'` permanently. Catching here lets
         # the loop continue to the next tweet and lets the final
         # `log_cron_finish` always run.
-        tweet_id = str(item.get("id", ""))
-        fb_path = extra_paths["facebook"].get(tweet_id)
-        ig_path = extra_paths["instagram"].get(tweet_id)
         try:
             leg_result = fanout_extra_legs_for_one_tweet(
                 tweet_caption=caption,
                 fb_storage_path=fb_path,
                 ig_storage_path=ig_path,
-                # This tweet's TikTok MP4 path — reused for the IG reel when
-                # IG_TWEET_CARD_FORMAT='video' (the default).
-                tiktok_storage_path=storage_path,
                 fb_channel_id=fb_channel_id,
                 li_channel_id=li_channel_id,
                 ig_channel_id=ig_channel_id,
                 source_tag=SOURCE_TAG,
             )
             leg_results.append(leg_result)
+            if any(r["status"] == "sent" for r in leg_result.values()):
+                sent_count += 1
         except Exception as e:
             logger.error(
                 "fan-out raised for tweet %s (continuing): %s",
@@ -345,13 +239,13 @@ def main():
             )
             error_count += 1
 
-    # Cron-run status mirrors today's TikTok-only rule: success if any
-    # TikTok tweet shipped. FB/LI leg failures surface via error_message
-    # and via posts.status='buffer_error' rows — not by failing the run.
+    # Run status: success if any tweet shipped at least one leg. Per-leg
+    # failures surface via error_message and via posts.status='buffer_error'
+    # rows — not by failing the run.
     final_status = "success" if sent_count > 0 else "failed"
     error_msg_parts: list[str] = []
     if error_count > 0:
-        error_msg_parts.append(f"tiktok items failed: {error_count}")
+        error_msg_parts.append(f"fan-out errors: {error_count}")
     leg_summary = summarize_leg_failures(leg_results)
     if leg_summary:
         error_msg_parts.append(leg_summary)
@@ -362,35 +256,24 @@ def main():
         posts_processed=sent_count, error_message=error_msg,
     )
     logger.info(
-        "Phase 4 complete: %d tiktok sent, %d tiktok errors, fan-out summary: %s",
+        "Phase 4 complete: %d tweets shipped, %d errors, fan-out summary: %s",
         sent_count, error_count, leg_summary or "all legs OK",
     )
 
 
 def _render_summary(extra_paths: dict[str, dict[str, str]]) -> str | None:
-    """Compact one-line description of the FB + IG render outcome.
+    """Compact one-line note when the optional IG render came back empty.
 
-    Used as the Phase-3 error_message field. Helps operators tell
-    "render dropped the leg" from "render succeeded but Buffer rejected
-    everything." Both FB and IG render independently now (LI still
-    reuses FB bytes), so we report whichever one came back empty —
-    or both, if both failed. An empty result for either platform
-    short-circuits that platform's downstream leg (and LI's, if FB
-    was the empty one).
-
-    Returns None when both renders produced at least one image.
+    Used as the Phase-3 error_message field. A missing Facebook render is
+    fatal upstream (the phase raises before this runs on success), so the
+    only best-effort render left to report on is Instagram — and only in
+    'image' mode; in the default 'off' mode an empty IG dict is expected,
+    not a failure worth flagging. Returns None when there's nothing to
+    flag so the success record stays clean.
     """
-    missing: list[str] = []
-    if not extra_paths.get("facebook"):
-        missing.append("facebook")
-    # An IG render only happens in 'image' mode — in 'video' mode the leg
-    # reuses the TikTok MP4 and in 'off' mode it's paused, so an empty IG
-    # dict is expected there, not a failure worth flagging.
     if instagram_card_format() == "image" and not extra_paths.get("instagram"):
-        missing.append("instagram")
-    if not missing:
-        return None
-    return "no " + " or ".join(missing) + " renders"
+        return "no instagram renders"
+    return None
 
 
 if __name__ == "__main__":

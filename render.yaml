@@ -112,8 +112,10 @@ services:
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.tiktok_pipeline
     # Tweet Card Outlier pathway — scrapes outlier tweets via Apify,
-    # renders TikTok MP4 + Facebook PNG + LinkedIn PNG in-process, fans
-    # out to all three Buffer channels in a single run.
+    # renders Facebook PNG (reused for LinkedIn) in-process and fans out
+    # to the FB + LI Buffer channels in a single run. The TikTok MP4 leg
+    # was retired Aug 2026 — service + module names keep the historical
+    # tiktok identity so the dashboard's cron history stays attached.
     schedule: "0 11 * * *"  # Daily at 11 AM UTC = 4 AM PDT
     envVars:
       - key: SUPABASE_URL
@@ -136,9 +138,10 @@ services:
         sync: false
       - key: TIKTOK_MAX_ITEMS  # optional — default 30
         sync: false
-      # optional — 'off' (default) | 'video' | 'image'. The IG tweet-card
-      # leg is paused ('off') in favour of the instagram-carousel cron;
-      # set 'video' to restore the old MP4-reel cross-post.
+      # optional — 'off' (default) | 'image'. The IG tweet-card leg is
+      # paused ('off') in favour of the instagram-carousel cron; set
+      # 'image' to restore the portrait feed-post cross-post. ('video'
+      # was removed with the TikTok leg — no MP4 renders anymore.)
       - key: IG_TWEET_CARD_FORMAT
         sync: false
 
@@ -147,10 +150,11 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.tiktok_bank_pipeline
-    # Tweet Card Bank pathway — picks 1 random bank tweet, renders MP4 +
-    # FB PNG + LI PNG in-process, fans out to all three Buffer channels.
-    # 15 min after tiktok-pipeline (11:00) so the two don't drive
-    # concurrent ffmpeg jobs on the starter-plan dashboard.
+    # Tweet Card Bank pathway — picks 1 random bank tweet, renders the
+    # FB PNG (reused for LinkedIn) in-process and fans out to the FB +
+    # LI Buffer channels. The TikTok MP4 leg was retired Aug 2026.
+    # 15 min after tweet-reel-recent (11:00) so the two don't drive
+    # concurrent render jobs on the starter-plan dashboard.
     schedule: "15 11 * * *"  # Daily at 11:15 AM UTC = 4:15 AM PDT
     envVars:
       - key: SUPABASE_URL
@@ -169,7 +173,7 @@ services:
         sync: false
       - key: TIKTOK_BANK_MIN_LIKES  # optional — default 6500
         sync: false
-      # optional — 'off' (default) | 'video' | 'image'. See tweet-reel-recent.
+      # optional — 'off' (default) | 'image'. See tweet-reel-recent.
       - key: IG_TWEET_CARD_FORMAT
         sync: false
 
@@ -344,8 +348,8 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.linkedin_leila_cron
-    # Daily at 11:45 UTC = 4:45 AM PDT. 45 min after tiktok-pipeline so
-    # the Leila quote-card render doesn't fight the Alex fan-out's three
+    # Daily at 11:45 UTC = 4:45 AM PDT. 45 min after tweet-reel-recent so
+    # the Leila quote-card render doesn't fight the Alex fan-out's
     # back-to-back renders for dashboard resources.
     schedule: "45 11 * * *"
     envVars:

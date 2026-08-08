@@ -99,6 +99,12 @@ def _can_resend(post: dict, replay: dict | None) -> bool:
     adapter (need the Buffer channel id in the replay). Posts created before
     replay payloads were persisted have no `buffer_replay` and can't be retried.
     """
+    # TikTok publishing was retired in Aug 2026 — never re-send a failed
+    # tiktok post back to the TikTok channel. Returning False routes the
+    # row to the terminal buffer_error path so it stays visible in the
+    # dashboard instead of quietly re-queueing on a dead platform.
+    if post.get("platform") == "tiktok":
+        return False
     if replay and replay.get("media_type") and (post.get("media_urls") or []):
         return True
     if post.get("platform") in _SCHEDULER_BUFFER_ADAPTERS and (replay or {}).get("channel_id"):

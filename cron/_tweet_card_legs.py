@@ -1,8 +1,11 @@
 """Shared Facebook + LinkedIn + Instagram fan-out logic for the unified Tweet Card pipelines.
 
 Both cron/tiktok_pipeline.py and cron/tiktok_bank_pipeline.py call into
-this module after their TikTok render succeeds, so the per-tweet
-FB/LI/IG Buffer-send logic stays in one place.
+this module as their primary render + fan-out, so the per-tweet FB/LI/IG
+Buffer-send logic stays in one place. (The TikTok leg those pipelines
+were named after was retired in Aug 2026 — the operator stopped
+publishing to TikTok. Facebook is the anchor leg now; the tiktok file
+and cron_runs identities are kept for dashboard history continuity.)
 
 This file owns:
   - One extra `generate_content` call for `platform='facebook'` (one
@@ -56,14 +59,14 @@ _PG_UNIQUE_VIOLATION = "23505"
 
 # Visible Buffer caption every leg uses on every platform today. Lives
 # here (instead of as a per-platform constant) because it's identical
-# across TikTok/FB/LI/IG and the unified pipelines treat it as a single
-# string. Intentionally blank: the tweet text is already rendered onto
-# the card/reel, so the published post ships with no caption text.
+# across FB/LI/IG and the unified pipelines treat it as a single string.
+# Intentionally blank: the tweet text is already rendered onto the card,
+# so the published post ships with no caption text.
 BUFFER_CAPTION = ""
 
 
 def instagram_card_format() -> str:
-    """Return 'off' (default), 'video', or 'image' for the Instagram leg.
+    """Return 'off' (default) or 'image' for the Instagram leg.
 
     Toggle, read from the IG_TWEET_CARD_FORMAT env var (matching the
     os.environ config style the pipelines use for TIKTOK_MIN_LIKES etc.):
@@ -71,20 +74,20 @@ def instagram_card_format() -> str:
       - 'off' (default): the Instagram leg is PAUSED — no IG render, no IG
         Buffer send. Instagram now gets its content from the standalone
         carousel cron (cron/instagram_carousel_pipeline.py) instead of the
-        tweet-card fan-out. TikTok/FB/LinkedIn legs are unaffected.
-      - 'video': Instagram ships the SAME 9:16 / 5-second / silent MP4 that
-        TikTok gets — reused byte-for-byte from the TikTok render — posted
-        as a *reel* with caption BUFFER_CAPTION (currently blank).
-      - 'image': legacy behaviour — a portrait PNG feed *post* with no
-        caption (the tweet text is already rendered onto the card).
+        tweet-card fan-out. FB/LinkedIn legs are unaffected.
+      - 'image': a portrait PNG feed *post* with no caption (the tweet
+        text is already rendered onto the card).
+
+    The old 'video' mode (re-shipping the TikTok MP4 as an IG reel) was
+    removed along with the TikTok leg in Aug 2026 — there is no MP4 to
+    reuse anymore. Restore both from git history together if needed.
 
     Any unrecognized value falls back to 'off' so a typo can't silently
     resurrect a paused leg. The operator flips this on Render without a
-    code change; all three states stay available (setting 'video' restores
-    the old reel behaviour exactly).
+    code change.
     """
     val = os.environ.get("IG_TWEET_CARD_FORMAT", "off").strip().lower()
-    return val if val in ("video", "image") else "off"
+    return val if val == "image" else "off"
 
 
 def _is_unique_violation(exc: Exception) -> bool:
@@ -119,13 +122,14 @@ def render_extra_platforms(
       - platform='instagram' → 1080×1440 portrait PNG per tweet. Has
         its own template row so the height can diverge from FB's 1:1.
 
-    The TikTok render is the caller's responsibility and happens before
-    this function is invoked. We don't render LinkedIn separately;
+    This is the pipelines' primary render now that the TikTok leg is
+    retired — the callers treat an empty Facebook map as fatal because
+    nothing can ship without it. We don't render LinkedIn separately;
     `fanout_extra_legs_for_one_tweet` ships the Facebook bytes to LI's
     Buffer queue.
 
-    `tweets` items must be the same {'id', 'text', ...} shape that the
-    TikTok render received — we re-use the IDs as keys in the result.
+    `tweets` items must be {'id', 'text', ...} shaped — we re-use the
+    IDs as keys in the result.
 
     Returns a mapping keyed by platform:
         {'facebook':  {tweet_id: storage_path, ...},
@@ -140,19 +144,18 @@ def render_extra_platforms(
     response) yields an empty dict for that platform — the caller will
     skip every leg per-tweet when the lookup returns None. Per-tweet
     errors inside the response are simply omitted from the mapping.
-    NEVER raises: TikTok publishes must not be blocked by FB or IG
-    render hiccups.
+    NEVER raises: an IG render hiccup must not block the FB/LI legs
+    (the callers decide whether an empty FB map is fatal).
     """
     payload_tweets = [{"id": t["id"], "text": t["text"]} for t in tweets]
     result: dict[str, dict[str, str]] = {"facebook": {}, "instagram": {}}
 
     # Facebook always renders (it feeds the FB *and* LinkedIn legs). The
-    # Instagram image render only happens in 'image' mode — in 'video' mode
-    # the IG leg reuses the TikTok MP4 byte-for-byte, and in the default
+    # Instagram image render only happens in 'image' mode — in the default
     # 'off' mode the leg is paused entirely, so a portrait PNG would be
     # generated and never used. Skipping it here avoids paying for an extra
     # /api/content-gen/generate call per run. The returned dict keeps both
-    # keys ({'instagram': {}} stays empty in video/off mode) so callers and
+    # keys ({'instagram': {}} stays empty in 'off' mode) so callers and
     # the render-summary helpers are unaffected.
     render_platforms = ["facebook"]
     if instagram_card_format() == "image":
@@ -235,13 +238,10 @@ def send_leg(
          'error':          str | None}
     """
     extra_send_kwargs = extra_send_kwargs or {}
-    # Default platform → media-type mapping when the caller doesn't override:
-    # TikTok ships MP4s; Facebook and LinkedIn ship square PNGs. The
-    # Instagram leg passes media_type explicitly ('video' for the reel-format
-    # test, 'image' for the legacy portrait card) so it isn't pinned to the
-    # platform name here.
+    # Every current leg ships a PNG; callers that ever ship something else
+    # pass media_type explicitly (the Instagram leg does, for clarity).
     if media_type is None:
-        media_type = "video" if platform == "tiktok" else "image"
+        media_type = "image"
 
     post = Post(
         platform=platform,
@@ -340,7 +340,6 @@ def fanout_extra_legs_for_one_tweet(
     tweet_caption: str,
     fb_storage_path: str | None,
     ig_storage_path: str | None,
-    tiktok_storage_path: str | None,
     fb_channel_id: str | None,
     li_channel_id: str | None,
     ig_channel_id: str | None,
@@ -348,8 +347,7 @@ def fanout_extra_legs_for_one_tweet(
 ) -> dict[str, dict[str, Any]]:
     """Send the Facebook + LinkedIn + Instagram legs for a single tweet.
 
-    Called by both unified pipelines inside their Phase 4 / `buffer_send`
-    loop, right after the TikTok send for the same tweet succeeds. Each
+    Called by both unified pipelines inside their send-phase loop. Each
     leg can independently skip when:
       - its storage_path is None — the render dropped this tweet. FB
         and IG render independently, so an IG render failure only
@@ -370,10 +368,6 @@ def fanout_extra_legs_for_one_tweet(
                      * 'off' (default) → leg is PAUSED: nothing renders or
                        ships to IG from this fan-out. The standalone
                        carousel cron owns Instagram now.
-                     * 'video' → tiktok_storage_path: reuses the TikTok
-                       1080×1920 MP4 byte-for-byte (same 9:16 / 5-sec /
-                       silent reel), shipped as an IG *reel* with a blank
-                       caption. No separate IG render.
                      * 'image' → ig_storage_path (portrait PNG, IG's own
                        render from a dedicated template row), shipped as a
                        caption-free feed *post*.
@@ -391,10 +385,6 @@ def fanout_extra_legs_for_one_tweet(
     'skipped_no_channel', 'skipped_dedup', 'skipped_paused' (IG leg only,
     when IG_TWEET_CARD_FORMAT resolves to 'off').
     """
-    # Resolve the IG format once per tweet so the storage path, media type,
-    # caption, and Buffer post-type all stay consistent with each other.
-    ig_format = instagram_card_format()
-    ig_video = ig_format == "video"
     # 'off' pauses the IG leg entirely (see instagram_card_format): report a
     # distinct skip status so the leg summary / logs show the leg was paused
     # deliberately, not dropped by a render or channel failure.
@@ -402,37 +392,25 @@ def fanout_extra_legs_for_one_tweet(
     # leg never marks the run unhealthy.
     ig_result = (
         {"status": "skipped_paused", "post_id": None, "buffer_post_id": None, "error": None}
-        if ig_format == "off"
+        if instagram_card_format() == "off"
         else _send_or_skip(
             platform="instagram",
             channel_id=ig_channel_id,
-            # video: reuse the TikTok MP4 byte-for-byte so IG ships the
-            #   exact same 9:16 / 5-sec / silent reel as TikTok.
-            # image (legacy): IG's own portrait render from the dedicated
-            #   'instagram' template row.
-            # If the relevant path is None for this tweet (the upstream
-            # render/leg dropped it), _send_or_skip returns
-            # skipped_no_render — FB + LI legs still ship on their own.
-            storage_path=tiktok_storage_path if ig_video else ig_storage_path,
+            # IG's own portrait render from the dedicated 'instagram'
+            # template row. If the path is None for this tweet (the render
+            # dropped it), _send_or_skip returns skipped_no_render — FB +
+            # LI legs still ship on their own.
+            storage_path=ig_storage_path,
             caption=tweet_caption,
             source_tag=source_tag,
-            # MP4 reel vs PNG feed image. Passed explicitly because the
-            # 'instagram' platform name alone can't tell send_leg which
-            # one this run is using.
-            media_type="video" if ig_video else "image",
-            # Both formats ship a blank caption (the tweet text is already
-            # rendered onto the card/reel). BUFFER_CAPTION is "" today, so
-            # the two branches are equivalent — kept explicit so flipping
-            # the constant back to a hook wouldn't accidentally caption the
-            # legacy image post.
-            buffer_body=BUFFER_CAPTION if ig_video else "",
-            # Buffer's IG integration needs metadata.instagram.type. 'reel'
-            # routes a vertical video to the Reels tab (send_to_buffer also
-            # sets shouldShareToFeed so it surfaces in the main feed);
+            media_type="image",
+            # Blank caption — the tweet text is already rendered onto the
+            # card. Kept explicit so flipping BUFFER_CAPTION back to a hook
+            # wouldn't accidentally caption the image post.
+            buffer_body="",
+            # Buffer's IG integration needs metadata.instagram.type;
             # 'post' is a plain feed image.
-            extra_send_kwargs={
-                "instagram_post_type": "reel" if ig_video else "post"
-            },
+            extra_send_kwargs={"instagram_post_type": "post"},
         )
     )
     return {
