@@ -1,8 +1,10 @@
 """TikTok platform adapter — UNUSED.
 
-TikTok publishing goes through Buffer (see core/buffer.py and
-cron/tiktok_pipeline.py). This stub is kept as reference for a future
-direct TikTok API integration if we ever need to bypass Buffer.
+The TikTok publishing that still exists goes through Buffer (see
+core/buffer.py; live legs: manual-upload fan-out in core/video_batch.py
+and the carousel mirror in cron/instagram_carousel_pipeline.py — the
+tweet-reel leg was retired Aug 2026). This stub is kept as reference for
+a future direct TikTok API integration if we ever need to bypass Buffer.
 -----------------------------------------------------------------
 Key things to know about TikTok's API:
   - Auth uses OAuth 2.0.  You get an authorization code, exchange it for
@@ -22,7 +24,7 @@ API docs: https://developers.tiktok.com/doc/content-posting-api-get-started
 """
 
 from platforms.base import PlatformBase
-from core.models import MediaUploadResult, Post
+from core.models import Post
 
 
 class TikTok(PlatformBase):
@@ -48,18 +50,4 @@ class TikTok(PlatformBase):
         # 2. Upload the video binary to the returned upload URL
         # 3. Poll /v2/post/publish/status/fetch/ until processing completes
         # Returns the TikTok video ID.
-        raise NotImplementedError("TODO: port from existing repo")
-
-    def upload_media(self, local_path: str, media_type: str) -> MediaUploadResult:
-        # TikTok requires uploading the video as part of the posting flow
-        # (see create_post above), so this may handle the upload step
-        # separately, or return a no-op if create_post handles it inline.
-        # For chunked uploads of large videos, this is where chunk logic
-        # would live.
-        raise NotImplementedError("TODO: port from existing repo")
-
-    def get_media_constraints(self) -> dict:
-        # Will return TikTok's limits: videos up to 10 min (287.6 MB via
-        # API), supported formats (mp4, webm), aspect ratio 9:16 preferred,
-        # caption max 2200 chars, etc.
         raise NotImplementedError("TODO: port from existing repo")

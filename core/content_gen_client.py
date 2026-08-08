@@ -1,7 +1,8 @@
 """Shared client for the dashboard's /api/content-gen/generate endpoint.
 
-Three cron pipelines (tiktok, tiktok_bank, facebook) all hit this endpoint
-to drive canvas rendering + ffmpeg conversion on the Next.js dashboard.
+The cron pipelines (tweet-card fan-out, instagram carousel, leila linkedin)
+and the ads generator all hit this endpoint to drive canvas rendering on
+the Next.js dashboard.
 Each used to duplicate the POST + raise_for_status logic with zero retry —
 one transient 502 from the dashboard (restart, brief OOM, deploy blip)
 permanently failed the cron run. This helper centralizes the call and adds
@@ -38,7 +39,7 @@ def generate_content(
     dashboard_url: str,
     cron_secret: str,
     tweets: Iterable[Mapping[str, str]],
-    platform: str = "tiktok",
+    platform: str,
 ) -> dict[str, Any]:
     """POST to /api/content-gen/generate with retry on transient failures.
 
@@ -48,7 +49,10 @@ def generate_content(
         tweets: Iterable of {"id", "text"} mappings. An optional "swipe": True
             marks a carousel title-card slide — the route renders it with the
             red "SWIPE →" pill below the text.
-        platform: "tiktok" (1080x1920 MP4) or "facebook" (1080x1080 PNG).
+        platform: Which template row to render with — "facebook"
+            (1080x1080 PNG), "instagram" (portrait PNG), "linkedin_leila",
+            or "ads". Required: the old "tiktok" MP4 default died with the
+            reel leg (Aug 2026), so callers must always say what they want.
 
     Returns:
         Parsed JSON: {"generated": [...], "errors": [...]}.

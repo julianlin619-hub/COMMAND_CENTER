@@ -30,7 +30,7 @@ from core.exceptions import (
     PlatformAuthError,
     PlatformRateLimitError,
 )
-from core.models import MediaUploadResult, Post
+from core.models import Post
 from core.retry import with_retry
 from platforms.base import PlatformBase
 
@@ -358,24 +358,6 @@ class YouTube(PlatformBase):
             "YouTube uploads are manual via Studio; scheduling is handled by "
             "core.youtube_studio_scheduler"
         )
-
-    def upload_media(self, local_path: str, media_type: str) -> MediaUploadResult:
-        raise NotImplementedError(
-            "YouTube uploads are manual via Studio; scheduling is handled by "
-            "core.youtube_studio_scheduler"
-        )
-
-    def get_media_constraints(self) -> dict:
-        # Not actively consumed by the studio-first flow (Studio enforces
-        # constraints at manual upload time). Surfaced here only to satisfy
-        # the PlatformBase interface.
-        return {
-            "max_video_duration_sec": 12 * 3600,
-            "max_file_size_gb": 256,
-            "supported_formats": ["mp4", "mov", "avi", "wmv", "flv", "webm"],
-            "max_title_length": 100,
-            "max_description_length": 5000,
-        }
 
     # ── Internal helpers ─────────────────────────────────────────────
 

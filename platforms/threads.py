@@ -23,7 +23,7 @@ import time
 import httpx
 
 from core.exceptions import PlatformAPIError, PlatformAuthError, PlatformRateLimitError
-from core.models import MediaUploadResult, Post
+from core.models import Post
 from platforms.base import PlatformBase
 
 logger = logging.getLogger(__name__)
@@ -222,32 +222,4 @@ class Threads(PlatformBase):
         target (this adapter can front several Threads channels via channel_id).
         """
         return {"channel_id": self.channel_id}
-
-    # ── Media ───────────────────────────────────────────────────
-
-    def upload_media(self, local_path: str, media_type: str) -> MediaUploadResult:
-        """No-op — the original automation is text-only via Buffer.
-
-        Buffer can accept media via URL in the mutation, but the existing
-        THREADS repo only posts text. When media support is needed, extend
-        CREATE_POST_MUTATION to include a mediaUrl variable pointing to a
-        Supabase Storage signed URL.
-        """
-        return MediaUploadResult(
-            platform_media_id=None,
-            metadata={"note": "text-only via Buffer — media not yet supported"},
-        )
-
-    def get_media_constraints(self) -> dict:
-        """Return Threads' content limits."""
-        return {
-            "max_image_size_mb": 8,
-            "max_video_duration_sec": 300,  # 5 minutes
-            "max_video_size_mb": 1000,      # ~1 GB
-            "max_caption_length": 500,
-            "supported_image_formats": ["jpg", "png"],
-            "supported_video_formats": ["mp4", "mov"],
-            "max_carousel_items": 20,
-            "supports_text_only": True,
-        }
 

@@ -2,11 +2,11 @@
  * Cron Run API — actually execute a cron job and return its output.
  *
  * POST /api/cron/run
- * Body: { job: string }  — one of the cron job names from render.yaml
+ * Body: { job: string }  — one of the CRON_MODULES keys below
  *
- * Unlike /api/cron/test-run (which is read-only), this endpoint spawns the
- * real Python cron script as a child process — it WILL publish posts, call
- * Apify/Buffer, and write to the database. Use with care.
+ * This endpoint spawns the real Python cron script as a child process —
+ * it WILL publish posts, call Apify/Buffer, and write to the database.
+ * Use with care.
  *
  * The cron scripts live at the project root (one level above dashboard/)
  * and are run via `python3 -m cron.<module>`, matching the startCommand
@@ -20,12 +20,16 @@ import { NextResponse } from "next/server";
 import { verifyApiAuth } from "@/lib/auth";
 import { runPythonModule, combineOutput } from "@/lib/python-runner";
 
-// Maps cron job names (from render.yaml) to their Python module paths.
-// The startCommand in render.yaml is `python -m cron.<module>`.
+// Maps this API's internal job names to their Python module paths (the
+// same modules render.yaml services run via `python -m cron.<module>`;
+// the render.yaml *service* names differ — e.g. `tweet-reel-recent` runs
+// cron.tiktok_pipeline — these keys are the dashboard's own contract
+// with its callers).
 //
 // tiktok-pipeline + tiktok-bank-pipeline are the two unified Tweet Card
-// crons — each fans out to TikTok + Facebook + LinkedIn in-process, so
-// there are no separate facebook-*/linkedin-* entries anymore.
+// crons — each fans out to Facebook + LinkedIn + Pinterest (+ Instagram
+// when unpaused) in-process, so there are no separate facebook-*/
+// linkedin-* entries anymore.
 const CRON_MODULES: Record<string, string> = {
   "threads-cron": "cron.threads_cron",
   "threads-leila-cron": "cron.threads_leila_cron",

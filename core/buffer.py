@@ -459,62 +459,20 @@ def send_to_buffer(
     return post["id"]
 
 
-def get_buffer_post_sent_at(post_id: str) -> datetime | None:
-    """Return the UTC datetime Buffer published a post, or None if still queued.
-
-    Wraps Buffer's GraphQL `post(input:{id})` lookup and parses `sentAt`.
-    Used by cron/tiktok_storage_cleanup.py to decide when it's safe to
-    delete a manual-upload mp4 from Supabase Storage (3 days after Buffer
-    confirms the post went live).
-    """
-    # Buffer's `post(input:{id})` returns a plain Post object, not a union,
-    # so we select fields directly. `createPost` uses a union (PostActionSuccess
-    # | *Error), but reads don't — a mismatch here returns GRAPHQL_VALIDATION_FAILED.
-    try:
-        data = _buffer_request(
-            """
-            query GetPost($id: PostId!) {
-                post(input: { id: $id }) {
-                    id
-                    sentAt
-                    status
-                }
-            }
-            """,
-            {"id": post_id},
-        )
-    except RuntimeError as exc:
-        # Same "not found" guard as get_buffer_post_state: if Buffer has
-        # deleted the post, treat it as unpublished (None) so the cleanup
-        # cron skips the group rather than crashing and potentially
-        # mis-deleting files that belong to other still-queued posts.
-        if "not found" in str(exc).lower():
-            return None
-        raise
-
-    post = data.get("post") or {}
-    sent = post.get("sentAt")
-    if not sent:
-        return None
-    # Buffer returns ISO-8601 with a `Z` suffix; fromisoformat needs +00:00.
-    return datetime.fromisoformat(sent.replace("Z", "+00:00"))
-
-
 def get_buffer_post_state(post_id: str) -> dict | None:
     """Return Buffer's current view of a post: {'status', 'sentAt'} or None.
 
     Used by cron/buffer_reconcile.py to verify posts we handed to Buffer's
-    queue actually published. Unlike `get_buffer_post_sent_at` (which only
-    cares about the publish timestamp), this also returns the raw `status`
-    string so the reconcile cron can distinguish "still queued" from a
-    Buffer-side failure.
+    queue actually published. Returns the raw `status` string alongside the
+    publish timestamp so the reconcile cron can distinguish "still queued"
+    from a Buffer-side failure.
 
     Returns None only if Buffer has no record of the post (deleted/unknown id).
     `sentAt` is a parsed UTC datetime when set, else None.
     """
-    # Same read query as get_buffer_post_sent_at — Buffer's post(input:{id})
-    # returns a plain Post object (not the createPost union), so we select
-    # fields directly.
+    # Buffer's post(input:{id}) returns a plain Post object (not the
+    # createPost union), so we select fields directly — a union-style
+    # fragment here would return GRAPHQL_VALIDATION_FAILED.
     try:
         data = _buffer_request(
             """

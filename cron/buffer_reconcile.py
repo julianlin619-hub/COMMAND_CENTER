@@ -26,7 +26,12 @@ exhausted — reconcile is the single owner of the retry until then. A failed
 Buffer post never publishes, so re-sending it (and abandoning the old Buffer id)
 can't double-post.
 
-Run locally with:  python -m cron.buffer_reconcile
+NOT scheduled on Render anymore — the cron service was removed because its
+polling burned through Buffer's API request limit (commit 2048e57); the
+module is kept for easy re-enable and for manual runs when a batch of
+handoffs needs verifying:
+
+    python -m cron.buffer_reconcile
 """
 
 import logging

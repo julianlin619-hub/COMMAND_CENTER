@@ -32,11 +32,10 @@ Postgres rule: an enum value added in a transaction can't be used in the **same*
 
 ### 2. Write the adapter `platforms/<name>.py`
 
-Subclass `PlatformBase` and implement all 5 abstract methods (`validate_config`, `refresh_credentials`, `validate_credentials`, `create_post`, `upload_media`, `get_media_constraints`). Set `name = "<name>"` to match the enum.
+Subclass `PlatformBase` and implement all 4 abstract methods (`validate_config`, `refresh_credentials`, `validate_credentials`, `create_post`). Set `name = "<name>"` to match the enum. (The old `upload_media` / `get_media_constraints` methods were removed Aug 2026 — no caller ever consumed them; media flows through Buffer URLs or inline uploads.)
 
 - **`validate_config`**: call `self._check_env_vars("FOO_TOKEN", ...)` — fail fast at startup, not mid-publish. Per-platform secrets live as env vars on Render.
 - **Error handling**: every `except` that logs must run the exception through `self.sanitize_error(exc)` first — raw tokens otherwise leak into Render logs. (DB writes via `cron_runs.error_message` are auto-sanitized, but logger calls are not.)
-- **`get_media_constraints`**: return the platform's real limits (max duration, file size, formats, aspect ratios, caption length) — the dashboard validates uploads against these before they reach the API.
 - For Buffer-backed adapters, set `publishes_via_buffer = True` and override `buffer_replay()` if needed (see above).
 
 ### 3. Add the cron entry point `cron/<name>_cron.py` (or `<name>_pipeline.py`)

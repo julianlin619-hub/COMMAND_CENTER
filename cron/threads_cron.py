@@ -77,12 +77,11 @@ def main():
             "APIFY_TWITTER_HANDLE",
             "CONTENT_BANK_PATH",
             "CONTENT_BANK_COUNT",
-            "THREADS_ACCESS_TOKEN",
         ],
     )
 
     # Create the Threads platform client. This object knows how to talk to
-    # the Threads API -- publishing posts, fetching metrics, refreshing tokens, etc.
+    # the Threads API -- publishing posts, refreshing tokens, etc.
     # (Threads uses Buffer's API — see platforms/threads.py for details.)
     client = Threads()
 

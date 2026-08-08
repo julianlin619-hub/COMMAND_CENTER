@@ -1,9 +1,12 @@
 /**
- * Cron schedule config + pure helpers shared by the Overview platform cards.
+ * Cron schedule config + pure helpers for CronCountdown.
  *
- * Source of truth for schedules = render.yaml (NOT the prior hardcoded values
- * from cron-logs-tabs.tsx, which had drifted). Keyed by DB platform value so
- * cards can look up by `entry.platform`.
+ * Source of truth for schedules = render.yaml (and the ig-pipeline GitHub
+ * Actions workflow). Keyed by DB platform value. The map once mirrored
+ * every cron for the retired Overview page; today its only runtime
+ * consumer is <CronCountdown> on the instagram-2nd page, so only that
+ * platform's entry remains — re-add entries from render.yaml if another
+ * page grows a countdown.
  */
 
 export interface CronScheduleInfo {
@@ -19,30 +22,12 @@ export interface CronScheduleInfo {
   paused?: boolean;
 }
 
-// Mirrors render.yaml + .github/workflows/ig-pipeline.yml (instagram_2nd
-// runs as a GitHub Actions workflow, not a Render cron, but the cadence
-// shows up identically on the dashboard).
 export const CRON_SCHEDULES: Record<string, CronScheduleInfo> = {
-  threads:       { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
-  threads_leila: { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
-  tiktok:        { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT" },
+  // instagram_2nd runs as a GitHub Actions workflow, not a Render cron,
+  // but the cadence shows up identically on the dashboard.
   // Paused 2026-05-02 — re-enable when the GitHub Actions schedule
   // trigger in .github/workflows/ig-pipeline.yml is uncommented.
   instagram_2nd: { schedule: "0 11 * * *",  description: "Daily at 4:00 AM PDT", paused: true },
-  facebook:      { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
-  // Instagram = the daily carousel cron (render.yaml
-  // `instagram-carousel`). Fixed-hour pattern, so getNextRun() below
-  // handles it correctly.
-  instagram:     { schedule: "30 11 * * *", description: "Daily at 4:30 AM PDT" },
-  // Paused 2026-05-02 — re-enable when render.yaml linkedin-pipeline
-  // schedule is restored to "0 12 * * *".
-  linkedin:      { schedule: "0 12 * * *",  description: "Daily at 5:00 AM PDT", paused: true },
-  // Leila's LinkedIn — Apify-source pipeline that renders 1080×1080 quote
-  // cards from recent @LeilaHormozi tweets and queues them on Buffer.
-  linkedin_leila: { schedule: "45 11 * * *", description: "Daily at 4:45 AM PDT" },
-  // Paused 2026-05-05 — cron suspended on Render. Re-enable here when the
-  // youtube-second-cron service is resumed.
-  youtube_second: { schedule: "0 10 * * *",  description: "Daily at 3:00 AM PDT", paused: true },
 };
 
 /** Compute the next UTC run time from a simple cron pattern. */

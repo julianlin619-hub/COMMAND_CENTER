@@ -15,8 +15,7 @@
  * available there).
  */
 
-import { execFile, spawn } from "child_process";
-import type { ChildProcessWithoutNullStreams } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
@@ -212,32 +211,6 @@ function execFileWithStdin(
       child.stdin.end(stdin);
     }
   });
-}
-
-/**
- * Spawn `python3 -m <module> [...args]` and return the live child process so the
- * caller can STREAM its stdout (e.g. an SSE/NDJSON route). Unlike runPythonModule
- * (which buffers and returns once the process exits), this hands back the process
- * immediately. Same module/arg trust rules apply — never assemble the module path
- * from raw request input.
- */
-export async function spawnPythonModule(
-  moduleName: string,
-  args: string[] = [],
-  opts: { stdin?: string } = {},
-): Promise<ChildProcessWithoutNullStreams> {
-  await ensurePythonDeps();
-  const child = spawn("python3", ["-m", moduleName, ...args], {
-    cwd: projectRoot,
-    env: pythonEnv(),
-  });
-  if (opts.stdin !== undefined) {
-    // EPIPE if the child exits before reading all input — its exit surfaces via
-    // the 'close' event, so swallow the stdin error to avoid an unhandled throw.
-    child.stdin.on("error", () => {});
-    child.stdin.end(opts.stdin);
-  }
-  return child;
 }
 
 /** Merge stdout + stderr into a single string, trimming whitespace. */

@@ -1,6 +1,8 @@
-"""Manual-upload storage cleanup — weekly cron job.
+"""Manual-upload storage cleanup — manual-run tool (formerly a weekly cron).
 
-Runs weekly on Monday at 03:00 UTC. Two responsibilities, both scoped to the
+The Render cron was removed (commit 111d291) — storage cleanup is handled
+manually now; run with `python -m cron.tiktok_storage_cleanup` when Supabase
+Storage needs reclaiming. Two responsibilities, both scoped to the
 TikTok manual-upload pathway (Pathway 3):
 
   1. Group cleanup (the original behaviour). Reclaim Supabase Storage

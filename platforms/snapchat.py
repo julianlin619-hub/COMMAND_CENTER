@@ -32,7 +32,7 @@ import time
 
 from core.database import get_client
 from core.exceptions import PlatformAPIError, PlatformAuthError
-from core.models import MediaUploadResult, Post
+from core.models import Post
 from platforms._snapchat_session import (
     StorageStateMissing,
     load_storage_state,
@@ -121,14 +121,6 @@ SELECTOR_POST_BUTTON = '[data-testid="app.profileMgr.snapPoster.postSnap"]'
 # If you're tempted to simplify back to a single wait — don't. The fallback
 # is here because the toast is racy in practice, not in theory.
 SELECTOR_PUBLISH_SUCCESS = 'text="Your Snap is now live"'
-
-
-# ── Constraints ────────────────────────────────────────────────────────────
-# Snapchat Spotlight limits as of plan time. Captured here for the dashboard
-# to validate uploads up-front; the publish path doesn't re-validate.
-SPOTLIGHT_MAX_DURATION_SEC = 60
-SPOTLIGHT_MAX_FILE_MB = 500
-SPOTLIGHT_ASPECT_RATIOS = ["9:16"]
 
 
 # ── Browser knobs ──────────────────────────────────────────────────────────
@@ -531,29 +523,6 @@ class Snapchat(PlatformBase):
                 "Failed to save auth-failure screenshot for post %s: %s",
                 post_id, self.sanitize_error(e),
             )
-
-    # ── Media ────────────────────────────────────────────────────
-
-    def upload_media(self, local_path: str, media_type: str) -> MediaUploadResult:
-        """No-op — Snapchat takes the file inline via setInputFiles.
-
-        There's no pre-upload step; the DOM <input type="file"> consumes the
-        local mp4 directly when create_post runs. We return platform_media_id
-        = None to signal that to any caller checking the result.
-        """
-        return MediaUploadResult(
-            platform_media_id=None,
-            metadata={"note": "Snapchat takes media inline via setInputFiles"},
-        )
-
-    def get_media_constraints(self) -> dict:
-        """Snapchat Spotlight limits — used by the dashboard for pre-upload checks."""
-        return {
-            "max_video_duration_sec": SPOTLIGHT_MAX_DURATION_SEC,
-            "max_file_size_mb": SPOTLIGHT_MAX_FILE_MB,
-            "aspect_ratios": SPOTLIGHT_ASPECT_RATIOS,
-            "supported_video_formats": ["mp4", "mov"],
-        }
 
     # ── Error sanitisation ───────────────────────────────────────
 

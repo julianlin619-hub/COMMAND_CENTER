@@ -26,8 +26,8 @@ export type CommandCenterCategory =
 // platform-enum the cron pipeline uses (which has variants like
 // `instagram_2nd`, `threads_leila`, …) — at the Command Center level we
 // collapse those down to the brand-facing identity. The chip's `name`
-// field is what users see; the `id` drives the icon lookup in
-// platform-chip.tsx.
+// field is what FormatCard renders as a plain text label; the `id` is
+// the stable key.
 export type PlatformId =
   | "youtube"
   | "instagram"
@@ -150,20 +150,12 @@ export const CATEGORY_ORDER: CommandCenterCategory[] = [
   "mid",
 ];
 
-// Optional subdivision *within* a category. Today only "short" uses
-// subgroups (Creation vs Distribution), but the field is on the base
-// Format type so any category can opt in by tagging its formats. When a
-// category has 2+ distinct subgroups present, CategorySection renders
-// each as a faint-headed sub-section. Categories where all formats omit
-// `subgroup` (or share a single subgroup) render flat as before.
+// Optional subdivision *within* a category. Only "short" tags its
+// formats (Creation vs Distribution). CategorySection no longer renders
+// sub-headers for it — every category is one flat grid — but the tags
+// stay on the data (see the note in category-section.tsx) so restoring
+// the sub-sections is a renderer change, not a data re-tagging.
 export type FormatSubgroup = "creation" | "distribution";
-
-export const SUBGROUP_ORDER: FormatSubgroup[] = ["distribution", "creation"];
-
-export const SUBGROUP_LABELS: Record<FormatSubgroup, string> = {
-  creation: "Creation",
-  distribution: "Distribution",
-};
 
 export const FORMATS: Format[] = [
   // ──────────────────────────── Alex ────────────────────────────
@@ -227,7 +219,6 @@ export const FORMATS: Format[] = [
     creator: "alex",
     subgroup: "creation",
     platforms: [
-      { id: "tiktok", name: "TikTok" },
       { id: "facebook", name: "Facebook" },
       { id: "linkedin", name: "LinkedIn" },
       { id: "pinterest", name: "Pinterest" },
@@ -246,11 +237,14 @@ export const FORMATS: Format[] = [
     // then 5 outlier tweets all >= 6500 likes.
     href: "/tweet-cards",
     // Cron writes one post row per platform per run (see
-    // cron/_tweet_card_legs.py): tiktok / facebook / linkedin /
-    // pinterest. Any of them producing a row in the last 24h marks the
-    // format healthy. (instagram rows now come from the carousel cron,
-    // so it no longer belongs to this card's health signal.)
-    healthPlatforms: ["tiktok", "facebook", "linkedin", "pinterest"],
+    // cron/_tweet_card_legs.py): facebook / linkedin / pinterest. Any of
+    // them producing a row in the last 24h marks the format healthy.
+    // No "tiktok" here: the retired reel leg stopped writing tiktok rows
+    // in Aug 2026, and the manual-upload + carousel-mirror pipelines DO
+    // still write them — a stale entry would green this card off
+    // unrelated posts. (instagram rows come from the carousel cron, so
+    // it doesn't belong here either.)
+    healthPlatforms: ["facebook", "linkedin", "pinterest"],
   },
   {
     // Instagram Carousels — the daily "Brutally honest advice to

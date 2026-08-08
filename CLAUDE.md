@@ -3,7 +3,7 @@
 ## Architecture rules
 
 - **IMPORTANT: Dashboard and crons communicate ONLY through the Supabase database.** No shared in-process state, no cross-service imports.
-- **YOU MUST implement `PlatformBase`** (from `platforms/base.py`) for any new platform adapter under `platforms/`. Required methods: `create_post`, `upload_media`, `refresh_credentials`, `validate_credentials`, `get_media_constraints`.
+- **YOU MUST implement `PlatformBase`** (from `platforms/base.py`) for any new platform adapter under `platforms/`. Required methods: `validate_config`, `create_post`, `refresh_credentials`, `validate_credentials`.
 - **Media flow**: Dashboard upload → Supabase Storage → cron reads via `/api/media/[id]`. Don't bypass the API endpoint.
 - **Cron locking**: `core/scheduler.py` claims schedules atomically via `mark_schedule_picked_up()` before publishing. **YOU MUST NOT parallelize post processing or skip the claim step** — overlapping runs would double-publish. Stuck claims auto-reset (see `_reset_stale_pickups` in `core/database.py`).
 

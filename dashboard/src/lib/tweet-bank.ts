@@ -164,21 +164,3 @@ export function markUsed(platform: 'instagram' | 'threads' | 'tiktok' | 'snapcha
   writeBankHistory(platform, { ...history, usedHashes: merged });
 }
 
-/**
- * Increment and return the next batch number for a platform.
- * Used to name Google Drive folders (e.g., "IG Bank Batch #6").
- */
-export function getNextBankBatchNumber(platform: 'instagram' | 'threads' | 'tiktok' | 'snapchat'): number {
-  const history = getBankHistory(platform);
-  const next = history.bankBatchCount + 1;
-  writeBankHistory(platform, { ...history, bankBatchCount: next });
-  return next;
-}
-
-/**
- * Reset a platform's usage history. Useful if you want to re-use
- * tweets that were previously scheduled (e.g., after refreshing the CSV).
- */
-export function resetBankHistory(platform: 'instagram' | 'threads' | 'tiktok' | 'snapchat'): void {
-  writeBankHistory(platform, { usedHashes: [], bankBatchCount: 0 });
-}

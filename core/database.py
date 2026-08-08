@@ -208,25 +208,6 @@ def record_buffer_handoff(
     update_post(post_id, platform_post_id=buffer_post_id, metadata=metadata)
 
 
-def get_posts(
-    platform: str | None = None,
-    status: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> list[dict]:
-    """Fetch posts with optional filters."""
-    client = get_client()
-    query = client.table("posts").select("*").order("created_at", desc=True)
-    if platform:
-        query = query.eq("platform", platform)
-    if status:
-        query = query.eq("status", status)
-    # range() implements pagination: range(0, 49) returns the first 50 rows.
-    # Supabase range is inclusive on both ends, so we subtract 1 from the limit.
-    query = query.range(offset, offset + limit - 1)
-    return query.execute().data
-
-
 def get_posts_awaiting_buffer_confirmation(
     max_age_days: int = 30, min_age_minutes: int = 5, limit: int | None = None
 ) -> list[dict]:
@@ -425,21 +406,6 @@ def mark_schedule_picked_up(schedule_id: str) -> bool:
 # `python -m core.video_batch --job-id <id>`. The processor claims the row,
 # transcribes/titles/captions/fans-out, and marks it done|failed. See
 # supabase/migrations/20260606120000_video_batch.sql for the table.
-
-
-def insert_video_batch_job(user_id: str, storage_path: str) -> str:
-    """Insert a pending video batch job. Returns the job ID."""
-    client = get_client()
-    result = (
-        client.table("video_batch_jobs")
-        .insert({"user_id": user_id, "storage_path": storage_path})
-        .execute()
-    )
-    if not result.data:
-        raise RuntimeError(
-            "insert_video_batch_job returned no rows — check RLS / schema"
-        )
-    return result.data[0]["id"]
 
 
 def get_video_batch_job(job_id: str) -> dict | None:

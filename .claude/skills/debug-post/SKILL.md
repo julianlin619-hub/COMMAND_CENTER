@@ -41,7 +41,7 @@ A healthy post moves `draft → scheduled → publishing → published` (direct)
 - **Stuck in `publishing` / claimed schedule** → crashed mid-run. Wait for the 30-min stale reset, or manually clear `schedules.picked_up_at = null` and `posts.status = 'scheduled'`. There's a requeue endpoint: `POST /api/posts/[id]/requeue`.
 - **`failed` with a token/auth error** → the platform's credentials expired (`refresh_credentials` failing); check the env vars on Render.
 - **`scheduled` but no recent `cron_runs`** → the Render cron service is down/misconfigured; the post is fine.
-- **`sent_to_buffer` for a long time** → check `buffer_reconcile` runs and Buffer's own queue (`cron/buffer_introspect.py`).
+- **`sent_to_buffer` for a long time** → check Buffer's own queue (`cron/buffer_introspect.py`). Note `buffer_reconcile` is no longer scheduled on Render (removed for Buffer API-limit reasons) — run `python -m cron.buffer_reconcile` manually to confirm/retry handoffs.
 - **Duplicate-caption insert silently dropped** → the `idx_posts_platform_caption_dedup` unique index blocks a second non-failed post with the same `(platform, md5(caption))`.
 
 State the verdict plainly: which stage failed, the evidence row, and the fix. Don't claim it's fixed unless you ran the requeue/reset and saw the status advance.

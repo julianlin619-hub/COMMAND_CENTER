@@ -14,8 +14,9 @@
  *   3. When happy, click "Copy config JSON" and hand it off — wiring the
  *      pipeline to use a creator-scoped template is a follow-up change.
  *
- * The starting config is fetched from /api/templates?platform=facebook so
- * the sandbox starts where the cron currently produces.
+ * The starting config comes in as a prop (the design page reads the
+ * template row from Supabase server-side); previews render via
+ * POST /api/templates/preview.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

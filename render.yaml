@@ -20,8 +20,6 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
-      - key: ZERNIO_API_KEY
-        sync: false
       - key: TWEET_BANK_DATA_DIR
         sync: false
       - key: NEXT_PUBLIC_CLERK_SIGN_IN_URL
@@ -44,7 +42,7 @@ services:
         value: https://command-center-drnj.onrender.com
       # YouTube cron is *also* run from the dashboard via the "Run cron now"
       # UI button (dashboard/src/app/api/cron/run/route.ts spawns python).
-      # Keep these in sync with youtube-cron-second's envVars — rotating on
+      # Keep these in sync with youtube-second-cron's envVars — rotating on
       # only one service will cause the UI button to silently diverge from
       # the scheduled cron.
       - key: YOUTUBE_CLIENT_ID
@@ -110,9 +108,6 @@ services:
   #     # Flip to "1" to log would-be videos.update payloads without writing.
   #     - key: YOUTUBE_STUDIO_DRY_RUN
   #       sync: false
-  #     # Override the default 30-minute lead time (rarely needed).
-  #     - key: YOUTUBE_STUDIO_MIN_LEAD_MINUTES
-  #       sync: false
   #     # If set, validate_credentials asserts the token owns this channel —
   #     # guards against a misrouted refresh token.
   #     - key: YOUTUBE_CHANNEL_ID
@@ -127,10 +122,11 @@ services:
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.tiktok_pipeline
     # Tweet Card Outlier pathway — scrapes outlier tweets via Apify,
-    # renders Facebook PNG (reused for LinkedIn) in-process and fans out
-    # to the FB + LI Buffer channels in a single run. The TikTok MP4 leg
-    # was retired Aug 2026 — service + module names keep the historical
-    # tiktok identity so the dashboard's cron history stays attached.
+    # renders Facebook PNG (reused for LinkedIn + Pinterest) in-process
+    # and fans out to the FB + LI + Pinterest Buffer channels in a single
+    # run. The TikTok MP4 leg was retired Aug 2026 — service + module
+    # names keep the historical tiktok identity so the dashboard's cron
+    # history stays attached.
     schedule: "0 11 * * *"  # Daily at 11 AM UTC = 4 AM PDT
     envVars:
       - key: SUPABASE_URL
@@ -151,7 +147,11 @@ services:
         sync: false
       - key: TIKTOK_MIN_LIKES  # optional — default 4000
         sync: false
-      - key: TIKTOK_MAX_ITEMS  # optional — default 30
+      - key: TIKTOK_MAX_ITEMS  # optional — default 15
+        sync: false
+      # optional — Pinterest board for the pin leg, matched by name
+      # (default "Business Tactics"; see cron/_tweet_card_legs.py).
+      - key: PINTEREST_BOARD_NAME
         sync: false
       # optional — 'off' (default) | 'image'. The IG tweet-card leg is
       # paused ('off') in favour of the instagram-carousel cron; set
@@ -166,8 +166,9 @@ services:
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.tiktok_bank_pipeline
     # Tweet Card Bank pathway — picks 1 random bank tweet, renders the
-    # FB PNG (reused for LinkedIn) in-process and fans out to the FB +
-    # LI Buffer channels. The TikTok MP4 leg was retired Aug 2026.
+    # FB PNG (reused for LinkedIn + Pinterest) in-process and fans out to
+    # the FB + LI + Pinterest Buffer channels. The TikTok MP4 leg was
+    # retired Aug 2026.
     # 15 min after tweet-reel-recent (11:00) so the two don't drive
     # concurrent render jobs on the starter-plan dashboard.
     schedule: "15 11 * * *"  # Daily at 11:15 AM UTC = 4:15 AM PDT
@@ -187,6 +188,9 @@ services:
       - key: CONTENT_BANK_PATH  # optional — default data/TweetMasterBank.csv
         sync: false
       - key: TIKTOK_BANK_MIN_LIKES  # optional — default 6500
+        sync: false
+      # optional — Pinterest board for the pin leg. See tweet-reel-recent.
+      - key: PINTEREST_BOARD_NAME
         sync: false
       # optional — 'off' (default) | 'image'. See tweet-reel-recent.
       - key: IG_TWEET_CARD_FORMAT
@@ -254,8 +258,6 @@ services:
       - key: BUFFER_ACCESS_TOKEN
         sync: false
       - key: BUFFER_THREADS_CHANNEL_ID
-        sync: false
-      - key: THREADS_ACCESS_TOKEN  # optional — only needed for metrics
         sync: false
       - key: APIFY_API_KEY  # optional — needed for tweet scraping
         sync: false

@@ -2,10 +2,13 @@
  * Tweet Cards Platform Detail Page
  *
  * The unified entry point for both quote-card cron pathways:
- *   1. Outlier — Apify scrape of @AlexHormozi → render TikTok MP4 +
- *      Facebook PNG + LinkedIn PNG → queue all three Buffer channels.
+ *   1. Outlier — Apify scrape of @AlexHormozi → render a Facebook
+ *      1080×1080 PNG → fan out to the FB + LinkedIn + Pinterest Buffer
+ *      channels (LI and Pinterest reuse the FB image bytes).
  *   2. Bank    — random unposted pick from data/TweetMasterBank.csv,
- *      then the same render + 3-channel fan-out as Outlier.
+ *      then the same render + fan-out as Outlier.
+ *   (The TikTok MP4 leg was retired Aug 2026; the Instagram leg is
+ *   paused via IG_TWEET_CARD_FORMAT — the carousel cron owns IG now.)
  *
  * Replaces the old /tiktok page (which only showed the TikTok legs of
  * what was, before the merge, six separate cron files). cron_runs rows
@@ -72,17 +75,16 @@ export default async function TweetCardsPage() {
     <AppShell>
       {/* Shared hero header. No stat cluster — this page has no single-number
           live counts; the per-pathway status lives on the PathwayCards below.
-          The four platform icons ride in the header's `icon` slot so the
-          multi-platform nature reads at a glance (one icon would have looked
-          TikTok-only, the misconception the page rename corrected). */}
+          The platform icons ride in the header's `icon` slot so the
+          multi-platform nature reads at a glance: the three live legs,
+          Facebook + LinkedIn + Pinterest. */}
       <div className="cc-reveal">
         <DetailPageHeader
           icon={
             <div className="flex items-center gap-1.5">
-              <PlatformIcon platform="tiktok" className="size-7" />
               <PlatformIcon platform="facebook" className="size-7" />
               <PlatformIcon platform="linkedin" className="size-7" />
-              <PlatformIcon platform="instagram" className="size-7" />
+              <PlatformIcon platform="pinterest" className="size-7" />
             </div>
           }
           eyebrow="Multi-Platform Format"
@@ -110,15 +112,15 @@ export default async function TweetCardsPage() {
           </span>
           <span>
             <span className="text-white/40">Channels</span>{" "}
-            <span className="font-mono">Buffer · TikTok + Facebook + LinkedIn + Instagram</span>
+            <span className="font-mono">Buffer · Facebook + LinkedIn + Pinterest</span>
           </span>
         </div>
         <p className="mt-2 text-white/45">
           Per-platform dedup against the <code className="font-mono">posts</code> table —
-          each leg (TikTok, Facebook, LinkedIn, Instagram) skips independently. One cron run renders the
-          three variants in-process via <code className="font-mono">/api/content-gen/generate</code>;
-          Instagram&apos;s feed post reuses the Facebook 1:1 PNG (same image bytes). All four queue to
-          Buffer with caption &quot;Agree?&quot;
+          each leg (Facebook, LinkedIn, Pinterest) skips independently. One cron run renders the
+          Facebook 1:1 PNG in-process via <code className="font-mono">/api/content-gen/generate</code>;
+          LinkedIn and Pinterest reuse the same image bytes. FB and LI publish caption-free (the
+          tweet text is on the card); Pinterest publishes the tweet text as the pin description.
         </p>
       </div>
 
@@ -128,9 +130,9 @@ export default async function TweetCardsPage() {
         title="X Outlier Reel"
         steps={[
           "Scrape latest 15 @AlexHormozi tweets via Apify (no time window — min 4,000 likes; configurable via TIKTOK_MIN_LIKES / TIKTOK_MAX_ITEMS)",
-          "Filter out captions already on TikTok (per-platform dedup; FB, LinkedIn, and Instagram legs dedup independently later)",
-          "Render each tweet 3 ways via /api/content-gen/generate: 1080×1920 MP4 (TikTok) + 1080×1080 PNG (Facebook) + 1080×1080 PNG with LinkedIn color overrides. Instagram reuses the Facebook PNG.",
-          "Queue each variant to Buffer: TikTok (video), Facebook (image · post), LinkedIn (image), Instagram (image · feed post) — caption \"Agree?\" Partial success allowed per tweet.",
+          "Filter out captions already on Facebook (the anchor leg; LinkedIn and Pinterest dedup independently later)",
+          "Render each tweet as a 1080×1080 PNG via /api/content-gen/generate — LinkedIn and Pinterest reuse the same image bytes",
+          "Queue each leg to Buffer: Facebook (image · post), LinkedIn (image), Pinterest (image · pin on the configured board, tweet text as description). FB/LI ship caption-free. Partial success allowed per tweet.",
         ]}
         actions={[{ url: "/api/cron/run", body: { job: "tiktok-pipeline" } }]}
         lastRun={outlierLast}
@@ -143,9 +145,9 @@ export default async function TweetCardsPage() {
         title="X Bank Reel"
         steps={[
           "Pick 1 random unposted tweet from data/TweetMasterBank.csv with ≥6,500 likes (configurable via TIKTOK_BANK_MIN_LIKES)",
-          "Filter out if the caption is already on TikTok (per-platform dedup; FB, LinkedIn, and Instagram legs dedup independently later)",
-          "Render 3 ways via /api/content-gen/generate: 1080×1920 MP4 (TikTok) + 1080×1080 PNG (Facebook) + 1080×1080 PNG with LinkedIn color overrides. Instagram reuses the Facebook PNG.",
-          "Queue each variant to Buffer: TikTok (video), Facebook (image · post), LinkedIn (image), Instagram (image · feed post) — caption \"Agree?\" Partial success allowed.",
+          "Filter out if the caption is already on Facebook (the anchor leg; LinkedIn and Pinterest dedup independently later)",
+          "Render a 1080×1080 PNG via /api/content-gen/generate — LinkedIn and Pinterest reuse the same image bytes",
+          "Queue each leg to Buffer: Facebook (image · post), LinkedIn (image), Pinterest (image · pin on the configured board, tweet text as description). FB/LI ship caption-free. Partial success allowed.",
         ]}
         actions={[{ url: "/api/cron/run", body: { job: "tiktok-bank-pipeline" } }]}
         lastRun={bankLast}

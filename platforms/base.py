@@ -8,8 +8,8 @@ PlatformBase and implements the exact same set of methods.
 
 Why does this matter?  Because the rest of the codebase (cron jobs, core logic)
 never needs to know *which* platform it's talking to.  It just calls methods
-like `create_post()` or `upload_media()` on whatever PlatformBase subclass
-it receives.  This is the "strategy pattern" — swap in any strategy (platform)
+like `create_post()` or `refresh_credentials()` on whatever PlatformBase
+subclass it receives.  This is the "strategy pattern" — swap in any strategy (platform)
 and the calling code stays the same.
 
 Quick glossary for learners:
@@ -32,7 +32,7 @@ from abc import ABC, abstractmethod
 # These are our shared Pydantic data models (defined in core/models.py).
 # Using them here means every platform adapter speaks the same data language —
 # the cron job doesn't need to translate between different return types.
-from core.models import MediaUploadResult, Post
+from core.models import Post
 
 
 class PlatformBase(ABC):
@@ -156,42 +156,4 @@ class PlatformBase(ABC):
         """
         return None
 
-    # ── Media ───────────────────────────────────────────────────
-    # Some platforms require you to upload media (images/videos) in a
-    # separate step *before* creating the post.  Others accept media
-    # inline with the post creation call.  These methods handle both cases.
-
-    @abstractmethod
-    def upload_media(self, local_path: str, media_type: str) -> MediaUploadResult:
-        """Upload a media file to the platform if required before posting.
-
-        Args:
-            local_path: Path to the local media file.
-            media_type: 'image' or 'video'.
-
-        Returns:
-            MediaUploadResult with platform_media_id and any upload metadata.
-            Platforms that handle media inline with create_post return
-            MediaUploadResult with platform_media_id=None.
-        """
-        ...
-
-    @abstractmethod
-    def get_media_constraints(self) -> dict:
-        """Return platform-specific media requirements.
-
-        The dashboard UI uses these constraints to validate files *before*
-        upload, so the user gets instant feedback ("video too long", etc.)
-        instead of waiting for the platform API to reject it later.
-
-        Example return value:
-            {
-                "max_video_duration_sec": 60,
-                "max_file_size_mb": 100,
-                "supported_formats": ["mp4", "mov"],
-                "aspect_ratios": ["9:16", "1:1"],
-                "max_caption_length": 2200,
-            }
-        """
-        ...
 

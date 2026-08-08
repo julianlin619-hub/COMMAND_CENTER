@@ -190,5 +190,3 @@ export async function renderTweetToBuffer(text: string, configOverride?: Partial
 
   return canvas.toBuffer('image/png');
 }
-
-export type { CanvasConfig };
