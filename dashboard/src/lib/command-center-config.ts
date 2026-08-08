@@ -277,6 +277,28 @@ export const FORMATS: Format[] = [
     healthPlatforms: ["instagram"],
   },
   {
+    // Ad Carousels — manually-triggered permutation factory (no cron).
+    // The /ads-carousels page: (1) a once-off Claude filter turns the
+    // master tweet bank into a topical ads_bank; (2) each "generate N"
+    // click samples N random 7-tweet carousels (+ CTA = 8 cards) — each differing
+    // from every carousel ever made by >= 3 tweets (ads_carousels
+    // ledger) — renders 1080×1350 slides on the 'ads' template with a
+    // fixed CTA last, and exports numbered folders to Google Drive.
+    // Output is Drive, not a social platform, so `platforms` is empty
+    // (hides the "Publishes to" eyebrow) and there's no healthPlatforms
+    // — the pipeline writes no posts rows, and run history lives in
+    // cron_runs (platform='ads'), shown on the detail page instead.
+    id: "ad-carousels",
+    name: "Ad Carousels",
+    subtitle: "Non-repeating carousel batches → Drive",
+    category: "graphics",
+    status: "live",
+    creator: "alex",
+    subgroup: "creation",
+    platforms: [],
+    href: "/ads-carousels",
+  },
+  {
     // Bulk Tweet Cards — the /instagram-2nd pipeline. Picks tweets from
     // the CSV bank, renders quote-card media (PNG/MP4), and queues them
     // to the "alexhighlights2026" Buffer channel (Instagram's 2nd

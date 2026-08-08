@@ -146,3 +146,18 @@ export const DEFAULT_INSTAGRAM_TEMPLATE_CONFIG: TemplateConfig = {
   ...DEFAULT_TEMPLATE_CONFIG,
   height: 1350,
 };
+
+/**
+ * Ads default — starts as a clone of the Instagram carousel look
+ * (1080×1350 portrait) so ad-carousel slides are visually identical to
+ * IG carousel slides on day one. The 'ads' platform has its own
+ * templates row (seeded by the 20260802120001 migration) so styling can
+ * diverge later via /api/templates without touching live IG carousels —
+ * diverge in the ROW, not here. This constant is only the in-code
+ * fallback for /api/content-gen/generate when platform="ads" and the DB
+ * row is missing or fields fail validation.
+ */
+export const DEFAULT_ADS_TEMPLATE_CONFIG: TemplateConfig = {
+  ...DEFAULT_TEMPLATE_CONFIG,
+  height: 1350,
+};

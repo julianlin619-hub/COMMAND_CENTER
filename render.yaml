@@ -63,6 +63,21 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      # Ad Carousels manual tool: the dashboard spawns
+      # `python -m core.ads_carousel_pipeline` (see api/ads-carousels/run),
+      # which uploads rendered slides to Google Drive. These run on THIS
+      # web service (not a cron), so the Drive credentials live here.
+      # Mint GDRIVE_REFRESH_TOKEN + ADS_DRIVE_FOLDER_ID with
+      # scripts/generate_gdrive_refresh_token.py (the folder must be
+      # app-created — drive.file scope can't see hand-made folders).
+      - key: GDRIVE_CLIENT_ID
+        sync: false
+      - key: GDRIVE_CLIENT_SECRET
+        sync: false
+      - key: GDRIVE_REFRESH_TOKEN
+        sync: false
+      - key: ADS_DRIVE_FOLDER_ID
+        sync: false
 
   # ── Cron Jobs (Python) ─────────────────────────────────────────────────
   # IMPORTANT: Update the schedule values to match your actual posting cadence.

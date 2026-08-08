@@ -12,9 +12,13 @@
  *     portrait aspect — carousel slides all share one aspect ratio, so
  *     crop-safe matters) — reads its own dedicated template row so the
  *     height can diverge from FB's 1:1 without affecting FB/LI.
+ *   - Ads: same 1080x1350 portrait card as Instagram, but reads its own
+ *     'ads' template row (seeded as an IG clone) so the ad-carousel
+ *     styling can diverge later without touching live IG carousels.
+ *     Used by core/ads_carousel_pipeline.py (Drive export, not Buffer).
  *
  * Body: { tweets: [{ id, text }], platform?: 'tiktok' | 'facebook' |
- *         'linkedin' | 'linkedin_leila' | 'instagram' }
+ *         'linkedin' | 'linkedin_leila' | 'instagram' | 'ads' }
  * Returns: { generated: [{ id, text, storagePath }] }
  *
  * Quote-card platforms use the template from the `templates` table in
@@ -35,6 +39,7 @@ import type { TemplateConfig } from "@/lib/template-types";
 import {
   DEFAULT_TEMPLATE_CONFIG,
   DEFAULT_INSTAGRAM_TEMPLATE_CONFIG,
+  DEFAULT_ADS_TEMPLATE_CONFIG,
   validateTemplateConfig,
 } from "@/lib/template-types";
 
@@ -79,7 +84,7 @@ export async function POST(req: NextRequest) {
     // The storage path is also interpolated from `platform` directly for
     // the square-template branch; keeping this list authoritative prevents
     // anything from sneaking into a path it shouldn't.
-    const VALID_PLATFORMS = ["tiktok", "facebook", "linkedin", "linkedin_leila", "instagram"] as const;
+    const VALID_PLATFORMS = ["tiktok", "facebook", "linkedin", "linkedin_leila", "instagram", "ads"] as const;
     if (!(VALID_PLATFORMS as readonly string[]).includes(rawPlatform)) {
       return NextResponse.json(
         { error: `Unknown platform: ${rawPlatform}` },
@@ -122,18 +127,22 @@ export async function POST(req: NextRequest) {
       platform === "facebook" ||
       platform === "linkedin" ||
       platform === "linkedin_leila" ||
-      platform === "instagram";
+      platform === "instagram" ||
+      platform === "ads";
     let fbTemplateConfig: TemplateConfig | null = null;
     if (usesSquareTemplate) {
       // Pick the template row + in-code fallback per platform. Instagram
-      // gets its own row + DEFAULT_INSTAGRAM_TEMPLATE_CONFIG (1080×1350);
-      // everyone else reads Alex's Facebook row + DEFAULT_TEMPLATE_CONFIG
-      // (1080×1080).
-      const isInstagram = platform === "instagram";
-      const templatePlatform = isInstagram ? "instagram" : "facebook";
-      const baseDefaults = isInstagram
-        ? DEFAULT_INSTAGRAM_TEMPLATE_CONFIG
-        : DEFAULT_TEMPLATE_CONFIG;
+      // and Ads each get their own row + 1080×1350 default (Ads is an IG
+      // clone that can diverge independently); everyone else reads Alex's
+      // Facebook row + DEFAULT_TEMPLATE_CONFIG (1080×1080).
+      const templatePlatform =
+        platform === "instagram" || platform === "ads" ? platform : "facebook";
+      const baseDefaults =
+        platform === "instagram"
+          ? DEFAULT_INSTAGRAM_TEMPLATE_CONFIG
+          : platform === "ads"
+            ? DEFAULT_ADS_TEMPLATE_CONFIG
+            : DEFAULT_TEMPLATE_CONFIG;
 
       const { data: template, error: tmplError } = await supabase
         .from("templates")
