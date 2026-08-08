@@ -184,16 +184,22 @@ def main():
         sys.exit(1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # PHASE 4: Fan out to FB + LI (+ IG in 'image' mode) via Buffer
+    # PHASE 4: Fan out to FB + LI + Pinterest (+ IG in 'image' mode) via Buffer
     # ─────────────────────────────────────────────────────────────────────
     run_id = log_cron_start(platform="tiktok", job_type="buffer_send")
     sent_count = 0   # tweets where at least one leg shipped
     error_count = 0
     leg_results: list[dict] = []
 
-    # Channel lookups degrade gracefully: a None channel id means that
-    # leg is skipped for the whole run (skipped_no_channel).
-    fb_channel_id, li_channel_id, ig_channel_id = resolve_extra_channel_ids()
+    # Channel/board lookups degrade gracefully: a None channel id means that
+    # leg is skipped for the whole run (skipped_no_channel / skipped_no_board).
+    (
+        fb_channel_id,
+        li_channel_id,
+        ig_channel_id,
+        pin_channel_id,
+        pin_board_service_id,
+    ) = resolve_extra_channel_ids()
 
     for tweet in new_tweets:
         tweet_id = str(tweet["id"])
@@ -227,6 +233,8 @@ def main():
                 fb_channel_id=fb_channel_id,
                 li_channel_id=li_channel_id,
                 ig_channel_id=ig_channel_id,
+                pin_channel_id=pin_channel_id,
+                pin_board_service_id=pin_board_service_id,
                 source_tag=SOURCE_TAG,
             )
             leg_results.append(leg_result)

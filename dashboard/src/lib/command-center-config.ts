@@ -36,7 +36,8 @@ export type PlatformId =
   | "linkedin"
   | "threads"
   | "facebook"
-  | "snapchat";
+  | "snapchat"
+  | "pinterest";
 
 export interface FormatPlatform {
   id: PlatformId;
@@ -229,13 +230,15 @@ export const FORMATS: Format[] = [
       { id: "tiktok", name: "TikTok" },
       { id: "facebook", name: "Facebook" },
       { id: "linkedin", name: "LinkedIn" },
+      { id: "pinterest", name: "Pinterest" },
     ],
     // /tweet-cards hosts both unified pathways: "X Outlier Reel" (Apify
     // scrape of @AlexHormozi) and "X Bank Reel" (random pick from
-    // TweetMasterBank.csv). Each pathway renders the source tweet 3 ways
-    // — 1080×1920 MP4 (TikTok), 1080×1080 PNG (Facebook), 1080×1080 PNG
-    // with LinkedIn color overrides — and fans out to three Buffer
-    // channels in a single cron run. The Instagram leg is PAUSED
+    // TweetMasterBank.csv). Each pathway renders the source tweet as a
+    // 1080×1080 PNG (Facebook) and fans out the same image to LinkedIn
+    // and Pinterest in a single cron run — Pinterest additionally
+    // publishes the tweet text as the pin description (the other legs
+    // ship caption-free). The Instagram leg is PAUSED
     // (IG_TWEET_CARD_FORMAT defaults to 'off'): Instagram is now fed by
     // the standalone carousel cron (cron/instagram_carousel_pipeline.py),
     // which ships a daily 6-slide 1080×1350 carousel — a "Brutally honest
@@ -243,11 +246,11 @@ export const FORMATS: Format[] = [
     // then 5 outlier tweets all >= 6500 likes.
     href: "/tweet-cards",
     // Cron writes one post row per platform per run (see
-    // cron/_tweet_card_legs.py): tiktok / facebook / linkedin. Any of
-    // the three producing a row in the last 24h marks the format healthy.
-    // (instagram rows now come from the carousel cron, so it no longer
-    // belongs to this card's health signal.)
-    healthPlatforms: ["tiktok", "facebook", "linkedin"],
+    // cron/_tweet_card_legs.py): tiktok / facebook / linkedin /
+    // pinterest. Any of them producing a row in the last 24h marks the
+    // format healthy. (instagram rows now come from the carousel cron,
+    // so it no longer belongs to this card's health signal.)
+    healthPlatforms: ["tiktok", "facebook", "linkedin", "pinterest"],
   },
   {
     // Instagram Carousels — the daily "Brutally honest advice to

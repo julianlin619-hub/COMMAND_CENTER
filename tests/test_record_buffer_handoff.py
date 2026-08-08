@@ -56,3 +56,26 @@ def test_record_buffer_handoff_carries_post_types_and_defaults_metadata(monkeypa
     # No base_metadata → metadata is just the replay block.
     assert set(md.keys()) == {"buffer_replay"}
     assert md["buffer_replay"]["instagram_post_type"] == "post"
+
+
+def test_record_buffer_handoff_carries_pinterest_block_and_caption_limit(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr(
+        db, "update_post",
+        lambda post_id, **fields: captured.update({"post_id": post_id, **fields}),
+    )
+
+    db.record_buffer_handoff(
+        "p3", "buf3",
+        channel_id="pin1",
+        body="the tweet text",
+        media_type="image",
+        pinterest={"boardServiceId": "111"},
+        caption_limit=500,
+    )
+
+    replay = captured["metadata"]["buffer_replay"]
+    # Board + caption limit must survive into the replay, or a reconcile
+    # re-send would be board-less (rejected) and re-truncated to 150.
+    assert replay["pinterest"] == {"boardServiceId": "111"}
+    assert replay["caption_limit"] == 500

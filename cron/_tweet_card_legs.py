@@ -1,4 +1,4 @@
-"""Shared Facebook + LinkedIn + Instagram fan-out logic for the unified Tweet Card pipelines.
+"""Shared Facebook + LinkedIn + Instagram + Pinterest fan-out logic for the unified Tweet Card pipelines.
 
 Both cron/tiktok_pipeline.py and cron/tiktok_bank_pipeline.py call into
 this module as their primary render + fan-out, so the per-tweet FB/LI/IG
@@ -16,16 +16,20 @@ This file owns:
     (insert posts row → dedup-via-unique-index → signed URL → Buffer send
     → stamp buffer_post_id, or flip to buffer_error on send failure).
 
-The LinkedIn and Instagram feed-post legs reuse the Facebook 1080×1080
+The LinkedIn, Instagram, and Pinterest legs reuse the Facebook 1080×1080
 PNG byte-for-byte rather than re-rendering — same format, same template,
-same content. This is intentional: LinkedIn-/Instagram-specific render
-variants don't add enough visual difference to justify the extra
-content-gen call per tweet, and the user explicitly opted into letting
-these three platforms ship identical images.
+same content. This is intentional: platform-specific render variants
+don't add enough visual difference to justify the extra content-gen call
+per tweet, and the user explicitly opted into letting these platforms
+ship identical images.
 
 Buffer-side platform metadata still differs per leg (e.g.
 instagram_post_type='post' for IG feed, facebook_post_type='post' for
-FB) — only the *image bytes* are shared.
+FB, a pinterest board block for pins) — only the *image bytes* are
+shared. Captions also differ: FB/LI/IG publish with NO caption (the
+tweet text is already on the card), while Pinterest publishes the tweet
+text as the pin description — pins live in search, and a text-less pin
+is undiscoverable.
 
 Lives under cron/ (not core/) because it does cron-loop concerns —
 post-row writes and Buffer sends — rather than platform-adapter
@@ -38,7 +42,11 @@ import logging
 import os
 from typing import Any
 
-from core.buffer import get_channel_id, send_to_buffer
+from core.buffer import (
+    get_channel_id,
+    get_pinterest_board_service_id,
+    send_to_buffer,
+)
 from core.content_gen_client import generate_content
 from core.database import (
     insert_post,
@@ -57,12 +65,36 @@ logger = logging.getLogger(__name__)
 # migration 20260412105433_rls_and_dedup.sql fires.
 _PG_UNIQUE_VIOLATION = "23505"
 
-# Visible Buffer caption every leg uses on every platform today. Lives
-# here (instead of as a per-platform constant) because it's identical
-# across FB/LI/IG and the unified pipelines treat it as a single string.
-# Intentionally blank: the tweet text is already rendered onto the card,
-# so the published post ships with no caption text.
+# Visible Buffer caption the FB/LI/IG legs use. Lives here (instead of
+# as a per-platform constant) because it's identical across those three
+# and the unified pipelines treat it as a single string. Intentionally
+# blank: the tweet text is already rendered onto the card, so the
+# published post ships with no caption text. (The Pinterest leg is the
+# exception — it publishes the tweet text as the pin description, passed
+# explicitly as buffer_body in fanout_extra_legs_for_one_tweet.)
 BUFFER_CAPTION = ""
+
+# Pinterest pin descriptions cap at 500 characters — well above a tweet's
+# 280, so in practice nothing truncates. Passed as caption_limit so
+# send_to_buffer's default 150-char TikTok truncation doesn't amputate
+# the tweet text mid-sentence.
+PINTEREST_CAPTION_LIMIT = 500
+
+
+def pinterest_board_name() -> str:
+    """The Pinterest board the tweet-card leg pins to, by name.
+
+    Read from the PINTEREST_BOARD_NAME env var (matching the os.environ
+    config style the pipelines use for IG_TWEET_CARD_FORMAT etc.) so the
+    operator can retarget the board on Render without a code change. The
+    name is matched case-insensitively against the boards on the
+    connected Pinterest channel; a name that matches no board fails the
+    lookup loudly with the available board names in the error.
+
+    Defaults to "Business Tactics" — the board on the connected
+    hormozi_official channel that best fits the tweet-card content.
+    """
+    return os.environ.get("PINTEREST_BOARD_NAME", "Business Tactics").strip()
 
 
 def instagram_card_format() -> str:
@@ -305,6 +337,11 @@ def send_leg(
             media_type=media_type,
             facebook_post_type=extra_send_kwargs.get("facebook_post_type"),
             instagram_post_type=extra_send_kwargs.get("instagram_post_type"),
+            # Pinterest needs its board block and non-default caption limit
+            # to survive into the replay payload, or a reconcile re-send
+            # would be board-less (rejected) and re-truncated to 150 chars.
+            pinterest=extra_send_kwargs.get("pinterest"),
+            caption_limit=extra_send_kwargs.get("caption_limit"),
             base_metadata={"source": source_tag},
         )
         logger.info("[%s] sent to Buffer: %s (Buffer post %s)", platform, storage_path, buffer_post_id)
@@ -343,9 +380,11 @@ def fanout_extra_legs_for_one_tweet(
     fb_channel_id: str | None,
     li_channel_id: str | None,
     ig_channel_id: str | None,
+    pin_channel_id: str | None,
+    pin_board_service_id: str | None,
     source_tag: str,
 ) -> dict[str, dict[str, Any]]:
-    """Send the Facebook + LinkedIn + Instagram legs for a single tweet.
+    """Send the Facebook + LinkedIn + Instagram + Pinterest legs for a single tweet.
 
     Called by both unified pipelines inside their send-phase loop. Each
     leg can independently skip when:
@@ -363,6 +402,14 @@ def fanout_extra_legs_for_one_tweet(
       - linkedin : fb_storage_path (reuses FB bytes — same image. Saves
                    a generate-call per tweet; operator opted into
                    FB/LI visual parity.)
+      - pinterest: fb_storage_path (same FB bytes again — 1:1 pins are
+                   fine on Pinterest, no dedicated render). Unlike the
+                   other legs, the pin's *description* is the tweet text
+                   (buffer_body=tweet_caption): pins are a search
+                   surface, so the copy matters even though it's also on
+                   the card. Requires pin_board_service_id — Pinterest
+                   can't pin without a board — so a failed board lookup
+                   skips the leg with 'skipped_no_board'.
       - instagram: depends on the IG_TWEET_CARD_FORMAT toggle
                    (see instagram_card_format()):
                      * 'off' (default) → leg is PAUSED: nothing renders or
@@ -379,11 +426,13 @@ def fanout_extra_legs_for_one_tweet(
     Returns:
         {'facebook':  {<send_leg result> | <skip reason>},
          'linkedin':  {<send_leg result> | <skip reason>},
-         'instagram': {<send_leg result> | <skip reason>}}
+         'instagram': {<send_leg result> | <skip reason>},
+         'pinterest': {<send_leg result> | <skip reason>}}
 
     Skip reasons use `status` values: 'skipped_no_render',
     'skipped_no_channel', 'skipped_dedup', 'skipped_paused' (IG leg only,
-    when IG_TWEET_CARD_FORMAT resolves to 'off').
+    when IG_TWEET_CARD_FORMAT resolves to 'off'), 'skipped_no_board'
+    (Pinterest leg only, when the board lookup failed for the run).
     """
     # 'off' pauses the IG leg entirely (see instagram_card_format): report a
     # distinct skip status so the leg summary / logs show the leg was paused
@@ -413,6 +462,32 @@ def fanout_extra_legs_for_one_tweet(
             extra_send_kwargs={"instagram_post_type": "post"},
         )
     )
+    # Pinterest can't create a pin without a board, so a run where the
+    # board lookup failed (bad PINTEREST_BOARD_NAME, Buffer hiccup) skips
+    # the leg with its own status — distinct from skipped_no_channel so
+    # logs show which of the two lookups actually broke.
+    pin_result = (
+        {"status": "skipped_no_board", "post_id": None, "buffer_post_id": None, "error": None}
+        if pin_channel_id is not None and pin_board_service_id is None
+        else _send_or_skip(
+            platform="pinterest",
+            channel_id=pin_channel_id,
+            # Same FB 1:1 PNG as the LinkedIn leg — no Pinterest render.
+            storage_path=fb_storage_path,
+            caption=tweet_caption,
+            source_tag=source_tag,
+            # Unlike every other leg, Pinterest publishes the tweet text
+            # as the pin description — pins are found via search, so the
+            # copy has to exist as text, not just pixels on the card.
+            buffer_body=tweet_caption,
+            extra_send_kwargs={
+                "pinterest": {"boardServiceId": pin_board_service_id},
+                # Lift send_to_buffer's default 150-char TikTok truncation
+                # so the full tweet text survives as the description.
+                "caption_limit": PINTEREST_CAPTION_LIMIT,
+            },
+        )
+    )
     return {
         "facebook": _send_or_skip(
             platform="facebook",
@@ -436,6 +511,7 @@ def fanout_extra_legs_for_one_tweet(
             extra_send_kwargs={},
         ),
         "instagram": ig_result,
+        "pinterest": pin_result,
     }
 
 
@@ -478,13 +554,17 @@ def _send_or_skip(
     )
 
 
-def resolve_extra_channel_ids() -> tuple[str | None, str | None, str | None]:
-    """Look up Facebook + LinkedIn + Instagram Buffer channel IDs once per run.
+def resolve_extra_channel_ids() -> tuple[
+    str | None, str | None, str | None, str | None, str | None
+]:
+    """Look up the Buffer channel IDs (and Pinterest board) once per run.
 
-    Returns (fb_channel_id, li_channel_id, ig_channel_id). Any can be
-    None when the channel isn't connected in Buffer. A None result
-    means the corresponding leg is skipped for the whole run via the
-    `skipped_no_channel` short-circuit in fanout_extra_legs_for_one_tweet.
+    Returns (fb_channel_id, li_channel_id, ig_channel_id, pin_channel_id,
+    pin_board_service_id). Any can be None when the channel isn't
+    connected in Buffer (or, for the board, when the PINTEREST_BOARD_NAME
+    lookup fails). A None result means the corresponding leg is skipped
+    for the whole run via the `skipped_no_channel` / `skipped_no_board`
+    short-circuits in fanout_extra_legs_for_one_tweet.
     """
     fb = _safe_channel_lookup("facebook")
     # Both TikTok pipelines post Alex's content — pin to Alex's LinkedIn channel
@@ -492,7 +572,12 @@ def resolve_extra_channel_ids() -> tuple[str | None, str | None, str | None]:
     # match when two LinkedIn channels exist in the same org).
     li = _safe_channel_lookup("linkedin", name="alexhormozi")
     ig = _safe_channel_lookup("instagram")
-    return fb, li, ig
+    pin = _safe_channel_lookup("pinterest")
+    # Only bother resolving the board when the channel exists — without a
+    # channel the leg is skipped anyway, and the board query would just
+    # re-fail with the same "no pinterest channel" error.
+    pin_board = _safe_pinterest_board_lookup() if pin else None
+    return fb, li, ig, pin, pin_board
 
 
 def _safe_channel_lookup(service: str, name: str | None = None) -> str | None:
@@ -502,6 +587,25 @@ def _safe_channel_lookup(service: str, name: str | None = None) -> str | None:
         logger.warning(
             "Could not resolve Buffer %s channel ID — leg will be skipped for this run: %s",
             service, e,
+        )
+        return None
+
+
+def _safe_pinterest_board_lookup() -> str | None:
+    """Resolve PINTEREST_BOARD_NAME to a board serviceId, or None on failure.
+
+    Mirrors _safe_channel_lookup's degrade-gracefully contract: a failed
+    lookup (typo'd board name, Buffer hiccup) logs a warning — including
+    the available board names, courtesy of get_pinterest_board_service_id's
+    error message — and skips the Pinterest leg for the run instead of
+    crashing the whole fan-out.
+    """
+    try:
+        return get_pinterest_board_service_id(pinterest_board_name())
+    except Exception as e:
+        logger.warning(
+            "Could not resolve Pinterest board — leg will be skipped for this run: %s",
+            e,
         )
         return None
 
@@ -518,23 +622,12 @@ def summarize_leg_failures(leg_results: list[dict[str, dict[str, Any]]]) -> str 
     into `log_cron_finish(error_message=...)` — cron_runs has no
     `metadata` column, so this string is the only leg-health surface.
     """
-    fb_failures = sum(
-        1 for r in leg_results
-        if r["facebook"]["status"] in {"db_failed", "buffer_failed"}
-    )
-    li_failures = sum(
-        1 for r in leg_results
-        if r["linkedin"]["status"] in {"db_failed", "buffer_failed"}
-    )
-    ig_failures = sum(
-        1 for r in leg_results
-        if r["instagram"]["status"] in {"db_failed", "buffer_failed"}
-    )
     parts: list[str] = []
-    if fb_failures:
-        parts.append(f"facebook leg failures: {fb_failures}")
-    if li_failures:
-        parts.append(f"linkedin leg failures: {li_failures}")
-    if ig_failures:
-        parts.append(f"instagram leg failures: {ig_failures}")
+    for platform in ("facebook", "linkedin", "instagram", "pinterest"):
+        failures = sum(
+            1 for r in leg_results
+            if r[platform]["status"] in {"db_failed", "buffer_failed"}
+        )
+        if failures:
+            parts.append(f"{platform} leg failures: {failures}")
     return ", ".join(parts) or None

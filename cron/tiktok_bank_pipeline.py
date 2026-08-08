@@ -164,11 +164,17 @@ def main():
         sys.exit(1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # PHASE 3: Fan out to FB + LI (+ IG in 'image' mode) via Buffer
+    # PHASE 3: Fan out to FB + LI + Pinterest (+ IG in 'image' mode) via Buffer
     # ─────────────────────────────────────────────────────────────────────
     run_id = log_cron_start(platform="tiktok", job_type="bank_send")
 
-    fb_channel_id, li_channel_id, ig_channel_id = resolve_extra_channel_ids()
+    (
+        fb_channel_id,
+        li_channel_id,
+        ig_channel_id,
+        pin_channel_id,
+        pin_board_service_id,
+    ) = resolve_extra_channel_ids()
 
     tweet_id = str(tweet_for_render["id"])
     caption = picked["normalized"]
@@ -188,6 +194,8 @@ def main():
             fb_channel_id=fb_channel_id,
             li_channel_id=li_channel_id,
             ig_channel_id=ig_channel_id,
+            pin_channel_id=pin_channel_id,
+            pin_board_service_id=pin_board_service_id,
             source_tag=SOURCE_TAG,
         )
         leg_summary = summarize_leg_failures([leg_result])

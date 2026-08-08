@@ -160,6 +160,7 @@ def record_buffer_handoff(
     facebook_post_type: str | None = None,
     instagram_post_type: str | None = None,
     youtube: dict | None = None,
+    pinterest: dict | None = None,
     caption_limit: int | None = None,
     base_metadata: dict | None = None,
 ) -> None:
@@ -196,6 +197,10 @@ def record_buffer_handoff(
         replay["instagram_post_type"] = instagram_post_type
     if youtube:
         replay["youtube"] = youtube
+    # Pinterest replay needs the board (boardServiceId) — Buffer can't pin
+    # without one, so a reconcile re-send stripped of this block would fail.
+    if pinterest:
+        replay["pinterest"] = pinterest
     if caption_limit is not None:
         replay["caption_limit"] = caption_limit
 

@@ -52,6 +52,10 @@ class Post(BaseModel):
         # unattended posting. Session cookies live in the platform_session_state
         # table. Added in migration 20260519120000_add_snapchat_enum.sql.
         "snapchat",
+        # Pinterest leg of the Tweet Card fan-out — ships the Facebook
+        # 1080×1080 PNG as a pin via Buffer, with the tweet text as the pin
+        # description. Added in migration 20260808120000_pinterest_enum.sql.
+        "pinterest",
     ]
     # The ID the platform gives back after publishing (e.g. a YouTube video ID).
     # None until the post is actually published.

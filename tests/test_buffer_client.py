@@ -178,3 +178,57 @@ def test_send_to_buffer_empty_url_list_raises(monkeypatch):
     _capture_create_post(monkeypatch)
     with pytest.raises(ValueError, match="at least one media URL"):
         buffer.send_to_buffer("ch1", "", [], media_type="image")
+
+
+def test_send_to_buffer_pinterest_metadata_and_caption_limit(monkeypatch):
+    captured = _capture_create_post(monkeypatch)
+    long_caption = "x" * 300  # over the default 150 limit, under Pinterest's 500
+    buffer.send_to_buffer(
+        "ch1", long_caption, "https://x/img.png",
+        media_type="image",
+        pinterest={"boardServiceId": "113659609"},
+        caption_limit=500,
+    )
+    # The board block is passed through under metadata.pinterest, and the
+    # raised caption_limit keeps the full text (no 150-char truncation).
+    assert captured["metadata"]["pinterest"] == {"boardServiceId": "113659609"}
+    assert captured["text"] == long_caption
+
+
+# ── get_pinterest_board_service_id ───────────────────────────────────────
+
+
+def _install_board_channels(monkeypatch, channels):
+    """Stub _buffer_request with a fixed channels payload and clear the cache."""
+    monkeypatch.setenv("BUFFER_ORG_ID", "org1")
+    monkeypatch.setattr(buffer, "_cached_pinterest_board_ids", {})
+    monkeypatch.setattr(
+        buffer, "_buffer_request", lambda query, variables=None: {"channels": channels}
+    )
+
+
+def test_get_pinterest_board_service_id_matches_case_insensitively(monkeypatch):
+    _install_board_channels(monkeypatch, [
+        {"service": "facebook", "metadata": {}},
+        {"service": "pinterest", "metadata": {"boards": [
+            {"id": "b1", "name": "Business Tactics", "serviceId": "111"},
+            {"id": "b2", "name": "Life quotes", "serviceId": "222"},
+        ]}},
+    ])
+    assert buffer.get_pinterest_board_service_id("business tactics") == "111"
+
+
+def test_get_pinterest_board_service_id_unknown_board_lists_available(monkeypatch):
+    _install_board_channels(monkeypatch, [
+        {"service": "pinterest", "metadata": {"boards": [
+            {"id": "b1", "name": "Business Tactics", "serviceId": "111"},
+        ]}},
+    ])
+    with pytest.raises(RuntimeError, match="Business Tactics"):
+        buffer.get_pinterest_board_service_id("Nope")
+
+
+def test_get_pinterest_board_service_id_no_channel_raises(monkeypatch):
+    _install_board_channels(monkeypatch, [{"service": "facebook", "metadata": {}}])
+    with pytest.raises(RuntimeError, match="No pinterest channel"):
+        buffer.get_pinterest_board_service_id("Business Tactics")

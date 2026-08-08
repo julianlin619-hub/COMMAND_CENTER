@@ -239,12 +239,91 @@ def get_channel_id(
     return match["id"]
 
 
+# Cache Pinterest board serviceIds per board name for the lifetime of a cron
+# run, mirroring _cached_channel_ids — boards don't change mid-run and the
+# lookup costs a full channels query with metadata.
+_cached_pinterest_board_ids: dict[str, str] = {}
+
+
+def get_pinterest_board_service_id(
+    board_name: str, org_id: str | None = None
+) -> str:
+    """Look up a Pinterest board's serviceId in the org's Pinterest channel.
+
+    Pinterest requires every pin to land on a board, and Buffer's createPost
+    expects the *Pinterest-side* board id (`serviceId` on the channel's
+    metadata.boards entries — a long numeric string), not Buffer's own board
+    id. This resolves a human-readable board name (case-insensitive) to that
+    serviceId so callers can configure the target board by name via env var.
+
+    Raises:
+        RuntimeError: If no Pinterest channel is connected, or no board with
+            that name exists on it (the error lists the available boards so
+            a typo in the env var is diagnosable straight from cron logs).
+    """
+    cache_key = board_name.lower()
+    if cache_key in _cached_pinterest_board_ids:
+        return _cached_pinterest_board_ids[cache_key]
+
+    org = org_id or os.environ.get("BUFFER_ORG_ID", "")
+    if not org:
+        raise RuntimeError("BUFFER_ORG_ID env var not set")
+
+    # channels.metadata is a union type — the inline fragment picks out the
+    # Pinterest variant's boards list; other services yield empty metadata.
+    data = _buffer_request(
+        """
+        query GetPinterestBoards($orgId: OrganizationId!) {
+            channels(input: { organizationId: $orgId }) {
+                service
+                metadata {
+                    ... on PinterestMetadata {
+                        boards { id name serviceId }
+                    }
+                }
+            }
+        }
+        """,
+        {"orgId": org},
+    )
+
+    channel = next(
+        (c for c in data.get("channels", []) if c.get("service") == "pinterest"),
+        None,
+    )
+    if not channel:
+        raise RuntimeError(
+            "No pinterest channel connected in Buffer. "
+            "Connect pinterest at buffer.com first."
+        )
+
+    boards = (channel.get("metadata") or {}).get("boards") or []
+    match = next(
+        (b for b in boards if str(b.get("name", "")).lower() == cache_key),
+        None,
+    )
+    if not match or not match.get("serviceId"):
+        available = ", ".join(str(b.get("name", "?")) for b in boards) or "none"
+        raise RuntimeError(
+            f'No Pinterest board named "{board_name}" on the connected channel. '
+            f"Available boards: {available}"
+        )
+
+    _cached_pinterest_board_ids[cache_key] = match["serviceId"]
+    logger.info(
+        "Found Pinterest board in Buffer: %s (serviceId %s)",
+        match["name"], match["serviceId"],
+    )
+    return match["serviceId"]
+
+
 def send_to_buffer(
     channel_id: str, caption: str, media_url: str | list[str],
     media_type: str = "video",
     facebook_post_type: str | None = None,
     instagram_post_type: str | None = None,
     youtube: dict | None = None,
+    pinterest: dict | None = None,
     caption_limit: int | None = None,
 ) -> str:
     """Send content to Buffer's posting queue.
@@ -268,6 +347,12 @@ def send_to_buffer(
             optional tags). Required for the YouTube channel — Buffer rejects a
             YouTube post that's missing a category. Mirrors the YouTubeMetadata
             type in dashboard/src/lib/buffer.ts.
+        pinterest: Optional Pinterest metadata block. Buffer's
+            PinterestPostMetadataInput accepts {boardServiceId, title, url} —
+            boardServiceId is the Pinterest-side board id (the `serviceId`
+            field on the channel's boards, see get_pinterest_board_service_id),
+            NOT Buffer's own board id. Pinterest requires every pin to land on
+            a board, so callers should always pass boardServiceId.
         caption_limit: Override the 150-char TikTok truncation. YouTube callers
             pass 5000 (descriptions) and X callers pass 280 so captions aren't
             amputated unnecessarily.
@@ -312,6 +397,8 @@ def send_to_buffer(
         if not yt.get("tags"):
             yt.pop("tags", None)
         metadata["youtube"] = yt
+    if pinterest:
+        metadata["pinterest"] = pinterest
 
     post_input: dict = {
         "channelId": channel_id,

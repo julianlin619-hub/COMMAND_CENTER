@@ -1,0 +1,14 @@
+-- Pinterest platform: enum addition.
+--
+-- The unified Tweet Card fan-out (cron/_tweet_card_legs.py) grows a fourth
+-- leg that ships the Facebook 1080×1080 tweet-card PNG to Pinterest via
+-- Buffer. That leg inserts posts rows with platform='pinterest' (for the
+-- per-platform caption dedup index) and the buffer-reconcile cron reads the
+-- same value back; without this enum value those inserts fail with
+-- "invalid input value for enum platform_enum".
+--
+-- Isolated in its own migration on purpose: Postgres forbids USING a new
+-- enum value inside the same transaction that ADDs it, so any migration
+-- (or code path) that consumes 'pinterest' must run after this one commits.
+-- IF NOT EXISTS keeps re-runs safe.
+ALTER TYPE platform_enum ADD VALUE IF NOT EXISTS 'pinterest';

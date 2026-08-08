@@ -25,6 +25,7 @@ import {
   FaThreads,
   FaFacebookF,
   FaSnapchat,
+  FaPinterestP,
 } from "react-icons/fa6";
 import type { IconType } from "react-icons";
 import {
@@ -43,6 +44,7 @@ const PLATFORM_GLYPHS: Record<PlatformId, IconType> = {
   threads: FaThreads,
   facebook: FaFacebookF,
   snapchat: FaSnapchat,
+  pinterest: FaPinterestP,
 };
 
 interface PlatformChipProps {

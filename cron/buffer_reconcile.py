@@ -148,6 +148,7 @@ def _resend(post: dict, replay: dict) -> str:
             facebook_post_type=replay.get("facebook_post_type"),
             instagram_post_type=replay.get("instagram_post_type"),
             youtube=replay.get("youtube"),
+            pinterest=replay.get("pinterest"),
             caption_limit=replay.get("caption_limit"),
         )
 

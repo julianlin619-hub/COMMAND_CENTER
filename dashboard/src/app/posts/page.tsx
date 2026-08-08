@@ -34,6 +34,7 @@ const PLATFORM_INITIALS: Record<string, string> = {
   linkedin: "LI",
   facebook: "FB",
   threads: "TH",
+  pinterest: "PN",
 };
 
 // Status → pill token mapping. We drive the pill colors entirely off the
