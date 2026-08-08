@@ -99,11 +99,17 @@ def _can_resend(post: dict, replay: dict | None) -> bool:
     adapter (need the Buffer channel id in the replay). Posts created before
     replay payloads were persisted have no `buffer_replay` and can't be retried.
     """
-    # TikTok publishing was retired in Aug 2026 — never re-send a failed
-    # tiktok post back to the TikTok channel. Returning False routes the
-    # row to the terminal buffer_error path so it stays visible in the
-    # dashboard instead of quietly re-queueing on a dead platform.
-    if post.get("platform") == "tiktok":
+    # The TikTok tweet-REEL leg was retired in Aug 2026 — never re-send
+    # one of its failed posts back to the TikTok channel. Carousel-source
+    # rows are exempt: the instagram-carousel pipeline actively mirrors
+    # its slides to TikTok as photo carousels, and those SHOULD retry.
+    # Returning False routes a retired row to the terminal buffer_error
+    # path so it stays visible in the dashboard instead of quietly
+    # re-queueing dead content.
+    if (
+        post.get("platform") == "tiktok"
+        and (post.get("metadata") or {}).get("source") != "carousel"
+    ):
         return False
     if replay and replay.get("media_type") and (post.get("media_urls") or []):
         return True

@@ -187,7 +187,9 @@ services:
     # pill, then 9 outlier tweets all >= 6500 likes (recent Apify
     # outliers first, bank top-up). Renders 1080×1350 quote cards and
     # queues ONE 10-slide Buffer carousel (IG's max) to Alex's main IG
-    # channel. Owns Instagram now that the tweet-card IG reel leg
+    # channel, then mirrors the same slides to the TikTok channel as a
+    # photo-mode carousel (TikTok auto-applies a music track — Buffer's
+    # API has no music field). Owns Instagram now that the tweet-card IG reel leg
     # defaults to 'off'.
     # 11:30 UTC — after tweet-reel-recent (11:00) and tweet-reel-bank (11:15)
     # so its dashboard render call doesn't fight their ffmpeg jobs, and
