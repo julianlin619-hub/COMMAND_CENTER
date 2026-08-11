@@ -232,9 +232,8 @@ export const FORMATS: Format[] = [
     // ship caption-free). The Instagram leg is PAUSED
     // (IG_TWEET_CARD_FORMAT defaults to 'off'): Instagram is now fed by
     // the standalone carousel cron (cron/instagram_carousel_pipeline.py),
-    // which ships a daily 6-slide 1080×1350 carousel — a "Brutally honest
-    // advice to my younger self (Day N)" title card with a SWIPE → pill,
-    // then 5 outlier tweets all >= 6500 likes.
+    // which ships a daily 1080×1350 carousel of outlier tweets all
+    // >= 6500 likes (no title card — slide 1 is the strongest tweet).
     href: "/tweet-cards",
     // Cron writes one post row per platform per run (see
     // cron/_tweet_card_legs.py): facebook / linkedin / pinterest. Any of
@@ -247,14 +246,16 @@ export const FORMATS: Format[] = [
     healthPlatforms: ["facebook", "linkedin", "pinterest"],
   },
   {
-    // Instagram Carousels — the daily "Brutally honest advice to
-    // my younger self (Day N)" carousel (cron/instagram_carousel_pipeline.py,
-    // Render cron `instagram-carousel`, 11:30 UTC daily). Each run ships
-    // ONE 10-slide 1080×1350 carousel to Alex's
-    // main IG via Buffer: a Day-N title card with a SWIPE → pill, then
-    // 9 outlier tweets all >= 6500 likes (recent Apify outliers first,
-    // bank top-up). Replaced the
-    // tweet-card fan-out's IG reel leg (paused via IG_TWEET_CARD_FORMAT).
+    // Instagram Carousels — the daily outlier-tweet carousel
+    // (cron/instagram_carousel_pipeline.py, Render cron
+    // `instagram-carousel`, 11:30 UTC daily). Each run ships ONE 10-slide
+    // 1080×1350 carousel (IG's max) to Alex's main IG via Buffer: 10
+    // outlier tweets all >= 6500 likes, most-liked first (recent Apify
+    // outliers first, bank top-up). No title/intro card — the carousel
+    // opens directly on
+    // its strongest tweet (the Day-N counter lives on in metadata as a
+    // dedup key only). Replaced the tweet-card fan-out's IG reel leg
+    // (paused via IG_TWEET_CARD_FORMAT).
     // No href yet — there's no detail page for this pipeline, so the
     // card is a status surface only (the schema treats a missing href as
     // a deliberate no-op, same as other pages-less formats).

@@ -69,11 +69,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = (await req.json()) as {
-      // `swipe` marks a carousel title-card slide: rendered like any quote
-      // card but with a red "SWIPE →" pill below the text (see
-      // renderSquareQuoteCard's swipeBadge option). Only meaningful for
-      // square-template platforms; the TikTok branch ignores it.
-      tweets: { id: string; text: string; swipe?: boolean }[];
+      tweets: { id: string; text: string }[];
       platform?: string;
     };
     const { tweets, platform: rawPlatform = "tiktok" } = body;
@@ -234,10 +230,7 @@ export async function POST(req: NextRequest) {
             const pngBuffer = await renderSquareQuoteCard(
               normalized,
               fbTemplateConfig!,
-              {
-                headerImageBuffer: platformHeaderBuffer,
-                swipeBadge: tweet.swipe === true,
-              },
+              { headerImageBuffer: platformHeaderBuffer },
             );
             const storagePath = `${platform}/tweet-${tweet.id}.png`;
 

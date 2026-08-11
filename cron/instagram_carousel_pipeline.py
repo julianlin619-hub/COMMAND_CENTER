@@ -1,21 +1,21 @@
 """Instagram Carousel pipeline — daily cron job.
 
 Replaces the paused Instagram reel leg of the tweet-card fan-out (see
-IG_TWEET_CARD_FORMAT in cron/_tweet_card_legs.py) with a daily
-"Brutally honest advice to my younger self (Day N)" carousel:
+IG_TWEET_CARD_FORMAT in cron/_tweet_card_legs.py) with a daily outlier-tweet
+carousel (there is no title/intro card — slide 1 is the strongest tweet):
 
-  Slide 1     — TITLE CARD: same 1080×1350 quote-card design, fixed text
-                "Brutally honest advice to my younger self (Day N)" plus a
-                red "SWIPE →" pill (renderSquareQuoteCard's swipeBadge).
-                N advances by one for every carousel that actually ships.
-  Slides 2-10 — nine outlier tweets, each >= CAROUSEL_MIN_LIKES likes
-                (default 6500): recent Apify outliers first, topped up
-                from the CSV bank when fewer than nine fresh ones exist.
-                1 + 9 = 10 slides, Instagram's carousel maximum. Slides
-                are always ordered most likes -> least likes, regardless
-                of which pathway a tweet came from.
+  Slides 1-10 — ten outlier tweets (Instagram's carousel maximum), each
+                >= CAROUSEL_MIN_LIKES likes (default 6500): recent Apify
+                outliers first, topped up from the CSV bank when fewer
+                than ten fresh ones exist. Slides are always ordered most
+                likes -> least likes, regardless of which pathway a tweet
+                came from.
 
-The carousel always ships with exactly 1 + CAROUSEL_TWEET_COUNT slides —
+Internally each shipped carousel still advances a "Day N" counter — it no
+longer appears on any slide, but it remains the per-day dedup key for the
+TikTok mirror leg and a human-readable series marker in metadata.
+
+The carousel always ships with exactly CAROUSEL_TWEET_COUNT slides —
 if nine unused qualifying tweets can't be found, or any slide fails to
 render, the run skips/fails cleanly and nothing is posted (the "Day N"
 series never ships a short set).
@@ -24,7 +24,7 @@ Dedup: every tweet used on any shipped carousel is tracked and never
 reused. Two layers:
   - metadata.tweet_ids on each carousel's posts row — the selection phase
     unions these across all live carousel rows and skips those ids;
-  - posts.caption stores slide 2's tweet text, so the existing
+  - posts.caption stores slide 1's tweet text, so the existing
     (platform, md5(caption)) partial-unique index also arbitrates
     concurrent runs, and post_caption_exists() text-checks every candidate
     against anything the old reel leg already shipped to the same channel.
@@ -41,8 +41,8 @@ to photo posts on its side (Buffer's API exposes no music-selection
 field, only isAiGenerated/title, so the track can't be chosen here).
 
 Three cron_runs phases, platform='instagram':
-  Phase 1 — carousel_pick:     day number + 9 outlier tweets
-  Phase 2 — carousel_generate: render title card + 9 tweet cards
+  Phase 1 — carousel_pick:     day number + 10 outlier tweets
+  Phase 2 — carousel_generate: render the 10 tweet cards
   Phase 3 — carousel_send:     insert posts row + one Buffer carousel send,
                                then the TikTok mirror leg
 
@@ -85,9 +85,18 @@ logger = logging.getLogger(__name__)
 # Also the key the day counter and used-tweet lookup filter on.
 SOURCE_TAG = "carousel"
 
-# The title-card series text. {day} is the only placeholder. Env-overridable
-# so a wording tweak doesn't need a deploy.
-DEFAULT_TITLE_TEMPLATE = "Brutally honest advice to my younger self (Day {day})"
+
+def _series_label(day: int) -> str:
+    """Internal per-day series marker — NOT rendered on any slide.
+
+    Stored in metadata.title for the dashboard and used as the TikTok mirror
+    row's dedup caption, which must be unique per day (see
+    _send_tiktok_carousel for why slide 1's tweet text can't be that key).
+    The old title-card wording ("Brutally honest advice…") was retired in
+    Aug 2026; captions never collide across the formats because the day
+    number only moves forward.
+    """
+    return f"Outlier carousel (Day {day})"
 
 
 def _text_fingerprint(text: str) -> str:
@@ -239,7 +248,6 @@ def main() -> None:
             "CAROUSEL_MIN_LIKES",
             "CAROUSEL_TWEET_COUNT",
             "CAROUSEL_MAX_ITEMS",
-            "CAROUSEL_TITLE_TEMPLATE",
             "CAROUSEL_DRY_RUN",
         ],
     )
@@ -249,10 +257,10 @@ def main() -> None:
     # One likes bar for BOTH pathways — the operator wants every slide to be
     # a >= 6500-like proven performer, regardless of where it came from.
     min_likes = int(os.environ.get("CAROUSEL_MIN_LIKES", "6500"))
-    # 9 tweets + the title card = 10 slides, Instagram's carousel maximum.
-    tweet_count = int(os.environ.get("CAROUSEL_TWEET_COUNT", "9"))
+    # 10 tweet slides, Instagram's carousel maximum (no title card since
+    # Aug 2026 — the carousel opens on its strongest tweet).
+    tweet_count = int(os.environ.get("CAROUSEL_TWEET_COUNT", "10"))
     max_items = int(os.environ.get("CAROUSEL_MAX_ITEMS", "15"))
-    title_template = os.environ.get("CAROUSEL_TITLE_TEMPLATE", DEFAULT_TITLE_TEMPLATE)
     # Mirrors YOUTUBE_STUDIO_DRY_RUN: pick + render for real, log the
     # would-be send, but write no posts row and touch no Buffer queue.
     dry_run = os.environ.get("CAROUSEL_DRY_RUN", "") == "1"
@@ -269,10 +277,9 @@ def main() -> None:
     run_id = log_cron_start(platform="instagram", job_type="carousel_pick")
     try:
         day, used_tweet_ids = _fetch_carousel_history()
-        title_text = title_template.format(day=day)
         logger.info(
-            "Day %d (%d tweets used on previous carousels): %s",
-            day, len(used_tweet_ids), title_text,
+            "Day %d (%d tweets used on previous carousels)",
+            day, len(used_tweet_ids),
         )
 
         tweets = _pick_carousel_tweets(
@@ -306,15 +313,13 @@ def main() -> None:
         sys.exit(1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # PHASE 2: Render title card + 5 tweet cards (all must succeed)
+    # PHASE 2: Render the tweet cards (all must succeed)
     # ─────────────────────────────────────────────────────────────────────
     run_id = log_cron_start(platform="instagram", job_type="carousel_generate")
     try:
-        # Slide order IS the payload order downstream: title first, then the
-        # five tweets. The title slide's id is deterministic per day so a
-        # re-run of the same day upserts the same storage object.
-        title_id = f"title-day-{day}"
-        render_payload = [{"id": title_id, "text": title_text, "swipe": True}] + [
+        # Slide order IS the payload order downstream: the carousel opens
+        # directly on the most-liked tweet (no title/intro card).
+        render_payload = [
             {"id": t["tweet_id"], "text": t["text"]} for t in tweets
         ]
         data = generate_content(
@@ -341,13 +346,13 @@ def main() -> None:
             )
 
         storage_paths = [rendered[p["id"]]["storagePath"] for p in render_payload]
-        # The route re-normalizes the text it renders; use ITS text for slide
-        # 2's tweet as the dedup caption so post_caption_exists and the
+        # The route re-normalizes the text it renders; use ITS text for
+        # slide 1's tweet as the dedup caption so post_caption_exists and the
         # md5(caption) index see exactly the string future runs re-derive.
         dedup_caption = rendered[tweets[0]["tweet_id"]]["text"]
 
         log_cron_finish(run_id, status="success", posts_processed=len(storage_paths))
-        logger.info("Phase 2: rendered %d slide(s) (title + %d tweets)", len(storage_paths), len(tweets))
+        logger.info("Phase 2: rendered %d tweet slide(s)", len(storage_paths))
     except Exception as e:
         logger.error("Phase 2 failed (generate): %s", e, exc_info=True)
         log_cron_finish(run_id, status="failed", error_message=str(e))
@@ -356,7 +361,7 @@ def main() -> None:
     metadata = {
         "source": SOURCE_TAG,
         "day": day,
-        "title": title_text,
+        "title": _series_label(day),
         # The never-reuse ledger: _fetch_carousel_history unions these
         # across all live carousel rows on every future run.
         "tweet_ids": [t["tweet_id"] for t in tweets],
@@ -386,8 +391,8 @@ def main() -> None:
 
     # Insert-first-then-send (the send_leg pattern, inlined because one row
     # carries the whole carousel): the partial-unique index on
-    # (platform, md5(caption)) arbitrates concurrent runs, keyed on slide 2's
-    # tweet text (the title text changes daily, so it can't be the key).
+    # (platform, md5(caption)) arbitrates concurrent runs, keyed on slide 1's
+    # tweet text.
     post = Post(
         platform="instagram",
         status="sent_to_buffer",
@@ -494,13 +499,14 @@ def _send_tiktok_carousel(
         return f"tiktok skipped (channel lookup failed: {str(e)[:120]})"
 
     # Insert-first-then-send, same as the IG row above — but the TikTok
-    # row's dedup caption is the TITLE ("... (Day N)", unique per day),
-    # not slide 2's tweet text. The retired tweet-reel pipeline filled
-    # platform='tiktok' rows with tweet texts, so keying on the tweet
-    # would wrongly block any carousel whose slide-2 tweet once shipped
-    # as a reel. The title still arbitrates the real risk (the same day
-    # double-queued by concurrent/re-runs) via the (platform,
-    # md5(caption)) index.
+    # row's dedup caption is the internal series label ("... (Day N)",
+    # unique per day), not slide 1's tweet text. The retired tweet-reel
+    # pipeline filled platform='tiktok' rows with tweet texts, so keying on
+    # the tweet would wrongly block any carousel whose slide-1 tweet once
+    # shipped as a reel. The label still arbitrates the real risk (the same
+    # day double-queued by concurrent/re-runs) via the (platform,
+    # md5(caption)) index. It is never rendered or shown on TikTok — the
+    # Buffer send below posts a blank caption.
     tiktok_caption = metadata.get("title") or dedup_caption
     post = Post(
         platform="tiktok",

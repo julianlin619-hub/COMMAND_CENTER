@@ -201,11 +201,11 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.instagram_carousel_pipeline
-    # Instagram carousel pathway — daily "Brutally honest advice
-    # to my younger self (Day N)" carousel: a title card with a SWIPE →
-    # pill, then 9 outlier tweets all >= 6500 likes (recent Apify
-    # outliers first, bank top-up). Renders 1080×1350 quote cards and
-    # queues ONE 10-slide Buffer carousel (IG's max) to Alex's main IG
+    # Instagram carousel pathway — daily outlier-tweet carousel: 10
+    # outlier tweets all >= 6500 likes, most-liked first (recent Apify
+    # outliers first, bank top-up; no title/intro card — slide 1 is the
+    # strongest tweet). Renders 1080×1350 quote cards and queues ONE
+    # 10-slide Buffer carousel (IG's max) to Alex's main IG
     # channel, then mirrors the same slides to the TikTok channel as a
     # photo-mode carousel (TikTok auto-applies a music track — Buffer's
     # API has no music field). Owns Instagram now that the tweet-card IG reel leg
@@ -237,9 +237,7 @@ services:
         sync: false
       - key: CAROUSEL_MIN_LIKES  # optional — default 6500 (every slide)
         sync: false
-      - key: CAROUSEL_TWEET_COUNT  # optional — default 9 tweets after the title
-        sync: false
-      - key: CAROUSEL_TITLE_TEMPLATE  # optional — override the Day-N title text
+      - key: CAROUSEL_TWEET_COUNT  # optional — default 10 slides (IG's max)
         sync: false
       - key: CAROUSEL_DRY_RUN  # optional — "1" = pick + render only, no send
         sync: false

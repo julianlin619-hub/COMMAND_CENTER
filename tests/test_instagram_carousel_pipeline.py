@@ -172,7 +172,8 @@ def test_text_fingerprint_collapses_formatting():
     assert pipeline._text_fingerprint("a") != pipeline._text_fingerprint("b")
 
 
-def test_title_template_formats_day():
-    assert pipeline.DEFAULT_TITLE_TEMPLATE.format(day=7) == (
-        "Brutally honest advice to my younger self (Day 7)"
-    )
+def test_series_label_is_unique_per_day():
+    # The label is the TikTok mirror row's dedup caption — per-day
+    # uniqueness is what the (platform, md5(caption)) index keys on.
+    assert pipeline._series_label(7) != pipeline._series_label(8)
+    assert "7" in pipeline._series_label(7)

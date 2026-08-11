@@ -46,9 +46,7 @@ def generate_content(
     Args:
         dashboard_url: Base URL of the dashboard (trailing slash ok).
         cron_secret: Bearer token for the Authorization header.
-        tweets: Iterable of {"id", "text"} mappings. An optional "swipe": True
-            marks a carousel title-card slide — the route renders it with the
-            red "SWIPE →" pill below the text.
+        tweets: Iterable of {"id", "text"} mappings.
         platform: Which template row to render with — "facebook"
             (1080x1080 PNG), "instagram" (portrait PNG), "linkedin_leila",
             or "ads". Required: the old "tiktok" MP4 default died with the
@@ -64,13 +62,10 @@ def generate_content(
     generate_url = f"{dashboard_url.rstrip('/')}/api/content-gen/generate"
     # Rebuild each tweet dict from an explicit allowlist (not a passthrough)
     # so stray keys the pipelines carry internally (like_count, normalized…)
-    # never leak into the API payload. "swipe" rides along only when set.
+    # never leak into the API payload.
     payload: dict[str, Any] = {
         "platform": platform,
-        "tweets": [
-            {"id": t["id"], "text": t["text"], **({"swipe": True} if t.get("swipe") else {})}
-            for t in tweets
-        ],
+        "tweets": [{"id": t["id"], "text": t["text"]} for t in tweets],
     }
     headers = {
         "Content-Type": "application/json",
