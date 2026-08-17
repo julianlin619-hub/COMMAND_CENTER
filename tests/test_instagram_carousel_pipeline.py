@@ -91,7 +91,6 @@ def _pick(monkeypatch, *, bank, used_ids=frozenset(), used_captions=frozenset(),
         lambda platform, caption: (platform, caption) in used_captions,
     )
     return pipeline._pick_carousel_tweets(
-        bank_path="data/TweetMasterBank.csv",
         min_likes=6500,
         count=count,
         used_tweet_ids=set(used_ids),

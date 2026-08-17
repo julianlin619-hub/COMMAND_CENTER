@@ -75,10 +75,9 @@ def main():
             "BUFFER_ACCESS_TOKEN",
             "BUFFER_ORG_ID",
         ],
-        optional=["CONTENT_BANK_PATH", "TIKTOK_BANK_MIN_LIKES"],
+        optional=["TIKTOK_BANK_MIN_LIKES"],
     )
 
-    bank_path = os.environ.get("CONTENT_BANK_PATH", "data/TweetMasterBank.csv")
     min_likes = int(os.environ.get("TIKTOK_BANK_MIN_LIKES", "6500"))
     dashboard_url = os.environ.get("DASHBOARD_URL", "")
     cron_secret = os.environ.get("CRON_SECRET", "")
@@ -97,7 +96,7 @@ def main():
         # filter we have several thousand candidates, so 20 is cheap and
         # gives plenty of fallback when the top picks are already posted.
         candidates = select_bank_content_with_likes(
-            bank_path, count=20, min_likes=min_likes,
+            count=20, min_likes=min_likes,
         )
 
         picked = None

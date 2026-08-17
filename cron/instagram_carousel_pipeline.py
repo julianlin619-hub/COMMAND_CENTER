@@ -5,9 +5,9 @@ IG_TWEET_CARD_FORMAT in cron/_tweet_card_legs.py) with a daily outlier-tweet
 carousel (there is no title/intro card — slide 1 is the strongest tweet):
 
   Slides 1-10 — ten outlier tweets (Instagram's carousel maximum), pulled
-                from the CSV bank ONLY, each >= CAROUSEL_MIN_LIKES likes
-                (default 6500 in code / 4000 on Render), ordered most
-                likes -> least likes.
+                from the bank ONLY (the tweet_bank table), each >=
+                CAROUSEL_MIN_LIKES likes (default 6500 in code / 4000 on
+                Render), ordered most likes -> least likes.
 
 Since 2026-08-17 the run also ships a SEPARATE solo-breakout leg BEFORE
 the carousel: Apify scrapes the account's recent tweets, and every tweet
@@ -150,16 +150,16 @@ def _fetch_carousel_history() -> tuple[int, set[str]]:
 
 def _pick_carousel_tweets(
     *,
-    bank_path: str,
     min_likes: int,
     count: int,
     used_tweet_ids: set[str],
 ) -> list[dict]:
-    """Pick up to `count` unused outlier tweets from the CSV bank.
+    """Pick up to `count` unused outlier tweets from the bank.
 
     Bank-only since 2026-08-17: fresh Apify tweets no longer feed the
     carousel — they ship as solo posts instead (see _pick_solo_breakouts).
-    The bank is a settled catalogue whose like counts are final, so
+    The bank (the tweet_bank table, topped up daily by the threads cron's
+    scrape) is a settled catalogue whose like counts are final, so
     `min_likes` (CAROUSEL_MIN_LIKES, default 6500 in code / 4000 on
     Render) is a "proven performer" bar, not a virality signal.
 
@@ -182,7 +182,7 @@ def _pick_carousel_tweets(
     # Pull a generous batch: the dedup gates thin the candidates and the
     # filtered bank read is cheap (CSV scan, no network).
     for candidate in select_bank_content_with_likes(
-        bank_path, count=count * 8, min_likes=min_likes,
+        count=count * 8, min_likes=min_likes,
     ):
         if len(picked) >= count:
             break
@@ -390,7 +390,6 @@ def main() -> None:
         ],
         optional=[
             "APIFY_TWITTER_HANDLE",
-            "CONTENT_BANK_PATH",
             "CAROUSEL_MIN_LIKES",
             "CAROUSEL_TWEET_COUNT",
             "CAROUSEL_DRY_RUN",
@@ -400,7 +399,6 @@ def main() -> None:
     )
 
     twitter_handle = os.environ.get("APIFY_TWITTER_HANDLE", "AlexHormozi")
-    bank_path = os.environ.get("CONTENT_BANK_PATH", "data/TweetMasterBank.csv")
     # Carousel bar — the bank is a settled catalogue, so this is a "proven
     # performer" floor (set to 4000 on Render, 2026-08-17).
     min_likes = int(os.environ.get("CAROUSEL_MIN_LIKES", "6500"))
@@ -474,7 +472,6 @@ def main() -> None:
         )
 
         tweets = _pick_carousel_tweets(
-            bank_path=bank_path,
             min_likes=min_likes,
             count=tweet_count,
             used_tweet_ids=used_tweet_ids,

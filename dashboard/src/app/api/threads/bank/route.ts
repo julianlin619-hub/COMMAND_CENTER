@@ -1,52 +1,36 @@
 /**
  * POST /api/threads/bank — Manually trigger content bank sourcing for Threads.
  *
- * Reads TweetMasterBank.csv (columns: tweet_id, text, favorite_count),
+ * Reads the tweet_bank table (the master bank — the threads cron adds newly
+ * scraped tweets to it daily, so it grows past the original CSV seed),
  * deduplicates against existing posts, selects random entries, and creates
  * scheduled posts in Supabase.
  */
 
-import { readFileSync, existsSync } from "fs";
-import { resolve } from "path";
 import { NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/supabase";
 import { verifyApiAuth } from "@/lib/auth";
 
 /**
- * Parse the content bank CSV and extract just the text column.
- * Handles TweetMasterBank.csv format (tweet_id, text, favorite_count)
- * as well as legacy single-column CSVs.
+ * Read every bank text from the tweet_bank table. Paginated because
+ * PostgREST caps each select at 1000 rows and the bank is ~5K and growing.
  */
-function parseCsv(raw: string): string[] {
-  // Lazy-require csv-parse — handles quoted multiline fields correctly.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { parse } = require("csv-parse/sync");
-  const rows: string[][] = parse(raw, {
-    relax_column_count: true,
-    skip_empty_lines: true,
-    trim: true,
-  });
-
-  if (rows.length === 0) return [];
-
-  // Detect header row and text column index
-  const header = rows[0];
-  const headerLower = header.map((h) => h.toLowerCase());
-  let textCol = 0;
-  let startRow = 0;
-
-  if (headerLower.includes("text")) {
-    textCol = headerLower.indexOf("text");
-    startRow = 1; // skip header
-  } else if (header.length > 1) {
-    textCol = 1;
-    startRow = 1;
+async function fetchBankTexts(
+  supabase: ReturnType<typeof getSupabaseClient>
+): Promise<string[]> {
+  const texts: string[] = [];
+  for (let page = 0; ; page++) {
+    const { data, error } = await supabase
+      .from("tweet_bank")
+      .select("text")
+      .range(page * 1000, page * 1000 + 999);
+    if (error) throw new Error(`tweet_bank read failed: ${error.message}`);
+    const batch = (data ?? [])
+      .map((r) => r.text?.trim())
+      .filter((t): t is string => Boolean(t));
+    texts.push(...batch);
+    if ((data ?? []).length < 1000) return texts;
   }
-
-  return rows
-    .slice(startRow)
-    .map((row) => row[textCol]?.trim())
-    .filter((text): text is string => Boolean(text));
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -63,34 +47,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const bankPath = resolve(
-    process.cwd(),
-    process.env.CONTENT_BANK_PATH || "../data/TweetMasterBank.csv"
-  );
   const count = parseInt(process.env.CONTENT_BANK_COUNT || "24", 10);
-
-  // Path containment check — ensure the resolved bank path stays within
-  // the project root so a misconfigured CONTENT_BANK_PATH env var can't
-  // read arbitrary files on the filesystem (e.g. /etc/passwd).
-  const projectRoot = resolve(process.cwd(), "..");
-  if (!bankPath.startsWith(projectRoot)) {
-    console.error("Bank path escapes project root:", bankPath);
-    return NextResponse.json(
-      { error: "Invalid content bank path configuration" },
-      { status: 400 }
-    );
-  }
-
-  if (!existsSync(bankPath)) {
-    // Don't expose the full filesystem path to the client — it reveals
-    // the server's directory structure and aids reconnaissance.
-    console.error("Content bank file not found:", bankPath);
-    return NextResponse.json(
-      { error: "Content bank file not found" },
-      { status: 400 }
-    );
-  }
-
   const supabase = getSupabaseClient();
 
   // Log cron run start
@@ -102,9 +59,7 @@ export async function POST(request: Request) {
   const runId = cronRun?.id;
 
   try {
-    // Read and parse single-column CSV (handles quoted multiline entries)
-    const raw = readFileSync(bankPath, "utf-8");
-    const allEntries = parseCsv(raw);
+    const allEntries = await fetchBankTexts(supabase);
 
     // Get existing captions to deduplicate
     const { data: existingPosts } = await supabase

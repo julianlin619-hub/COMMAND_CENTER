@@ -161,7 +161,7 @@ export default async function ThreadsPage({
           number={isFiltered ? undefined : 2}
           title="X Bank-Post"
           steps={[
-            "Pick up to 24 random unposted entries from data/TweetMasterBank.csv (configurable via CONTENT_BANK_COUNT)",
+            "Pick up to 24 random unposted entries from the tweet_bank table (configurable via CONTENT_BANK_COUNT)",
             "Skip any whose caption text already exists in the posts table (dedup)",
             "Insert each as a scheduled Threads post (now), then publish to Buffer's Threads channel",
           ]}

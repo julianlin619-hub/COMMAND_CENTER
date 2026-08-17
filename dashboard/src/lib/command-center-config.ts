@@ -411,7 +411,7 @@ export const FORMATS: Format[] = [
       { id: "threads", name: "Threads" },
     ],
     // Same /threads page filtered to Pathway 2 ("X Bank-Post") — random
-    // unposted entries from TweetMasterBank.csv → Threads via Buffer.
+    // unposted entries from the tweet_bank table → Threads via Buffer.
     href: "/threads?pathway=bank",
     // Shares the threads cron's signal with crosspost-written above —
     // see that comment for why we don't split by pathway.

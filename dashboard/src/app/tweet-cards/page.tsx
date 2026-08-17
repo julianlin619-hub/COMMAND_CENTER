@@ -144,7 +144,7 @@ export default async function TweetCardsPage() {
         number={2}
         title="X Bank Reel"
         steps={[
-          "Pick 1 random unposted tweet from data/TweetMasterBank.csv with ≥6,500 likes (configurable via TIKTOK_BANK_MIN_LIKES)",
+          "Pick 1 random unposted tweet from the tweet_bank table with ≥6,500 likes (configurable via TIKTOK_BANK_MIN_LIKES)",
           "Filter out if the caption is already on Facebook (the anchor leg; LinkedIn and Pinterest dedup independently later)",
           "Render a 1080×1080 PNG via /api/content-gen/generate — LinkedIn and Pinterest reuse the same image bytes",
           "Queue each leg to Buffer: Facebook (image · post), LinkedIn (image), Pinterest (image · pin on the configured board, tweet text as description). FB/LI ship caption-free. Partial success allowed.",

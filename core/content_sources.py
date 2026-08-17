@@ -19,7 +19,6 @@ pipeline picks them up.
 
 from __future__ import annotations
 
-import csv
 import logging
 import os
 import random
@@ -292,57 +291,58 @@ def fetch_apify_instagram_post(post_url: str) -> dict | None:
 # ── Content Bank ──────────────────────────────────────────────────────
 
 
+def _fetch_bank_rows(min_likes: int | None = None) -> list[dict]:
+    """Read the whole tweet bank from the Supabase tweet_bank table.
+
+    The table replaced data/TweetMasterBank.csv as the live bank on
+    2026-08-17: a cron's filesystem on Render is a throwaway checkout, so
+    the daily bank-sync (add_tweets_to_bank, called by the threads cron)
+    can only persist through the database — and per the architecture
+    rules, the DB is how services share state anyway. The CSV remains in
+    the repo as the historical seed (scripts/embed_tweet_bank.py loads it
+    into this table).
+
+    Paginated because PostgREST caps each select at 1000 rows; the bank
+    is ~5K rows, so this is a handful of requests.
+    """
+    from core.database import get_client
+
+    rows: list[dict] = []
+    page = 0
+    while True:
+        query = get_client().table("tweet_bank").select(
+            "tweet_id,text,favorite_count"
+        )
+        if min_likes is not None:
+            query = query.gte("favorite_count", min_likes)
+        batch = (
+            query.range(page * 1000, page * 1000 + 999).execute().data or []
+        )
+        rows.extend(batch)
+        if len(batch) < 1000:
+            return rows
+        page += 1
+
+
 def select_bank_content(
-    bank_path: str,
     count: int = 5,
     already_used: set[str] | None = None,
 ) -> list[str]:
-    """Select random entries from a content bank CSV file.
-
-    Reads TweetMasterBank.csv (columns: tweet_id, text, favorite_count),
-    picks random unposted entries, and returns them.
+    """Select random entries from the tweet bank (Supabase tweet_bank table).
 
     Args:
-        bank_path: Path to the CSV file.
         count: Number of entries to select.
         already_used: Set of caption strings already posted. Entries matching
             these are excluded before selection, preventing reposts.
 
     Returns:
-        List of text strings (up to count). Empty if the file doesn't exist
+        List of text strings (up to count). Empty if the bank is empty
         or all entries have been used.
     """
-    if not os.path.exists(bank_path):
-        logger.warning("Content bank not found: %s", bank_path)
-        return []
-
-    # Read all entries from the CSV. TweetMasterBank.csv has columns:
-    # tweet_id, text, favorite_count — we only need the text column.
-    entries: list[str] = []
-    with open(bank_path, "r", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        header = next(reader, None)
-        # Figure out which column has the text. If there's a header with
-        # "text" in it, use that index; otherwise fall back to column 1
-        # for multi-column CSVs or column 0 for single-column files.
-        text_col = 0
-        if header:
-            lowered = [h.strip().lower() for h in header]
-            if "text" in lowered:
-                text_col = lowered.index("text")
-            elif len(header) > 1:
-                text_col = 1
-            else:
-                # Single-column CSV with no "text" header — the header
-                # itself is likely the first entry, so include it.
-                if header[0].strip():
-                    entries.append(header[0].strip())
-        for row in reader:
-            if len(row) > text_col and row[text_col].strip():
-                entries.append(row[text_col].strip())
+    entries = [r["text"].strip() for r in _fetch_bank_rows() if r["text"].strip()]
 
     if not entries:
-        logger.info("Content bank is empty: %s", bank_path)
+        logger.info("Content bank is empty (tweet_bank table)")
         return []
 
     # Filter out entries that have already been posted
@@ -367,19 +367,18 @@ def select_bank_content(
 
 
 def select_bank_content_with_likes(
-    bank_path: str,
     count: int = 1,
     min_likes: int = 6500,
     already_used: set[str] | None = None,
 ) -> list[dict]:
-    """Select random entries from the bank with a minimum likes threshold.
+    """Select random bank entries with a minimum likes threshold.
 
-    Like select_bank_content(), but reads all three columns (tweet_id, text,
-    favorite_count) and filters by like count. Used by the TikTok bank
-    pipeline to only pick high-performing tweets for video conversion.
+    Like select_bank_content(), but returns all three columns and filters
+    by like count (SQL-side, so the paginated read only transfers
+    qualifying rows). Used by the TikTok bank pipeline and the Instagram
+    carousel to only pick high-performing tweets.
 
     Args:
-        bank_path: Path to the CSV file (tweet_id, text, favorite_count).
         count: Number of entries to select.
         min_likes: Minimum favorite_count to include.
         already_used: Set of caption strings already posted. Entries matching
@@ -387,45 +386,15 @@ def select_bank_content_with_likes(
 
     Returns:
         List of dicts with 'tweet_id', 'text', 'favorite_count' keys.
-        Empty if the file doesn't exist or no entries meet the criteria.
+        Empty if no entries meet the criteria.
     """
-    if not os.path.exists(bank_path):
-        logger.warning("Content bank not found: %s", bank_path)
-        return []
-
-    entries: list[dict] = []
-    with open(bank_path, "r", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        header = next(reader, None)
-        if not header:
-            return []
-
-        # Locate columns by header name (case-insensitive)
-        lowered = [h.strip().lower() for h in header]
-        text_col = lowered.index("text") if "text" in lowered else 1
-        id_col = lowered.index("tweet_id") if "tweet_id" in lowered else 0
-        likes_col = lowered.index("favorite_count") if "favorite_count" in lowered else 2
-
-        for row in reader:
-            if len(row) <= max(text_col, id_col, likes_col):
-                continue
-            text = row[text_col].strip()
-            if not text:
-                continue
-            try:
-                likes = int(row[likes_col].strip())
-            except (ValueError, IndexError):
-                continue
-            if likes < min_likes:
-                continue
-            entries.append({
-                "tweet_id": row[id_col].strip().rstrip("'"),
-                "text": text,
-                "favorite_count": likes,
-            })
+    entries = [
+        r for r in _fetch_bank_rows(min_likes=min_likes)
+        if r["text"].strip() and r["favorite_count"] is not None
+    ]
 
     if not entries:
-        logger.info("No bank entries with >= %d likes in %s", min_likes, bank_path)
+        logger.info("No bank entries with >= %d likes in tweet_bank", min_likes)
         return []
 
     # Filter out entries that have already been posted
@@ -443,6 +412,126 @@ def select_bank_content_with_likes(
         len(selected), min_likes, len(entries) - len(selected),
     )
     return selected
+
+
+def add_tweets_to_bank(tweets: list[dict]) -> int:
+    """Upsert freshly scraped tweets into the tweet_bank table.
+
+    Called daily by the threads cron right after its Apify fetch, so the
+    master bank grows automatically instead of freezing at its last manual
+    backfill. Returns how many NEW tweets were added.
+
+    Per-tweet behaviour:
+      - retweets ("RT @…"), replies (leading "@"), and empty texts are
+        skipped — the bank has never contained them;
+      - a tweet already in the bank gets its favorite_count refreshed when
+        the new count is higher (a <24h-old tweet's likes are still
+        climbing, and the same tweet is re-fetched on several consecutive
+        runs while it's inside the scrape window);
+      - a new tweet is inserted with an embedding when OPENAI_API_KEY is
+        available, or with a NULL embedding otherwise. NULL-embedding rows
+        are invisible to the caption RAG (cosine against NULL matches
+        nothing) but fully visible to the bank pickers; every later run
+        self-heals them (see below), so a temporarily missing key degrades
+        gracefully instead of dropping tweets.
+    """
+    from core.database import get_client
+    from core.tweet_filter import is_retweet
+
+    candidates = []
+    seen_ids: set[str] = set()
+    for t in tweets:
+        tweet_id = str(t.get("id", "")).strip()
+        text = (t.get("text") or "").strip()
+        if not tweet_id or not text or tweet_id in seen_ids:
+            continue
+        if is_retweet(text) or text.startswith("@"):
+            continue
+        seen_ids.add(tweet_id)
+        candidates.append({
+            "tweet_id": tweet_id,
+            "text": text,
+            "favorite_count": int(t.get("like_count", 0)),
+        })
+    if not candidates:
+        return 0
+
+    client = get_client()
+    existing = {
+        row["tweet_id"]: row["favorite_count"]
+        for row in (
+            client.table("tweet_bank")
+            .select("tweet_id,favorite_count")
+            .in_("tweet_id", [c["tweet_id"] for c in candidates])
+            .execute()
+            .data
+            or []
+        )
+    }
+
+    # Refresh like counts that have climbed since a previous run saw them.
+    for c in candidates:
+        old = existing.get(c["tweet_id"])
+        if old is not None and c["favorite_count"] > (old or 0):
+            client.table("tweet_bank").update(
+                {"favorite_count": c["favorite_count"]}
+            ).eq("tweet_id", c["tweet_id"]).execute()
+
+    new_rows = [c for c in candidates if c["tweet_id"] not in existing]
+    embeddings: list | None = None
+    if new_rows and os.environ.get("OPENAI_API_KEY"):
+        try:
+            from core.embeddings import embed_batch
+
+            embeddings = embed_batch([c["text"] for c in new_rows])
+        except Exception as e:
+            logger.warning("Bank embedding failed — inserting without: %s", e)
+    if new_rows:
+        # upsert (not insert): two overlapping runs racing on the same
+        # tweet must not fail the whole batch on the UNIQUE(tweet_id).
+        client.table("tweet_bank").upsert(
+            [
+                {**c, "embedding": embeddings[i] if embeddings else None}
+                for i, c in enumerate(new_rows)
+            ],
+            on_conflict="tweet_id",
+        ).execute()
+        logger.info(
+            "Bank sync: %d new tweet(s) added%s, %d already present",
+            len(new_rows),
+            "" if embeddings else " (no embedding — OPENAI_API_KEY missing?)",
+            len(existing),
+        )
+
+    # Self-heal: embed any rows that were inserted without an embedding by
+    # an earlier run (missing key, transient OpenAI failure). Bounded and
+    # best-effort — the bank grows ~10 rows/day, so one pass keeps up.
+    if os.environ.get("OPENAI_API_KEY"):
+        try:
+            from core.embeddings import embed_batch
+
+            unembedded = (
+                client.table("tweet_bank")
+                .select("tweet_id,text")
+                .is_("embedding", "null")
+                .limit(200)
+                .execute()
+                .data
+                or []
+            )
+            # Rows we just inserted with embeddings aren't in this set, so
+            # this only pays for genuinely missed ones.
+            if unembedded:
+                vectors = embed_batch([r["text"] for r in unembedded])
+                for row, vec in zip(unembedded, vectors):
+                    client.table("tweet_bank").update({"embedding": vec}).eq(
+                        "tweet_id", row["tweet_id"]
+                    ).execute()
+                logger.info("Bank sync: self-healed %d missing embedding(s)", len(unembedded))
+        except Exception as e:
+            logger.warning("Bank embedding self-heal failed (non-fatal): %s", e)
+
+    return len(new_rows)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────

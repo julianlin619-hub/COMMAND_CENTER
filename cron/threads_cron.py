@@ -29,7 +29,7 @@ import sys
 from datetime import datetime, timezone
 
 # Content sourcing functions (ported from the original THREADS repo)
-from core.content_sources import fetch_apify_tweets, select_bank_content
+from core.content_sources import add_tweets_to_bank, fetch_apify_tweets, select_bank_content
 # LLM sanity-check: rejects bank posts that are incomplete (e.g. "7 ways to
 # get rich" with no actual list) before they're inserted and queued to Buffer.
 from core.bank_post_reviewer import is_postable_bank_post
@@ -75,8 +75,11 @@ def main():
         optional=[
             "APIFY_API_KEY",
             "APIFY_TWITTER_HANDLE",
-            "CONTENT_BANK_PATH",
             "CONTENT_BANK_COUNT",
+            # Embeds new bank rows as they're scraped (add_tweets_to_bank).
+            # Missing -> rows land with NULL embeddings and a later run
+            # with the key self-heals them.
+            "OPENAI_API_KEY",
         ],
     )
 
@@ -98,6 +101,16 @@ def main():
 
         twitter_handle = os.environ.get("APIFY_TWITTER_HANDLE", "AlexHormozi")
         tweets = fetch_apify_tweets(twitter_handle, max_items=10)
+
+        # Feed EVERY fetched tweet into the master bank (tweet_bank table)
+        # so the bank grows daily instead of freezing at its last manual
+        # backfill — the scrape already paid for the data. The helper does
+        # its own retweet/reply filtering and dedup, and this is
+        # best-effort: a bank hiccup must not cost the day's Threads posts.
+        try:
+            add_tweets_to_bank(tweets)
+        except Exception as bank_err:
+            logger.warning("Bank sync failed (non-fatal): %s", bank_err)
 
         apify_skipped_retweets = 0
         for tweet in tweets:
@@ -128,14 +141,13 @@ def main():
     # -------------------------------------------------------------------------
     # PHASE 0b: Source from content bank
     # -------------------------------------------------------------------------
-    # Picks random entries from a pre-written CSV file. Tracked as its own
+    # Picks random entries from the tweet_bank table. Tracked as its own
     # cron run so failures here don't mask Apify results (and vice versa).
     run_id = log_cron_start(platform="threads", job_type="content_bank")
     try:
         bank_sourced = 0
         now = datetime.now(timezone.utc)
 
-        bank_path = os.environ.get("CONTENT_BANK_PATH", "data/TweetMasterBank.csv")
         bank_count = int(os.environ.get("CONTENT_BANK_COUNT", "24"))
 
         # Load all already-posted threads captions up-front so the bank
@@ -151,7 +163,7 @@ def main():
         already_used_threads = list_post_captions("threads")
 
         bank_items = select_bank_content(
-            bank_path, count=bank_count, already_used=already_used_threads
+            count=bank_count, already_used=already_used_threads
         )
         for text in bank_items:
             # Per-item dedup check kept as defense-in-depth — covers the

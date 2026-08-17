@@ -32,8 +32,6 @@ services:
         sync: false
       - key: APIFY_TWITTER_HANDLE
         sync: false
-      - key: CONTENT_BANK_PATH
-        sync: false
       - key: CONTENT_BANK_COUNT
         sync: false
       - key: BUFFER_ORG_ID
@@ -185,8 +183,6 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
-      - key: CONTENT_BANK_PATH  # optional — default data/TweetMasterBank.csv
-        sync: false
       - key: TIKTOK_BANK_MIN_LIKES  # optional — default 6500
         sync: false
       # optional — Pinterest board for the pin leg. See tweet-reel-recent.
@@ -233,8 +229,6 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
-      - key: CONTENT_BANK_PATH  # optional — default data/TweetMasterBank.csv
-        sync: false
       - key: CAROUSEL_MIN_LIKES  # bank-only slide bar (code default is 6500;
         value: "4000"            # lowered 2026-08-17 — the 6.5K pool was nearly mined out)
       - key: CAROUSEL_TWEET_COUNT  # optional — default 10 slides (IG's max)
@@ -265,9 +259,12 @@ services:
         sync: false
       - key: APIFY_TWITTER_HANDLE  # optional — defaults to AlexHormozi
         sync: false
-      - key: CONTENT_BANK_PATH
-        sync: false
       - key: CONTENT_BANK_COUNT
+        sync: false
+      # Embeds newly scraped tweets as they're added to the tweet_bank
+      # table (daily bank sync, 2026-08-17). Missing -> rows land with
+      # NULL embeddings and a later run with the key self-heals them.
+      - key: OPENAI_API_KEY
         sync: false
 
   - type: cron
