@@ -241,6 +241,10 @@ services:
         sync: false
       - key: CAROUSEL_DRY_RUN  # optional — "1" = pick + render only, no send
         sync: false
+      - key: CAROUSEL_RECENT_HOURS  # optional — Apify pathway window, default 72h
+        sync: false
+      - key: CAROUSEL_RECENT_MIN_LIKES  # optional — Apify pathway bar, default 6000
+        sync: false
 
   - type: cron
     name: written-posts

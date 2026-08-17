@@ -4,12 +4,15 @@ Replaces the paused Instagram reel leg of the tweet-card fan-out (see
 IG_TWEET_CARD_FORMAT in cron/_tweet_card_legs.py) with a daily outlier-tweet
 carousel (there is no title/intro card — slide 1 is the strongest tweet):
 
-  Slides 1-10 — ten outlier tweets (Instagram's carousel maximum), each
-                >= CAROUSEL_MIN_LIKES likes (default 6500): recent Apify
-                outliers first, topped up from the CSV bank when fewer
-                than ten fresh ones exist. Slides are always ordered most
-                likes -> least likes, regardless of which pathway a tweet
-                came from.
+  Slides 1-10 — ten outlier tweets (Instagram's carousel maximum), two
+                pathways with separate likes bars: recent breakouts first
+                (Apify tweets from the last CAROUSEL_RECENT_HOURS, default
+                72h, each >= CAROUSEL_RECENT_MIN_LIKES likes, default
+                6000), topped up from the CSV bank (each >=
+                CAROUSEL_MIN_LIKES likes, default 6500 in code / 4000 on
+                Render) when fewer than ten fresh ones exist. Slides are
+                always ordered most likes -> least likes, regardless of
+                which pathway a tweet came from.
 
 Internally each shipped carousel still advances a "Day N" counter — it no
 longer appears on any slide, but it remains the per-day dedup key for the
@@ -144,8 +147,19 @@ def _pick_carousel_tweets(
     count: int,
     max_items: int,
     used_tweet_ids: set[str],
+    recent_hours: int,
+    recent_min_likes: int,
 ) -> list[dict]:
     """Pick up to `count` unused outlier tweets: Apify first, bank top-up.
+
+    The two pathways have SEPARATE likes bars (since 2026-08-17):
+      - recent Apify tweets must clear `recent_min_likes` (default 6000)
+        AND be at most `recent_hours` old (default 72h) — a fresh tweet's
+        like count is still climbing, so a higher bar keeps only true
+        breakouts;
+      - bank top-ups must clear `min_likes` (CAROUSEL_MIN_LIKES, default
+        6500 in code / 4000 on Render) — the bank is a settled catalogue,
+        so its counts are final and a lower bar is still "proven".
 
     Every candidate must clear three gates:
       - id not used on a previous carousel (used_tweet_ids),
@@ -186,16 +200,19 @@ def _pick_carousel_tweets(
             "source": source,
         })
 
-    # Pathway 1 — recent outliers via Apify (newest-first). hours_lookback=None
-    # matches the TikTok outlier pipeline: "recent" means Apify's latest-N
-    # sort; the dedup gates above (not a time window) prevent reposting.
-    # fetch_apify_tweets returns [] on any Apify failure, never raises, so a
-    # scraper outage just means an all-bank carousel.
+    # Pathway 1 — recent breakouts via Apify (newest-first). A real time
+    # window now (was hours_lookback=None): only tweets from the last
+    # `recent_hours` that already cleared `recent_min_likes` qualify —
+    # "went viral in the last 3 days" rather than "any old tweet Apify
+    # happens to return". fetch_apify_tweets applies both filters (the
+    # actor filters likes server-side, the helper re-checks likes and the
+    # time window post-fetch). It returns [] on any Apify failure, never
+    # raises, so a scraper outage just means an all-bank carousel.
     for tweet in fetch_apify_tweets(
         twitter_handle,
         max_items=max_items,
-        hours_lookback=None,
-        min_favorites=min_likes,
+        hours_lookback=recent_hours,
+        min_favorites=recent_min_likes,
     ):
         if len(picked) >= count:
             break
@@ -203,8 +220,9 @@ def _pick_carousel_tweets(
 
     if len(picked) < count:
         logger.info(
-            "%d/%d slides filled from recent outliers — topping up from bank (>= %d likes)",
-            len(picked), count, min_likes,
+            "%d/%d slides filled from recent breakouts (>= %d likes, last %dh) — "
+            "topping up from bank (>= %d likes)",
+            len(picked), count, recent_min_likes, recent_hours, min_likes,
         )
         # Pull a generous batch: the dedup gates thin the candidates and the
         # filtered bank read is cheap (CSV scan, no network).
@@ -249,6 +267,8 @@ def main() -> None:
             "CAROUSEL_TWEET_COUNT",
             "CAROUSEL_MAX_ITEMS",
             "CAROUSEL_DRY_RUN",
+            "CAROUSEL_RECENT_HOURS",
+            "CAROUSEL_RECENT_MIN_LIKES",
         ],
     )
 
@@ -257,6 +277,13 @@ def main() -> None:
     # One likes bar for BOTH pathways — the operator wants every slide to be
     # a >= 6500-like proven performer, regardless of where it came from.
     min_likes = int(os.environ.get("CAROUSEL_MIN_LIKES", "6500"))
+    # Fresh-tweet pathway: an Apify tweet only qualifies if it's at most
+    # this many hours old AND already above this likes bar — i.e. it went
+    # viral within the window. Separate from CAROUSEL_MIN_LIKES because a
+    # 3-day-old tweet's count is still climbing while bank counts are
+    # final, so the fresh bar sits higher than the bank bar.
+    recent_hours = int(os.environ.get("CAROUSEL_RECENT_HOURS", "72"))
+    recent_min_likes = int(os.environ.get("CAROUSEL_RECENT_MIN_LIKES", "6000"))
     # 10 tweet slides, Instagram's carousel maximum (no title card since
     # Aug 2026 — the carousel opens on its strongest tweet).
     tweet_count = int(os.environ.get("CAROUSEL_TWEET_COUNT", "10"))
@@ -289,6 +316,8 @@ def main() -> None:
             count=tweet_count,
             max_items=max_items,
             used_tweet_ids=used_tweet_ids,
+            recent_hours=recent_hours,
+            recent_min_likes=recent_min_likes,
         )
         if len(tweets) < tweet_count:
             # The Day-N series always ships a full set — a short carousel

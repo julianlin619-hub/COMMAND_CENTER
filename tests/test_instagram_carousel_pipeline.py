@@ -97,6 +97,11 @@ def _pick(monkeypatch, *, apify, bank, used_ids=frozenset(), used_captions=froze
         count=count,
         max_items=15,
         used_tweet_ids=set(used_ids),
+        # The fresh-tweet pathway's window/bar (see CAROUSEL_RECENT_HOURS /
+        # CAROUSEL_RECENT_MIN_LIKES). fetch_apify_tweets is stubbed in these
+        # tests, so the values only need to be plausible defaults.
+        recent_hours=72,
+        recent_min_likes=6000,
     )
 
 
