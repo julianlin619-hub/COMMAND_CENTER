@@ -235,8 +235,8 @@ services:
         sync: false
       - key: CONTENT_BANK_PATH  # optional — default data/TweetMasterBank.csv
         sync: false
-      - key: CAROUSEL_MIN_LIKES  # optional — default 6500 (every slide)
-        sync: false
+      - key: CAROUSEL_MIN_LIKES  # every slide must clear this bar (code default is 6500;
+        value: "4000"            # lowered 2026-08-17 — the 6.5K pool was nearly mined out)
       - key: CAROUSEL_TWEET_COUNT  # optional — default 10 slides (IG's max)
         sync: false
       - key: CAROUSEL_DRY_RUN  # optional — "1" = pick + render only, no send
