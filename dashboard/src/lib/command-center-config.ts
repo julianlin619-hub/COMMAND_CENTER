@@ -248,11 +248,12 @@ export const FORMATS: Format[] = [
   {
     // Instagram Carousels — the daily outlier-tweet carousel
     // (cron/instagram_carousel_pipeline.py, Render cron
-    // `instagram-carousel`, 11:30 UTC daily). Each run ships ONE 10-slide
-    // 1080×1350 carousel (IG's max) to Alex's main IG via Buffer, most-
-    // liked first. Two sourcing bars (2026-08-17): recent breakouts from
-    // Apify (>= 6000 likes within the last 72h) fill first, then bank
-    // top-ups (>= 4000 likes). No title/intro card — the carousel
+    // `instagram-carousel`, 11:30 UTC daily). Two legs since 2026-08-17:
+    // (1) solo breakouts — every Apify tweet that went viral inside the
+    // window (<= 72h old AND >= 6000 likes) ships as its own standalone
+    // 1080×1350 card post; (2) ONE 10-slide 1080×1350 carousel (IG's
+    // max) to Alex's main IG via Buffer, bank-sourced only (>= 4000
+    // likes), most-liked first. No title/intro card — the carousel
     // opens directly on
     // its strongest tweet (the Day-N counter lives on in metadata as a
     // dedup key only). Replaced the tweet-card fan-out's IG reel leg

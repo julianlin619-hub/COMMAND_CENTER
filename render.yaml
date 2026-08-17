@@ -235,15 +235,15 @@ services:
         sync: false
       - key: CONTENT_BANK_PATH  # optional — default data/TweetMasterBank.csv
         sync: false
-      - key: CAROUSEL_MIN_LIKES  # every slide must clear this bar (code default is 6500;
+      - key: CAROUSEL_MIN_LIKES  # bank-only slide bar (code default is 6500;
         value: "4000"            # lowered 2026-08-17 — the 6.5K pool was nearly mined out)
       - key: CAROUSEL_TWEET_COUNT  # optional — default 10 slides (IG's max)
         sync: false
       - key: CAROUSEL_DRY_RUN  # optional — "1" = pick + render only, no send
         sync: false
-      - key: CAROUSEL_RECENT_HOURS  # optional — Apify pathway window, default 72h
+      - key: SOLO_BREAKOUT_HOURS  # optional — solo-post leg window, default 72h
         sync: false
-      - key: CAROUSEL_RECENT_MIN_LIKES  # optional — Apify pathway bar, default 6000
+      - key: SOLO_BREAKOUT_MIN_LIKES  # optional — solo-post leg bar, default 6000
         sync: false
 
   - type: cron

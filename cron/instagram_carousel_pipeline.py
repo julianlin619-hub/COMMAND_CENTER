@@ -4,15 +4,21 @@ Replaces the paused Instagram reel leg of the tweet-card fan-out (see
 IG_TWEET_CARD_FORMAT in cron/_tweet_card_legs.py) with a daily outlier-tweet
 carousel (there is no title/intro card — slide 1 is the strongest tweet):
 
-  Slides 1-10 — ten outlier tweets (Instagram's carousel maximum), two
-                pathways with separate likes bars: recent breakouts first
-                (Apify tweets from the last CAROUSEL_RECENT_HOURS, default
-                72h, each >= CAROUSEL_RECENT_MIN_LIKES likes, default
-                6000), topped up from the CSV bank (each >=
-                CAROUSEL_MIN_LIKES likes, default 6500 in code / 4000 on
-                Render) when fewer than ten fresh ones exist. Slides are
-                always ordered most likes -> least likes, regardless of
-                which pathway a tweet came from.
+  Slides 1-10 — ten outlier tweets (Instagram's carousel maximum), pulled
+                from the CSV bank ONLY, each >= CAROUSEL_MIN_LIKES likes
+                (default 6500 in code / 4000 on Render), ordered most
+                likes -> least likes.
+
+Since 2026-08-17 the run also ships a SEPARATE solo-breakout leg BEFORE
+the carousel: Apify scrapes the account's recent tweets, and every tweet
+that went viral inside the window — at most SOLO_BREAKOUT_HOURS old
+(default 72) AND already >= SOLO_BREAKOUT_MIN_LIKES likes (default 6000)
+— becomes its own standalone single-image IG post (same 1080x1350 card
+template as the carousel slides, blank Buffer caption). Breakouts are
+rare (usually 0-3 per run), and the 72h window plus the dedup gates mean
+a tweet that stays viral for three days still ships only once. The solo
+leg failing never blocks the carousel — each leg has its own cron_runs
+row and its own try/except.
 
 Internally each shipped carousel still advances a "Day N" counter — it no
 longer appears on any slide, but it remains the per-day dedup key for the
@@ -43,8 +49,10 @@ TikTok channel as a photo carousel; TikTok auto-applies a music track
 to photo posts on its side (Buffer's API exposes no music-selection
 field, only isAiGenerated/title, so the track can't be chosen here).
 
-Three cron_runs phases, platform='instagram':
-  Phase 1 — carousel_pick:     day number + 10 outlier tweets
+Four cron_runs phases, platform='instagram':
+  Phase 0 — solo_breakout:     render + send one standalone post per
+                               fresh viral tweet (72h / 6K gates)
+  Phase 1 — carousel_pick:     day number + 10 bank outlier tweets
   Phase 2 — carousel_generate: render the 10 tweet cards
   Phase 3 — carousel_send:     insert posts row + one Buffer carousel send,
                                then the TikTok mirror leg
@@ -74,6 +82,7 @@ from core.env_diag import log_env_diagnostics
 from core.media import build_proxy_url
 from core.models import Post
 from core.text_utils import normalize_tweet_text
+from core.tweet_filter import is_retweet
 from cron._tweet_card_legs import BUFFER_CAPTION, _is_unique_violation
 
 
@@ -141,109 +150,228 @@ def _fetch_carousel_history() -> tuple[int, set[str]]:
 
 def _pick_carousel_tweets(
     *,
-    twitter_handle: str,
     bank_path: str,
     min_likes: int,
     count: int,
-    max_items: int,
     used_tweet_ids: set[str],
-    recent_hours: int,
-    recent_min_likes: int,
 ) -> list[dict]:
-    """Pick up to `count` unused outlier tweets: Apify first, bank top-up.
+    """Pick up to `count` unused outlier tweets from the CSV bank.
 
-    The two pathways have SEPARATE likes bars (since 2026-08-17):
-      - recent Apify tweets must clear `recent_min_likes` (default 6000)
-        AND be at most `recent_hours` old (default 72h) — a fresh tweet's
-        like count is still climbing, so a higher bar keeps only true
-        breakouts;
-      - bank top-ups must clear `min_likes` (CAROUSEL_MIN_LIKES, default
-        6500 in code / 4000 on Render) — the bank is a settled catalogue,
-        so its counts are final and a lower bar is still "proven".
+    Bank-only since 2026-08-17: fresh Apify tweets no longer feed the
+    carousel — they ship as solo posts instead (see _pick_solo_breakouts).
+    The bank is a settled catalogue whose like counts are final, so
+    `min_likes` (CAROUSEL_MIN_LIKES, default 6500 in code / 4000 on
+    Render) is a "proven performer" bar, not a virality signal.
 
     Every candidate must clear three gates:
       - id not used on a previous carousel (used_tweet_ids),
       - text not already posted to Instagram in any format
-        (post_caption_exists — covers the old reel leg's posts too),
+        (post_caption_exists — covers the old reel leg's posts AND the
+        solo-breakout leg, whose caption is the full tweet text),
       - text not a fingerprint-duplicate of a tweet picked earlier this run.
 
     Returns dicts of {'tweet_id', 'text', 'normalized', 'favorite_count',
-    'source': 'outlier'|'bank'}, sorted by favorite_count DESCENDING —
-    the returned order IS the slide order, and the operator wants the
-    carousel to open on its strongest tweet. Selection precedence is
-    still Apify-first-then-bank; only the final ordering is by likes.
-    May return fewer than `count` — the caller decides that a short set
-    skips the run.
+    'source': 'bank'}, sorted by favorite_count DESCENDING — the returned
+    order IS the slide order, and the operator wants the carousel to open
+    on its strongest tweet. May return fewer than `count` — the caller
+    decides that a short set skips the run.
     """
     picked: list[dict] = []
     seen_fps: set[str] = set()
 
-    def consider(tweet_id: str, text: str, likes: int, source: str) -> None:
-        normalized = normalize_tweet_text(text)
+    # Pull a generous batch: the dedup gates thin the candidates and the
+    # filtered bank read is cheap (CSV scan, no network).
+    for candidate in select_bank_content_with_likes(
+        bank_path, count=count * 8, min_likes=min_likes,
+    ):
+        if len(picked) >= count:
+            break
+        tweet_id = str(candidate["tweet_id"])
+        normalized = normalize_tweet_text(candidate["text"])
         if not normalized.strip():
-            return
+            continue
         fp = _text_fingerprint(normalized)
         if fp in seen_fps:
-            return
+            continue
         if tweet_id in used_tweet_ids:
             logger.debug("Skipping tweet %s — used on a previous carousel", tweet_id)
-            return
+            continue
         if post_caption_exists("instagram", normalized):
             logger.debug("Skipping tweet %s — text already posted to IG", tweet_id)
-            return
+            continue
+        seen_fps.add(fp)
+        picked.append({
+            "tweet_id": tweet_id,
+            "text": candidate["text"],
+            "normalized": normalized,
+            "favorite_count": candidate["favorite_count"],
+            "source": "bank",
+        })
+
+    # Rank the slides most-liked first — the returned order is the slide
+    # order and the carousel opens on its strongest tweet.
+    picked.sort(key=lambda t: t["favorite_count"], reverse=True)
+    return picked
+
+
+def _pick_solo_breakouts(
+    apify_tweets: list[dict], used_tweet_ids: set[str]
+) -> list[dict]:
+    """Filter fresh Apify tweets down to the ones worth a solo post.
+
+    The window/likes gates (SOLO_BREAKOUT_HOURS / SOLO_BREAKOUT_MIN_LIKES)
+    are applied by fetch_apify_tweets before this runs — this helper only
+    applies the content/dedup gates:
+      - not a retweet ("RT @…" — someone else's content) and not a reply
+        (leading "@" — conversational, meaningless out of thread),
+      - id not used on any previous carousel slide (until 2026-08-17 the
+        carousel's Apify pathway shipped recent tweets as slides, so a
+        2-day-old tweet could already be on yesterday's carousel),
+      - text not already posted to Instagram in any format — this is also
+        what keeps a tweet that stays viral for all 72 hours of the window
+        from shipping again on the next run, because each solo post stores
+        the full tweet text as its caption,
+      - not a fingerprint-duplicate of a breakout picked earlier this run.
+
+    Returns dicts of {'tweet_id', 'text', 'normalized', 'favorite_count'},
+    keeping Apify's newest-first order.
+    """
+    picked: list[dict] = []
+    seen_fps: set[str] = set()
+    for tweet in apify_tweets:
+        tweet_id = str(tweet["id"])
+        text = tweet["text"]
+        if is_retweet(text) or text.lstrip().startswith("@"):
+            continue
+        normalized = normalize_tweet_text(text)
+        if not normalized.strip():
+            continue
+        fp = _text_fingerprint(normalized)
+        if fp in seen_fps:
+            continue
+        if tweet_id in used_tweet_ids:
+            continue
+        if post_caption_exists("instagram", normalized):
+            continue
         seen_fps.add(fp)
         picked.append({
             "tweet_id": tweet_id,
             "text": text,
             "normalized": normalized,
-            "favorite_count": likes,
-            "source": source,
+            "favorite_count": tweet.get("like_count", 0),
         })
-
-    # Pathway 1 — recent breakouts via Apify (newest-first). A real time
-    # window now (was hours_lookback=None): only tweets from the last
-    # `recent_hours` that already cleared `recent_min_likes` qualify —
-    # "went viral in the last 3 days" rather than "any old tweet Apify
-    # happens to return". fetch_apify_tweets applies both filters (the
-    # actor filters likes server-side, the helper re-checks likes and the
-    # time window post-fetch). It returns [] on any Apify failure, never
-    # raises, so a scraper outage just means an all-bank carousel.
-    for tweet in fetch_apify_tweets(
-        twitter_handle,
-        max_items=max_items,
-        hours_lookback=recent_hours,
-        min_favorites=recent_min_likes,
-    ):
-        if len(picked) >= count:
-            break
-        consider(str(tweet["id"]), tweet["text"], tweet.get("like_count", 0), "outlier")
-
-    if len(picked) < count:
-        logger.info(
-            "%d/%d slides filled from recent breakouts (>= %d likes, last %dh) — "
-            "topping up from bank (>= %d likes)",
-            len(picked), count, recent_min_likes, recent_hours, min_likes,
-        )
-        # Pull a generous batch: the dedup gates thin the candidates and the
-        # filtered bank read is cheap (CSV scan, no network).
-        for candidate in select_bank_content_with_likes(
-            bank_path, count=count * 8, min_likes=min_likes,
-        ):
-            if len(picked) >= count:
-                break
-            consider(
-                str(candidate["tweet_id"]),
-                candidate["text"],
-                candidate["favorite_count"],
-                "bank",
-            )
-
-    # Rank the slides most-liked first. This runs on every return path so
-    # the requirement holds even for an all-Apify pick that never touched
-    # the bank. Python's sort is stable, so equal-likes tweets keep their
-    # Apify-before-bank pick order.
-    picked.sort(key=lambda t: t["favorite_count"], reverse=True)
     return picked
+
+
+def _send_solo_breakouts(
+    breakouts: list[dict],
+    *,
+    dashboard_url: str,
+    cron_secret: str,
+    dry_run: bool,
+) -> int:
+    """Render each breakout as a 1080x1350 card and ship it as its own
+    single-image IG post via Buffer. Returns how many were sent.
+
+    Unlike the carousel (all-or-nothing — the Day-N series never ships a
+    short set), each solo post is independent: a render or send failure on
+    one breakout logs and moves on, because holding back tweet A over
+    tweet B's failure helps no one. A failed one retries naturally on the
+    next run — nothing was inserted for it, so the dedup gates still let
+    it through.
+    """
+    if not breakouts:
+        logger.info("No solo breakouts this run.")
+        return 0
+
+    # One render call for the whole batch — same template row the carousel
+    # slides use, so solos and slides are visually identical.
+    data = generate_content(
+        dashboard_url=dashboard_url,
+        cron_secret=cron_secret,
+        tweets=[{"id": b["tweet_id"], "text": b["text"]} for b in breakouts],
+        platform="instagram",
+    )
+    if data.get("error"):
+        raise RuntimeError(data["error"])
+    for i, err in enumerate(data.get("errors", []) or []):
+        logger.warning("  solo render error[%d]: %s", i, err)
+    rendered = {str(item["id"]): item for item in data.get("generated", []) or []}
+
+    ig_channel_id = None if dry_run else get_channel_id(service="instagram")
+
+    sent = 0
+    for b in breakouts:
+        card = rendered.get(b["tweet_id"])
+        if card is None:
+            logger.warning(
+                "Solo breakout %s dropped by render — will retry next run", b["tweet_id"]
+            )
+            continue
+        if dry_run:
+            logger.info(
+                "DRY RUN — would send solo breakout (%d likes): %.60s",
+                b["favorite_count"], b["normalized"],
+            )
+            continue
+
+        # Insert-first-then-send, same as the carousel: the caption is the
+        # full tweet text (the route-normalized version, so future dedup
+        # checks re-derive the exact same string), and the partial-unique
+        # (platform, md5(caption)) index arbitrates concurrent runs.
+        post = Post(
+            platform="instagram",
+            status="sent_to_buffer",
+            media_type="image",
+            media_urls=[card["storagePath"]],
+            caption=card["text"],
+            metadata={
+                "source": "solo_breakout",
+                "tweet_id": b["tweet_id"],
+                "favorite_count": b["favorite_count"],
+            },
+        )
+        try:
+            post_id = insert_post(post)
+        except Exception as e:
+            if _is_unique_violation(e):
+                logger.info(
+                    "Dedup race lost (DB constraint) — breakout already posted: %.50s",
+                    card["text"],
+                )
+                continue
+            raise
+
+        try:
+            buffer_post_id = send_to_buffer(
+                ig_channel_id,
+                BUFFER_CAPTION,  # blank — the content is on the card
+                build_proxy_url(post_id, 0),
+                media_type="image",
+                instagram_post_type="post",
+            )
+            record_buffer_handoff(
+                post_id, buffer_post_id,
+                channel_id=ig_channel_id,
+                body=BUFFER_CAPTION,
+                media_type="image",
+                instagram_post_type="post",
+                base_metadata=post.metadata,
+            )
+            sent += 1
+            logger.info(
+                "Solo breakout queued (%d likes): post %s, Buffer %s — %.60s",
+                b["favorite_count"], post_id, buffer_post_id, b["normalized"],
+            )
+        except Exception as e:
+            # Flip to buffer_error so the row leaves the dedup index and the
+            # breakout can retry on the next run (still inside its 72h window).
+            logger.error("Solo breakout Buffer send failed: %s", e, exc_info=True)
+            try:
+                update_post(post_id, status="buffer_error", error_message=str(e)[:500])
+            except Exception as db_err:
+                logger.error("Also failed to mark post %s as buffer_error: %s", post_id, db_err)
+    return sent
 
 
 def main() -> None:
@@ -256,8 +384,8 @@ def main() -> None:
             "CRON_SECRET",
             "BUFFER_ACCESS_TOKEN",
             "BUFFER_ORG_ID",
-            # Recent-outlier pathway. Missing -> fetch_apify_tweets returns []
-            # and every slide comes from the bank.
+            # Solo-breakout leg. Missing -> fetch_apify_tweets returns []
+            # and the run is carousel-only.
             "APIFY_API_KEY",
         ],
         optional=[
@@ -265,29 +393,26 @@ def main() -> None:
             "CONTENT_BANK_PATH",
             "CAROUSEL_MIN_LIKES",
             "CAROUSEL_TWEET_COUNT",
-            "CAROUSEL_MAX_ITEMS",
             "CAROUSEL_DRY_RUN",
-            "CAROUSEL_RECENT_HOURS",
-            "CAROUSEL_RECENT_MIN_LIKES",
+            "SOLO_BREAKOUT_HOURS",
+            "SOLO_BREAKOUT_MIN_LIKES",
         ],
     )
 
     twitter_handle = os.environ.get("APIFY_TWITTER_HANDLE", "AlexHormozi")
     bank_path = os.environ.get("CONTENT_BANK_PATH", "data/TweetMasterBank.csv")
-    # One likes bar for BOTH pathways — the operator wants every slide to be
-    # a >= 6500-like proven performer, regardless of where it came from.
+    # Carousel bar — the bank is a settled catalogue, so this is a "proven
+    # performer" floor (set to 4000 on Render, 2026-08-17).
     min_likes = int(os.environ.get("CAROUSEL_MIN_LIKES", "6500"))
-    # Fresh-tweet pathway: an Apify tweet only qualifies if it's at most
+    # Solo-breakout gates: an Apify tweet only qualifies if it's at most
     # this many hours old AND already above this likes bar — i.e. it went
-    # viral within the window. Separate from CAROUSEL_MIN_LIKES because a
-    # 3-day-old tweet's count is still climbing while bank counts are
-    # final, so the fresh bar sits higher than the bank bar.
-    recent_hours = int(os.environ.get("CAROUSEL_RECENT_HOURS", "72"))
-    recent_min_likes = int(os.environ.get("CAROUSEL_RECENT_MIN_LIKES", "6000"))
+    # viral within the window. The bar sits higher than the carousel's
+    # because a 3-day-old tweet's count is still climbing.
+    solo_hours = int(os.environ.get("SOLO_BREAKOUT_HOURS", "72"))
+    solo_min_likes = int(os.environ.get("SOLO_BREAKOUT_MIN_LIKES", "6000"))
     # 10 tweet slides, Instagram's carousel maximum (no title card since
     # Aug 2026 — the carousel opens on its strongest tweet).
     tweet_count = int(os.environ.get("CAROUSEL_TWEET_COUNT", "10"))
-    max_items = int(os.environ.get("CAROUSEL_MAX_ITEMS", "15"))
     # Mirrors YOUTUBE_STUDIO_DRY_RUN: pick + render for real, log the
     # would-be send, but write no posts row and touch no Buffer queue.
     dry_run = os.environ.get("CAROUSEL_DRY_RUN", "") == "1"
@@ -299,7 +424,46 @@ def main() -> None:
         sys.exit(1)
 
     # ─────────────────────────────────────────────────────────────────────
-    # PHASE 1: Day number + pick the outlier tweets
+    # PHASE 0: Solo breakouts — one standalone post per fresh viral tweet
+    # ─────────────────────────────────────────────────────────────────────
+    # Runs BEFORE the carousel so its posts rows are visible to the
+    # carousel's post_caption_exists gate (a breakout that also lives in
+    # the bank can't ship twice in one run). Its failure never blocks the
+    # carousel: no sys.exit here, just its own cron_runs row.
+    run_id = log_cron_start(platform="instagram", job_type="solo_breakout")
+    try:
+        # Reuse the carousel ledger: until 2026-08-17 the carousel's Apify
+        # pathway shipped recent tweets as slides, so a 2-day-old breakout
+        # could already be on yesterday's carousel.
+        _, used_tweet_ids = _fetch_carousel_history()
+        # max_items=50 comfortably covers 72h of posting for one account —
+        # the window filter (not this cap) decides what qualifies.
+        breakouts = _pick_solo_breakouts(
+            fetch_apify_tweets(
+                twitter_handle,
+                max_items=50,
+                hours_lookback=solo_hours,
+                min_favorites=solo_min_likes,
+            ),
+            used_tweet_ids,
+        )
+        sent = _send_solo_breakouts(
+            breakouts,
+            dashboard_url=dashboard_url,
+            cron_secret=cron_secret,
+            dry_run=dry_run,
+        )
+        log_cron_finish(run_id, status="success", posts_processed=sent)
+        logger.info(
+            "Phase 0: %d solo breakout(s) shipped (%d qualified, window=%dh, >= %d likes)",
+            sent, len(breakouts), solo_hours, solo_min_likes,
+        )
+    except Exception as e:
+        logger.error("Phase 0 failed (solo breakouts): %s", e, exc_info=True)
+        log_cron_finish(run_id, status="failed", error_message=str(e))
+
+    # ─────────────────────────────────────────────────────────────────────
+    # PHASE 1: Day number + pick the outlier tweets (bank only)
     # ─────────────────────────────────────────────────────────────────────
     run_id = log_cron_start(platform="instagram", job_type="carousel_pick")
     try:
@@ -310,14 +474,10 @@ def main() -> None:
         )
 
         tweets = _pick_carousel_tweets(
-            twitter_handle=twitter_handle,
             bank_path=bank_path,
             min_likes=min_likes,
             count=tweet_count,
-            max_items=max_items,
             used_tweet_ids=used_tweet_ids,
-            recent_hours=recent_hours,
-            recent_min_likes=recent_min_likes,
         )
         if len(tweets) < tweet_count:
             # The Day-N series always ships a full set — a short carousel
