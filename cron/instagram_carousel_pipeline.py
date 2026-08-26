@@ -21,8 +21,8 @@ leg failing never blocks the carousel — each leg has its own cron_runs
 row and its own try/except.
 
 Internally each shipped carousel still advances a "Day N" counter — it no
-longer appears on any slide, but it remains the per-day dedup key for the
-TikTok mirror leg and a human-readable series marker in metadata.
+longer appears on any slide, but it remains a human-readable series
+marker in metadata.
 
 The carousel always ships with exactly CAROUSEL_TWEET_COUNT slides —
 if nine unused qualifying tweets can't be found, or any slide fails to
@@ -42,20 +42,16 @@ The day counter needs no table of its own: day = (number of live carousel
 rows) + 1. A buffer_error row drops out of that count, so a failed day is
 retried under the same number the next run.
 
-The same slide set also ships to TikTok as a photo-mode carousel (a
-best-effort mirror leg after the Instagram send — see
-_send_tiktok_carousel). Buffer publishes multiple image assets on a
-TikTok channel as a photo carousel; TikTok auto-applies a music track
-to photo posts on its side (Buffer's API exposes no music-selection
-field, only isAiGenerated/title, so the track can't be chosen here).
+(The TikTok photo-carousel mirror leg was removed in Aug 2026 — the
+operator stopped publishing tweet carousels to TikTok. The historical
+platform='tiktok' carousel rows stay in the DB for dashboard history.)
 
 Four cron_runs phases, platform='instagram':
   Phase 0 — solo_breakout:     render + send one standalone post per
                                fresh viral tweet (72h / 6K gates)
   Phase 1 — carousel_pick:     day number + 10 bank outlier tweets
   Phase 2 — carousel_generate: render the 10 tweet cards
-  Phase 3 — carousel_send:     insert posts row + one Buffer carousel send,
-                               then the TikTok mirror leg
+  Phase 3 — carousel_send:     insert posts row + one Buffer carousel send
 
 Run locally with:  python -m cron.instagram_carousel_pipeline
 Dry run (no DB write, no Buffer send):  CAROUSEL_DRY_RUN=1 python -m ...
@@ -101,12 +97,9 @@ SOURCE_TAG = "carousel"
 def _series_label(day: int) -> str:
     """Internal per-day series marker — NOT rendered on any slide.
 
-    Stored in metadata.title for the dashboard and used as the TikTok mirror
-    row's dedup caption, which must be unique per day (see
-    _send_tiktok_carousel for why slide 1's tweet text can't be that key).
-    The old title-card wording ("Brutally honest advice…") was retired in
-    Aug 2026; captions never collide across the formats because the day
-    number only moves forward.
+    Stored in metadata.title so the dashboard can show which "Day N" a
+    carousel belongs to. (It also served as the dedup caption for the
+    TikTok mirror leg until that leg was removed in Aug 2026.)
     """
     return f"Outlier carousel (Day {day})"
 
@@ -620,25 +613,10 @@ def main() -> None:
             base_metadata=metadata,
         )
 
-        # ─── TIKTOK MIRROR LEG (best-effort) ─────────────────────────────
-        # The IG carousel is the primary send — by this point it's queued,
-        # so a TikTok hiccup must not fail the run. The note (if any) rides
-        # in error_message so the dashboard shows the leg's health without
-        # a separate cron_runs row.
-        tiktok_note = _send_tiktok_carousel(
-            storage_paths=storage_paths,
-            dedup_caption=dedup_caption,
-            metadata=metadata,
-            day=day,
-        )
-
-        log_cron_finish(
-            run_id, status="success", posts_processed=1, error_message=tiktok_note,
-        )
+        log_cron_finish(run_id, status="success", posts_processed=1)
         logger.info(
-            "Phase 3 complete: Day %d carousel (%d slides) sent to Buffer (post %s, Buffer %s)%s",
+            "Phase 3 complete: Day %d carousel (%d slides) sent to Buffer (post %s, Buffer %s)",
             day, len(storage_paths), post_id, buffer_post_id,
-            f" — {tiktok_note}" if tiktok_note else " — tiktok leg OK",
         )
     except Exception as e:
         # Flip to buffer_error so the row drops out of the dedup index AND
@@ -651,99 +629,6 @@ def main() -> None:
             logger.error("Also failed to mark post %s as buffer_error: %s", post_id, db_err)
         log_cron_finish(run_id, status="failed", error_message=str(e))
         sys.exit(1)
-
-
-def _send_tiktok_carousel(
-    *,
-    storage_paths: list[str],
-    dedup_caption: str,
-    metadata: dict,
-    day: int,
-) -> str | None:
-    """Queue the same slides to Buffer's TikTok channel as a photo carousel.
-
-    Mirrors the Instagram send: one posts row carrying all the slides, one
-    Buffer createPost with one image asset per slide. Buffer publishes
-    multiple images on a TikTok channel as a photo-mode carousel; TikTok
-    auto-applies a music track to photo posts (there is no music field in
-    Buffer's TikTokPostMetadataInput — verified by schema introspection —
-    so the specific track can't be chosen from here).
-
-    The metadata dict is reused verbatim (source='carousel', day,
-    tweet_ids). That's safe for the day counter and the never-reuse
-    ledger: _fetch_carousel_history filters on platform='instagram', so
-    tiktok rows never double-count.
-
-    Returns None on success, or a short human-readable note for the
-    carousel_send run's error_message. NEVER raises — the IG carousel has
-    already shipped by the time this runs.
-    """
-    try:
-        tiktok_channel_id = get_channel_id(service="tiktok")
-    except Exception as e:
-        logger.warning("TikTok channel lookup failed — skipping TikTok leg: %s", e)
-        return f"tiktok skipped (channel lookup failed: {str(e)[:120]})"
-
-    # Insert-first-then-send, same as the IG row above — but the TikTok
-    # row's dedup caption is the internal series label ("... (Day N)",
-    # unique per day), not slide 1's tweet text. The retired tweet-reel
-    # pipeline filled platform='tiktok' rows with tweet texts, so keying on
-    # the tweet would wrongly block any carousel whose slide-1 tweet once
-    # shipped as a reel. The label still arbitrates the real risk (the same
-    # day double-queued by concurrent/re-runs) via the (platform,
-    # md5(caption)) index. It is never rendered or shown on TikTok — the
-    # Buffer send below posts a blank caption.
-    tiktok_caption = metadata.get("title") or dedup_caption
-    post = Post(
-        platform="tiktok",
-        status="sent_to_buffer",
-        media_type="carousel",
-        media_urls=storage_paths,
-        caption=tiktok_caption,
-        metadata=metadata,
-    )
-    try:
-        tiktok_post_id = insert_post(post)
-    except Exception as e:
-        if _is_unique_violation(e):
-            logger.info(
-                "TikTok dedup — this day already queued to TikTok, skipping leg: %.50s",
-                tiktok_caption,
-            )
-            return "tiktok skipped (day already queued)"
-        logger.error("TikTok carousel insert failed: %s", e, exc_info=True)
-        return f"tiktok insert failed: {str(e)[:120]}"
-
-    try:
-        media_urls = [build_proxy_url(tiktok_post_id, i) for i in range(len(storage_paths))]
-        buffer_post_id = send_to_buffer(
-            tiktok_channel_id,
-            BUFFER_CAPTION,  # blank, same as IG — the content is on the cards
-            media_urls,
-            media_type="image",
-        )
-        record_buffer_handoff(
-            tiktok_post_id, buffer_post_id,
-            channel_id=tiktok_channel_id,
-            body=BUFFER_CAPTION,
-            media_type="image",
-            base_metadata=metadata,
-        )
-        logger.info(
-            "Day %d carousel also queued to TikTok (post %s, Buffer %s)",
-            day, tiktok_post_id, buffer_post_id,
-        )
-        return None
-    except Exception as e:
-        # Flip to buffer_error so the row leaves the dedup index and
-        # buffer_reconcile (which allows carousel-source tiktok re-sends)
-        # or a future manual retry can pick it up.
-        logger.error("TikTok carousel Buffer send failed: %s", e, exc_info=True)
-        try:
-            update_post(tiktok_post_id, status="buffer_error", error_message=str(e)[:500])
-        except Exception as db_err:
-            logger.error("Also failed to mark TikTok post %s as buffer_error: %s", tiktok_post_id, db_err)
-        return f"tiktok buffer send failed: {str(e)[:120]}"
 
 
 if __name__ == "__main__":

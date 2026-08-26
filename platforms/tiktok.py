@@ -1,10 +1,10 @@
 """TikTok platform adapter — UNUSED.
 
 The TikTok publishing that still exists goes through Buffer (see
-core/buffer.py; live legs: manual-upload fan-out in core/video_batch.py
-and the carousel mirror in cron/instagram_carousel_pipeline.py — the
-tweet-reel leg was retired Aug 2026). This stub is kept as reference for
-a future direct TikTok API integration if we ever need to bypass Buffer.
+core/buffer.py; the only live leg is the manual-upload fan-out in
+core/video_batch.py — the tweet-reel leg and the tweet-carousel mirror
+were both retired in Aug 2026). This stub is kept as reference for a
+future direct TikTok API integration if we ever need to bypass Buffer.
 -----------------------------------------------------------------
 Key things to know about TikTok's API:
   - Auth uses OAuth 2.0.  You get an authorization code, exchange it for
