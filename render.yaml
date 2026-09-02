@@ -197,7 +197,7 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
     startCommand: python -m cron.instagram_carousel_pipeline
-    # Instagram carousel pathway — daily outlier-tweet carousel: 10
+    # Instagram carousel pathway — weekly outlier-tweet carousel: 10
     # outlier tweets all >= 6500 likes, most-liked first (recent Apify
     # outliers first, bank top-up; no title/intro card — slide 1 is the
     # strongest tweet). Renders 1080×1350 quote cards and queues ONE
@@ -209,7 +209,7 @@ services:
     # before leila-linkedin (11:45).
     # Day-N numbering counts shipped carousels, not calendar days, so the
     # counter advances one per successful run regardless of cadence.
-    schedule: "30 11 * * *"  # Daily at 11:30 AM UTC = 4:30 AM PDT
+    schedule: "30 11 * * 1"  # Weekly, Mondays at 11:30 AM UTC = 4:30 AM PDT
     envVars:
       - key: SUPABASE_URL
         sync: false
