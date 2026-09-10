@@ -74,6 +74,13 @@ _X_CAPTION_LIMIT = 280
 # disambiguates the live acq_official channel from any stale legacy one.
 _X_CHANNEL_NAME = "acq_official"
 
+# The Buffer org has TWO service='youtube' channels: the main "Alex Hormozi"
+# channel and "MoreMozi" (the 2nd/highlights channel). An unpinned
+# get_channel_id(service="youtube") returns whichever Buffer lists first,
+# which sent manual-upload Shorts into MoreMozi's queue instead of the main
+# channel (found 2026-09-10). Pin by name, same pattern as _X_CHANNEL_NAME.
+_YOUTUBE_CHANNEL_NAME = "Alex Hormozi"
+
 
 def _leg_metadata(job_id: str) -> dict:
     """Base metadata stamped on every leg row.
@@ -220,7 +227,8 @@ def fanout_video(job_id: str, storage_path: str, title: str, caption: str) -> di
     # ── YouTube Shorts (best-effort) ──────────────────────────────────────
     try:
         result["youtube_buffer_id"] = _send_leg(
-            job_id, "youtube", get_channel_id(service="youtube"),
+            job_id, "youtube",
+            get_channel_id(service="youtube", name=_YOUTUBE_CHANNEL_NAME),
             caption, storage_path, title=title,
             youtube={"title": title, **YOUTUBE_DEFAULTS},
             caption_limit=_YOUTUBE_CAPTION_LIMIT,
