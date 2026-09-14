@@ -79,6 +79,12 @@ from cron._tweet_card_legs import (
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+# httpx logs every request URL at INFO — one line per PostgREST query and
+# Buffer call. Besides being ~200 lines of noise for a 100-pin run, those
+# URLs carry the Supabase project host and caption filters, and this
+# script's output can land in a public GitHub Actions log. Warnings and
+# errors from httpx still come through.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Same 10s spacing as scripts/backfill_pinterest_tweet_cards.py: Buffer
 # allows ~100 requests per rolling 15 min, and 6 sends/min = 90/15min, so a
