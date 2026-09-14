@@ -12,6 +12,12 @@ name: Pinterest bank push (manual)
 # to render + queue. Dedup on posts.caption makes a re-run safe.
 
 on:
+  # TEMPORARY: push trigger so the dry run can execute before this file
+  # reaches main (workflow_dispatch only resolves workflows registered on
+  # the default branch). Inputs are empty on a push, and DRY_RUN below
+  # falls back to '1' when unset, so a push can only ever dry-run.
+  push:
+    branches: ["claude/confident-darwin-1nmhf1"]
   workflow_dispatch:
     inputs:
       limit:
@@ -69,6 +75,8 @@ jobs:
           # Render URL (the same value render.yaml hands the crons).
           DASHBOARD_URL: https://command-center-drnj.onrender.com
           LIMIT: ${{ inputs.limit }}
-          DRY_RUN: ${{ inputs.dry_run }}
+          # Anything other than an explicit dispatch input of "0" dry-runs —
+          # a push-triggered run (no inputs) must never render or send.
+          DRY_RUN: ${{ inputs.dry_run || '1' }}
           MIN_LIKES: ${{ inputs.min_likes }}
         run: python scripts/pin_bank_tweets_to_pinterest.py
