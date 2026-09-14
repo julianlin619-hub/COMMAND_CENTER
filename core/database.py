@@ -39,8 +39,13 @@ def get_client() -> Client:
     """Get or create the Supabase client singleton."""
     global _client
     if _client is None:
-        url = os.environ["SUPABASE_URL"]
-        key = os.environ["SUPABASE_SERVICE_KEY"]
+        # .strip() because a value pasted into a Render or GitHub secret
+        # with a stray leading/trailing space or newline is invisible in
+        # every UI, yet supabase-py rejects " https://..." outright
+        # ("Invalid URL") and a padded key fails auth. Trimming here fixes
+        # it for every caller instead of each cron discovering it alone.
+        url = os.environ["SUPABASE_URL"].strip()
+        key = os.environ["SUPABASE_SERVICE_KEY"].strip()
         _client = create_client(url, key)
     return _client
 
