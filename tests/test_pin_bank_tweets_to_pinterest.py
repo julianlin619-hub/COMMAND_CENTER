@@ -7,6 +7,7 @@ loaded module — no network, no Supabase.
 What these pin down:
   - the pick is most-liked-first, skips tweets already on Pinterest, drops
     blank text, honours LIMIT, and reuses an existing Facebook card;
+  - the dry-run floor report reads the bank once and counts per floor;
   - DRY_RUN neither renders nor sends;
   - rendering batches only the picks without a card and drops failed ones;
   - every send goes through send_leg with the tweet text as the pin body,
@@ -59,32 +60,46 @@ def test_env_int_treats_blank_as_default(script, monkeypatch):
 
 
 def test_pick_is_most_liked_first_skips_pinned_and_honours_limit(script, monkeypatch):
-    dedup_calls: list[tuple[str, str]] = []
-
-    def fake_exists(platform, caption):
-        dedup_calls.append((platform, caption))
-        return caption == "pinned tweet"
-
     monkeypatch.setattr(
         script, "select_bank_content_with_likes", lambda count, min_likes: _bank_rows(),
     )
-    monkeypatch.setattr(script, "post_caption_exists", fake_exists)
-    monkeypatch.setattr(
-        script, "existing_facebook_image",
-        lambda caption: "generated/facebook/1.png" if caption == "mid tweet" else None,
-    )
 
-    picks = script.pick_candidates(limit=2, min_likes=6500)
+    picks = script.pick_candidates(
+        limit=2, min_likes=6500,
+        pinned={"pinned tweet": "generated/facebook/3.png"},
+        fb_cards={"mid tweet": "generated/facebook/1.png"},
+    )
 
     # 9999 is blank (skipped), 9000 top, 8000 already pinned, 7000 mid, 6600 cut by LIMIT.
     assert [p["tweet_id"] for p in picks] == ["2", "1"]
     # The t.co link is stripped so the caption matches what the cron would write.
     assert picks[1]["text"] == "mid tweet"
-    # Dedup is checked against the Pinterest rows only.
-    assert {platform for platform, _ in dedup_calls} == {"pinterest"}
     # Reuse an existing Facebook card where one exists; render the rest.
     assert picks[0]["storage_path"] is None
     assert picks[1]["storage_path"] == "generated/facebook/1.png"
+
+
+def test_floor_report_counts_unpinned_tweets_per_floor(script, monkeypatch, caplog):
+    rows = [
+        {"tweet_id": 1, "text": "pinned", "favorite_count": 7000},
+        {"tweet_id": 2, "text": "a", "favorite_count": 6400},
+        {"tweet_id": 3, "text": "b", "favorite_count": 5000},
+        {"tweet_id": 4, "text": "c", "favorite_count": 4100},
+    ]
+    floors_asked: list[int] = []
+
+    def fake_bank(count, min_likes):
+        floors_asked.append(min_likes)
+        return list(rows)
+
+    monkeypatch.setattr(script, "select_bank_content_with_likes", fake_bank)
+
+    with caplog.at_level("INFO"):
+        script.log_floor_report(pinned={"pinned": None})
+
+    # One read of the bank at the lowest floor, counted locally per step.
+    assert floors_asked == [4000]
+    assert ">=6500: 0, >=6000: 1, >=5500: 1, >=5000: 2, >=4500: 2, >=4000: 3" in caplog.text
 
 
 def test_dry_run_neither_renders_nor_sends(script, monkeypatch):
@@ -95,9 +110,12 @@ def test_dry_run_neither_renders_nor_sends(script, monkeypatch):
     monkeypatch.setattr(script, "get_channel_id", lambda service: "pin-ch")
     monkeypatch.setattr(script, "get_pinterest_board_service_id", lambda name: "board-1")
 
-    def fake_pick(limit, min_likes):
+    def fake_pick(limit, min_likes, *, pinned, fb_cards):
         seen["limit"] = limit
         return [_pick("1")]
+
+    monkeypatch.setattr(script, "live_posts_by_caption", lambda platform: {})
+    monkeypatch.setattr(script, "log_floor_report", lambda pinned: None)
 
     def must_not_run(*a, **k):
         raise AssertionError("render/send must not run in DRY_RUN")
@@ -195,7 +213,10 @@ def _patch_main_seams(script, monkeypatch, picks):
     monkeypatch.setattr(script, "log_env_diagnostics", lambda *a, **k: None)
     monkeypatch.setattr(script, "get_channel_id", lambda service: "pin-ch")
     monkeypatch.setattr(script, "get_pinterest_board_service_id", lambda name: "board-1")
-    monkeypatch.setattr(script, "pick_candidates", lambda limit, min_likes: picks)
+    monkeypatch.setattr(script, "live_posts_by_caption", lambda platform: {})
+    monkeypatch.setattr(
+        script, "pick_candidates", lambda limit, min_likes, *, pinned, fb_cards: picks,
+    )
 
 
 def test_main_real_run_renders_then_sends(script, monkeypatch):
