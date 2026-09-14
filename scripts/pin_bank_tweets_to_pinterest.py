@@ -67,6 +67,7 @@ with the repo's secrets (.github/workflows/pinterest-bank-push.yml).
 
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 import sys
@@ -168,6 +169,29 @@ def _bank_rows_most_liked_first(min_likes: int) -> list[dict]:
     return rows
 
 
+def _iter_unpinned(rows: list[dict], pinned: dict[str, str | None]):
+    """Yield (row, caption) for bank rows not on Pinterest, unique by caption.
+
+    The caption is the row's text run through the same cleanup the bank
+    cron applies (strip t.co links, fix spacing) — it is also the dedup
+    key, so it has to match what the cron would write. Blank texts are
+    dropped. The bank holds the same text under more than one tweet id
+    (Alex re-posts winners), and the unique index would reject the second
+    send anyway, so the first — most-liked — copy wins here and no render
+    is wasted on the repeat. Membership in `pinned` is the pre-check
+    against the live Pinterest rows; the (platform, md5(caption)) unique
+    index inside send_leg still arbitrates if a cron run pins the same
+    tweet concurrently.
+    """
+    seen: set[str] = set()
+    for row in rows:
+        text = normalize_tweet_text(row["text"])
+        if not text or text in pinned or text in seen:
+            continue
+        seen.add(text)
+        yield row, text
+
+
 def pick_candidates(
     limit: int, min_likes: int, *, pinned: dict[str, str | None], fb_cards: dict[str, str | None],
 ) -> list[dict]:
@@ -181,29 +205,16 @@ def pick_candidates(
     rows = _bank_rows_most_liked_first(min_likes)
     logger.info("%d bank tweets at >= %d likes", len(rows), min_likes)
 
-    picks: list[dict] = []
-    already_pinned = 0
-    for row in rows:
-        if len(picks) >= limit:
-            break
-        # Same cleanup the bank cron applies before a tweet becomes a
-        # caption (strip t.co links, fix spacing) — the caption is also
-        # the dedup key, so it has to match what the cron would write.
-        text = normalize_tweet_text(row["text"])
-        if not text:
-            continue
-        # Pre-check against the live Pinterest rows; the (platform,
-        # md5(caption)) unique index inside send_leg still arbitrates if a
-        # cron run pins the same tweet concurrently.
-        if text in pinned:
-            already_pinned += 1
-            continue
-        picks.append({
+    already_pinned = sum(1 for row in rows if normalize_tweet_text(row["text"]) in pinned)
+    picks = [
+        {
             "tweet_id": str(row["tweet_id"]),
             "text": text,
             "favorite_count": row["favorite_count"],
             "storage_path": fb_cards.get(text),
-        })
+        }
+        for row, text in itertools.islice(_iter_unpinned(rows, pinned), limit)
+    ]
 
     logger.info(
         "Picked %d tweets (%d skipped as already on Pinterest); %d reuse an existing Facebook card",
@@ -220,11 +231,7 @@ def log_floor_report(pinned: dict[str, str | None]) -> None:
     Reads the bank once at the lowest floor and counts locally.
     """
     rows = _bank_rows_most_liked_first(min(FLOOR_STEPS))
-    unpinned_likes = [
-        row["favorite_count"]
-        for row in rows
-        if (text := normalize_tweet_text(row["text"])) and text not in pinned
-    ]
+    unpinned_likes = [row["favorite_count"] for row, _ in _iter_unpinned(rows, pinned)]
     counts = ", ".join(
         f">={floor}: {sum(1 for likes in unpinned_likes if likes >= floor)}"
         for floor in FLOOR_STEPS

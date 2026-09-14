@@ -6,7 +6,8 @@ loaded module — no network, no Supabase.
 
 What these pin down:
   - the pick is most-liked-first, skips tweets already on Pinterest, drops
-    blank text, honours LIMIT, and reuses an existing Facebook card;
+    blank text and repeated texts, honours LIMIT, and reuses an existing
+    Facebook card;
   - the dry-run floor report reads the bank once and counts per floor;
   - DRY_RUN neither renders nor sends;
   - rendering batches only the picks without a card and drops failed ones;
@@ -46,6 +47,8 @@ def _bank_rows() -> list[dict]:
         {"tweet_id": 3, "text": "pinned tweet", "favorite_count": 8000},
         {"tweet_id": 4, "text": "low tweet", "favorite_count": 6600},
         {"tweet_id": 5, "text": "   ", "favorite_count": 9999},
+        # Same text as tweet 2 under another id — only the most-liked copy ships.
+        {"tweet_id": 6, "text": "top tweet", "favorite_count": 8500},
     ]
 
 
@@ -70,7 +73,8 @@ def test_pick_is_most_liked_first_skips_pinned_and_honours_limit(script, monkeyp
         fb_cards={"mid tweet": "generated/facebook/1.png"},
     )
 
-    # 9999 is blank (skipped), 9000 top, 8000 already pinned, 7000 mid, 6600 cut by LIMIT.
+    # 9999 is blank (skipped), 9000 top, 8500 repeats top's text (skipped),
+    # 8000 already pinned, 7000 mid, 6600 cut by LIMIT.
     assert [p["tweet_id"] for p in picks] == ["2", "1"]
     # The t.co link is stripped so the caption matches what the cron would write.
     assert picks[1]["text"] == "mid tweet"
