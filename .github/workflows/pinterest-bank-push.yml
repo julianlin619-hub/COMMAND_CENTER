@@ -1,0 +1,74 @@
+name: Pinterest bank push (manual)
+
+# Manual, one-off fan-out of fresh tweet_bank tweets to the Pinterest board
+# via Buffer — see scripts/pin_bank_tweets_to_pinterest.py for what it does
+# and why. There is deliberately NO schedule: the daily Pinterest leg lives
+# in the tweet-reel-* Render crons (render.yaml). This exists so a batch
+# push can be fired from the GitHub UI with the repo's secrets instead of
+# needing a local .env.
+#
+# Run it twice: first with dry_run=1 (the default) to see the exact pick
+# list and confirm the Buffer channel + board resolve, then with dry_run=0
+# to render + queue. Dedup on posts.caption makes a re-run safe.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "How many pins to queue (most-liked unpinned bank tweets first)"
+        required: false
+        default: "100"
+      dry_run:
+        description: "1 = pick + report only (no render, no Buffer send); 0 = real run"
+        required: false
+        default: "1"
+      min_likes:
+        description: "Bank like floor (same default as the tweet-reel-bank cron)"
+        required: false
+        default: "6500"
+
+# One push at a time — two overlapping runs would race for the same
+# top-of-bank picks. The DB unique index would dedup them, but every loser
+# of that race is a wasted render plus a Buffer call against the rate window.
+concurrency:
+  group: pinterest-bank-push
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    # ~10 render batches + 100 sends at 10s pacing is roughly 20-25 min;
+    # 60 leaves headroom for Buffer's rate-limit backoff inside send_to_buffer.
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Same install the Render crons run (render.yaml buildCommand).
+      - name: Install dependencies
+        run: pip install -r requirements.txt && pip install -e .
+
+      - name: Pin bank tweets to Pinterest
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          BUFFER_ACCESS_TOKEN: ${{ secrets.BUFFER_ACCESS_TOKEN }}
+          BUFFER_ORG_ID: ${{ secrets.BUFFER_ORG_ID }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          # The dashboard renders the 1080x1080 cards; this is its public
+          # Render URL (the same value render.yaml hands the crons).
+          DASHBOARD_URL: https://command-center-drnj.onrender.com
+          LIMIT: ${{ inputs.limit }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          MIN_LIKES: ${{ inputs.min_likes }}
+        run: python scripts/pin_bank_tweets_to_pinterest.py
