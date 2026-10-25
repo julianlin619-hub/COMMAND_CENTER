@@ -56,6 +56,7 @@ from core.database import (
 )
 from core.media import build_proxy_url
 from core.models import Post
+from core.tweet_filter import contains_profanity
 
 
 logger = logging.getLogger(__name__)
@@ -432,7 +433,9 @@ def fanout_extra_legs_for_one_tweet(
     Skip reasons use `status` values: 'skipped_no_render',
     'skipped_no_channel', 'skipped_dedup', 'skipped_paused' (IG leg only,
     when IG_TWEET_CARD_FORMAT resolves to 'off'), 'skipped_no_board'
-    (Pinterest leg only, when the board lookup failed for the run).
+    (Pinterest leg only, when the board lookup failed for the run),
+    'skipped_profanity' (LinkedIn leg only — the tweet contains a word the
+    operator never wants on LinkedIn; see core.tweet_filter.contains_profanity).
     """
     # 'off' pauses the IG leg entirely (see instagram_card_format): report a
     # distinct skip status so the leg summary / logs show the leg was paused
@@ -497,18 +500,28 @@ def fanout_extra_legs_for_one_tweet(
             source_tag=source_tag,
             extra_send_kwargs={"facebook_post_type": "post"},
         ),
-        "linkedin": _send_or_skip(
-            platform="linkedin",
-            channel_id=li_channel_id,
-            # Reuse the FB 1:1 PNG — same template, same image bytes.
-            # Previously we made a second /api/content-gen/generate
-            # call with platform='linkedin' for a palette override;
-            # that's been removed to save a call/tweet (user
-            # explicitly OK with LI/FB looking identical).
-            storage_path=fb_storage_path,
-            caption=tweet_caption,
-            source_tag=source_tag,
-            extra_send_kwargs={},
+        # LinkedIn is the only leg with a content rule on top of the shared
+        # render: tweets containing "fuck" are dropped here (and only here —
+        # the same tweet still ships to FB/IG/Pinterest). This is the Alex
+        # half of the rule; the Leila half lives in cron/linkedin_leila_cron.py
+        # via is_postable_tweet(). summarize_leg_failures only counts
+        # db_failed/buffer_failed, so a profanity skip never flags the run.
+        "linkedin": (
+            {"status": "skipped_profanity", "post_id": None, "buffer_post_id": None, "error": None}
+            if contains_profanity(tweet_caption)
+            else _send_or_skip(
+                platform="linkedin",
+                channel_id=li_channel_id,
+                # Reuse the FB 1:1 PNG — same template, same image bytes.
+                # Previously we made a second /api/content-gen/generate
+                # call with platform='linkedin' for a palette override;
+                # that's been removed to save a call/tweet (user
+                # explicitly OK with LI/FB looking identical).
+                storage_path=fb_storage_path,
+                caption=tweet_caption,
+                source_tag=source_tag,
+                extra_send_kwargs={},
+            )
         ),
         "instagram": ig_result,
         "pinterest": pin_result,

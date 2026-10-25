@@ -101,6 +101,45 @@ def test_fb_li_legs_still_ship_blank_captions(monkeypatch):
     assert captured["send"]["body"] == ""
 
 
+def test_linkedin_leg_skips_profanity_but_other_legs_ship(monkeypatch):
+    """Alex half of the LinkedIn profanity rule: a tweet containing "fuck"
+    must never reach the LinkedIn queue, but the SAME tweet still ships to
+    Facebook and Pinterest — the rule is LinkedIn-only, not a global filter."""
+    sent_platforms: list[str] = []
+    _patch_send_path(monkeypatch)
+    real_send_leg = legs.send_leg
+
+    def spy_send_leg(**kwargs):
+        sent_platforms.append(kwargs["platform"])
+        return real_send_leg(**kwargs)
+
+    monkeypatch.setattr(legs, "send_leg", spy_send_leg)
+
+    result = _fanout(
+        tweet_caption="Nobody is coming to save you. Fuck it, do the work.",
+    )
+    assert result["linkedin"]["status"] == "skipped_profanity"
+    assert result["linkedin"]["post_id"] is None
+    assert "linkedin" not in sent_platforms
+    # FB + Pinterest are unaffected by the LinkedIn-only rule.
+    assert result["facebook"]["status"] not in {"skipped_profanity"}
+    assert "facebook" in sent_platforms
+    assert "pinterest" in sent_platforms
+
+
+def test_linkedin_profanity_skip_is_not_a_failure():
+    """summarize_leg_failures must treat the profanity skip like any other
+    deliberate skip — otherwise every swear-y tweet would mark the cron run
+    unhealthy in cron_runs.error_message."""
+    results = [{
+        "facebook": {"status": "sent"},
+        "linkedin": {"status": "skipped_profanity"},
+        "instagram": {"status": "skipped_paused"},
+        "pinterest": {"status": "sent"},
+    }]
+    assert legs.summarize_leg_failures(results) is None
+
+
 def test_summarize_leg_failures_counts_pinterest(monkeypatch):
     ok = {"status": "sent"}
     fail = {"status": "buffer_failed"}

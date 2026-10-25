@@ -68,6 +68,32 @@ _RETWEET_RE = re.compile(r"^\s*RT\s+@", re.IGNORECASE)
 # so 25 is a conservative floor.
 _MIN_TWEET_CHARS = 25
 
+# Operator rule (Oct 2026): LinkedIn is the one surface where profanity is
+# off-brand for both Alex and Leila, so any tweet containing "fuck" is
+# dropped from the LinkedIn legs entirely — not censored, not asterisked,
+# just never used. Substring match (not \b word boundary) on purpose so
+# "fucking", "fucked", "motherfucker", "#fuckit" all trip it; the cost of a
+# false positive here is one skipped tweet, the cost of a miss is a swear
+# word on a LinkedIn quote card. Case-insensitive because Apify returns the
+# raw tweet body and Alex sometimes writes in all caps.
+_PROFANITY_RE = re.compile(r"fuck", re.IGNORECASE)
+
+
+def contains_profanity(text: str) -> bool:
+    """True if `text` contains a word we never want on a LinkedIn card.
+
+    Shared by both LinkedIn paths so the rule lives in exactly one place:
+      - cron/linkedin_leila_cron.py via `is_postable_tweet()` (regex stage,
+        reason tag "profanity"), and
+      - cron/_tweet_card_legs.py's LinkedIn leg of the Alex tweet-card
+        fan-out, which checks it directly and skips the leg with status
+        "skipped_profanity" while FB/IG/Pinterest still ship.
+
+    Deliberately NOT a general profanity list — the operator asked for one
+    specific word. Add to `_PROFANITY_RE` if that list grows.
+    """
+    return bool(_PROFANITY_RE.search(text))
+
 
 def is_retweet(text: str) -> bool:
     """True if `text` is a retweet (starts with the `RT @` prefix as Apify
@@ -100,6 +126,8 @@ def _regex_reject(text: str) -> str | None:
         return "retweet"
     if _HYPERLINK_RE.search(stripped):
         return "hyperlink"
+    if contains_profanity(stripped):
+        return "profanity"
     # Both ASCII triple-dot and Unicode ellipsis (U+2026). Apify has
     # returned both depending on whether Twitter's own truncation or the
     # author's typed text is at the end.
@@ -200,8 +228,8 @@ def is_postable_tweet(
     """Return (is_postable, reason_tag) for a single tweet body.
 
     Stage 1 — regex heuristics. If any fire, return immediately with the
-    matched reason tag (`empty`, `retweet`, `hyperlink`, `truncated`,
-    `too_short`). No LLM call is made in this path, so junk tweets are
+    matched reason tag (`empty`, `retweet`, `hyperlink`, `profanity`,
+    `truncated`, `too_short`). No LLM call is made in this path, so junk tweets are
     cheap to filter.
 
     Stage 2 — Claude semantic judge. Only reached when regex passes. The

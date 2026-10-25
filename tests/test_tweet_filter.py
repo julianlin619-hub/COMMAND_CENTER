@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.tweet_filter import is_postable_tweet, is_retweet
+from core.tweet_filter import contains_profanity, is_postable_tweet, is_retweet
 
 
 def _mock_client_returning(text: str) -> MagicMock:
@@ -113,12 +113,60 @@ class TestRegexStage:
         assert reason == "too_short"
         client.messages.create.assert_not_called()
 
+    def test_profanity_rejected_before_llm(self):
+        """Operator rule: a tweet containing "fuck" never reaches LinkedIn,
+        so it must short-circuit at the regex stage — no LLM spend, and no
+        chance the semantic judge keeps it as a "complete" thought."""
+        client = MagicMock()
+        keep, reason = is_postable_tweet(
+            "Stop waiting for permission. Nobody is coming to save you, so fuck it and ship.",
+            client=client,
+        )
+        assert keep is False
+        assert reason == "profanity"
+        client.messages.create.assert_not_called()
+
+    def test_profanity_is_case_insensitive_and_matches_variants(self):
+        """Substring match on purpose: FUCK / fucking / motherfucker all count.
+        Apify returns the raw tweet body, so casing is whatever the author typed."""
+        client = MagicMock()
+        for text in (
+            "I DON'T GIVE A FUCK what they think, just do the work every single day.",
+            "Most people are too busy fucking around to notice the opportunity in front of them.",
+            "Be the motherfucker who shows up when it's boring, not just when it's exciting.",
+        ):
+            keep, reason = is_postable_tweet(text, client=client)
+            assert keep is False, text
+            assert reason == "profanity", text
+        client.messages.create.assert_not_called()
+
     def test_retweet_beats_other_tags(self):
         """`RT @x: hi` matches both retweet and too_short — retweet should win
         because it's the more specific/useful tag for logging."""
         client = MagicMock()
         keep, reason = is_postable_tweet("RT @x: hi", client=client)
         assert reason == "retweet"
+
+
+class TestContainsProfanity:
+    """`contains_profanity` is the shared helper both LinkedIn paths call —
+    Leila through `is_postable_tweet`, Alex directly from the tweet-card
+    LinkedIn leg. Test it on its own so a future change to the regex is
+    caught even if one caller's test is loosened."""
+
+    def test_detects_word(self):
+        assert contains_profanity("fuck") is True
+        assert contains_profanity("what the Fuck") is True
+        assert contains_profanity("#fuckit") is True
+
+    def test_clean_text_passes(self):
+        assert contains_profanity("Hire slow, fire fast.") is False
+        assert contains_profanity("") is False
+
+    def test_not_a_general_profanity_list(self):
+        """Only the one word the operator asked for — other swears still pass
+        (they're handled, if at all, by the Claude judge's taste, not here)."""
+        assert contains_profanity("This is damn good advice.") is False
 
 
 class TestIsRetweet:
