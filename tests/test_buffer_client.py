@@ -232,3 +232,41 @@ def test_get_pinterest_board_service_id_no_channel_raises(monkeypatch):
     _install_board_channels(monkeypatch, [{"service": "facebook", "metadata": {}}])
     with pytest.raises(RuntimeError, match="No pinterest channel"):
         buffer.get_pinterest_board_service_id("Business Tactics")
+
+
+# ── send_to_buffer fixed publish time (due_at) ───────────────────────────
+
+
+def test_send_to_buffer_default_mode_is_add_to_queue(monkeypatch):
+    captured = _capture_create_post(monkeypatch)
+    buffer.send_to_buffer("ch1", "", "https://x/img.png", media_type="image")
+    assert captured["mode"] == "addToQueue"
+    assert "dueAt" not in captured
+
+
+def test_send_to_buffer_due_at_switches_to_custom_scheduled_utc(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    captured = _capture_create_post(monkeypatch)
+    # 6pm Pacific (UTC-7 in October) must reach Buffer as 01:00 UTC the
+    # next day — the ISO string carries an explicit offset so Buffer can't
+    # misread the wall time.
+    pacific = timezone(timedelta(hours=-7))
+    buffer.send_to_buffer(
+        "ch1", "", "https://x/img.png", media_type="image",
+        due_at=datetime(2026, 10, 24, 18, 0, tzinfo=pacific),
+    )
+    assert captured["mode"] == "customScheduled"
+    assert captured["schedulingType"] == "automatic"
+    assert captured["dueAt"] == "2026-10-25T01:00:00+00:00"
+
+
+def test_send_to_buffer_rejects_naive_due_at(monkeypatch):
+    from datetime import datetime
+
+    _capture_create_post(monkeypatch)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        buffer.send_to_buffer(
+            "ch1", "", "https://x/img.png", media_type="image",
+            due_at=datetime(2026, 10, 24, 18, 0),
+        )

@@ -1,9 +1,9 @@
 """Tests for cron.instagram_carousel_pipeline selection logic.
 
-Covers the pure-ish helpers — the day-counter/used-tweet history read, the
-bank-only carousel selection (dedup gates + likes-descending slide order),
-and the solo-breakout filter (retweet/reply/dedup gates). The render/send
-phases are exercised end-to-end via
+Covers the pure-ish helpers — the day-counter/used-tweet history read and
+the bank-only carousel selection (dedup gates + likes-descending slide
+order). The daily solo post moved to its own cron — see
+tests/test_instagram_solo_pipeline.py. The render/send phases are exercised end-to-end via
 `CAROUSEL_DRY_RUN=1 python -m cron.instagram_carousel_pipeline` against a
 live dashboard; here we patch the module's imported dependencies so nothing
 external is touched.
@@ -97,10 +97,6 @@ def _pick(monkeypatch, *, bank, used_ids=frozenset(), used_captions=frozenset(),
     )
 
 
-def _apify(tweet_id, text, likes=7000):
-    return {"id": tweet_id, "text": text, "like_count": likes}
-
-
 def _bank(tweet_id, text, likes=7000):
     return {"tweet_id": tweet_id, "text": text, "favorite_count": likes}
 
@@ -150,60 +146,6 @@ def test_pick_returns_short_set_when_exhausted(monkeypatch):
     # reports what it found.
     picked = _pick(monkeypatch, bank=[_bank("b1", "Bank one.")])
     assert len(picked) == 1
-
-
-# ── _pick_solo_breakouts ─────────────────────────────────────────────────
-
-
-def _solo(monkeypatch, tweets, *, used_ids=frozenset(), used_captions=frozenset()):
-    monkeypatch.setattr(
-        pipeline,
-        "post_caption_exists",
-        lambda platform, caption: (platform, caption) in used_captions,
-    )
-    return pipeline._pick_solo_breakouts(tweets, set(used_ids))
-
-
-def test_solo_skips_retweets_and_replies(monkeypatch):
-    picked = _solo(
-        monkeypatch,
-        [
-            _apify("s1", "RT @someone: not our content."),
-            _apify("s2", "@someone replying to a thread."),
-            _apify("s3", "A genuine breakout tweet."),
-        ],
-    )
-    assert [t["tweet_id"] for t in picked] == ["s3"]
-
-
-def test_solo_applies_dedup_gates(monkeypatch):
-    picked = _solo(
-        monkeypatch,
-        [
-            # On a previous carousel (pre-2026-08-17 the Apify pathway
-            # shipped recent tweets as slides).
-            _apify("used-id", "Fine text, used id."),
-            # Already a solo post / carousel slide-1 caption.
-            _apify("s2", "Already posted text."),
-            _apify("s3", "Ship daily."),
-            # Fingerprint-duplicate within the same run.
-            _apify("s4", "SHIP DAILY!!"),
-        ],
-        used_ids={"used-id"},
-        used_captions={("instagram", "Already posted text.")},
-    )
-    assert [t["tweet_id"] for t in picked] == ["s3"]
-
-
-def test_solo_keeps_newest_first_order_and_likes(monkeypatch):
-    picked = _solo(
-        monkeypatch,
-        [_apify("s1", "Newest.", likes=9000), _apify("s2", "Older.", likes=15000)],
-    )
-    # No re-ranking: each breakout is its own post, so Apify's
-    # newest-first order is simply preserved.
-    assert [t["tweet_id"] for t in picked] == ["s1", "s2"]
-    assert [t["favorite_count"] for t in picked] == [9000, 15000]
 
 
 # ── misc ─────────────────────────────────────────────────────────────────

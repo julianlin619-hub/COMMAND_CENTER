@@ -193,23 +193,25 @@ services:
         sync: false
 
   - type: cron
-    name: instagram-carousel
+    name: instagram-solo
     runtime: python
     buildCommand: pip install -r requirements.txt && pip install -e .
-    startCommand: python -m cron.instagram_carousel_pipeline
-    # Instagram carousel pathway — weekly outlier-tweet carousel: 10
-    # outlier tweets all >= 6500 likes, most-liked first (recent Apify
-    # outliers first, bank top-up; no title/intro card — slide 1 is the
-    # strongest tweet). Renders 1080×1350 quote cards and queues ONE
-    # 10-slide Buffer carousel (IG's max) to Alex's main IG channel.
-    # Owns Instagram now that the tweet-card IG reel leg defaults to
-    # 'off'. (The TikTok photo-carousel mirror leg was removed Aug 2026.)
-    # 11:30 UTC — after tweet-reel-recent (11:00) and tweet-reel-bank (11:15)
-    # so its dashboard render call doesn't fight their ffmpeg jobs, and
-    # before leila-linkedin (11:45).
-    # Day-N numbering counts shipped carousels, not calendar days, so the
-    # counter advances one per successful run regardless of cadence.
-    schedule: "30 11 * * 1"  # Weekly, Mondays at 11:30 AM UTC = 4:30 AM PDT
+    startCommand: python -m cron.instagram_solo_pipeline
+    # Instagram solo post — ONE outlier tweet every second day as a
+    # 1080×1350 (4:5) quote card, sent to Alex's main IG channel via Buffer
+    # with an explicit publish time of 6:00 PM Pacific (mode=customScheduled,
+    # so the time is set by the code, not by the channel's Buffer schedule).
+    # Fresh breakout first (<= 72h old AND >= 6000 likes via Apify), else a
+    # random unused bank tweet >= SOLO_BANK_MIN_LIKES. Shares the carousel's
+    # dedup ledger so no tweet ships twice in any IG format.
+    # "*/2" fires on odd days of the month, which can't alternate perfectly
+    # across a 31-day month (31st then 1st). The pipeline fixes that itself:
+    # it never schedules a post less than 2 days after the previous one, so
+    # an "early" run just books the next correct slot a day further out.
+    # 12:00 UTC (5am PDT) — after the 11:00-11:45 render-heavy crons so its
+    # dashboard render call doesn't fight theirs, and 13 hours before the
+    # 6pm Pacific publish time it hands to Buffer.
+    schedule: "0 12 */2 * *"  # Every 2nd day at 12:00 UTC = 5:00 AM PDT
     envVars:
       - key: SUPABASE_URL
         sync: false
@@ -227,15 +229,52 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
+      - key: SOLO_BREAKOUT_HOURS  # optional — fresh-tweet window, default 72h
+        sync: false
+      - key: SOLO_BREAKOUT_MIN_LIKES  # optional — fresh-tweet bar, default 6000
+        sync: false
+      - key: SOLO_BANK_MIN_LIKES  # optional — bank fallback bar, default 4000
+        sync: false
+      - key: SOLO_DRY_RUN  # optional — "1" = pick + render only, no send
+        sync: false
+
+  - type: cron
+    name: instagram-carousel
+    runtime: python
+    buildCommand: pip install -r requirements.txt && pip install -e .
+    startCommand: python -m cron.instagram_carousel_pipeline
+    # Instagram carousel pathway — weekly outlier-tweet carousel: 10 bank
+    # tweets all >= CAROUSEL_MIN_LIKES, most-liked first (no title/intro
+    # card — slide 1 is the strongest tweet). Renders 1080×1350 quote cards
+    # and queues ONE 10-slide Buffer carousel (IG's max) to Alex's main IG
+    # channel. The every-second-day single-tweet post is the instagram-solo cron above
+    # (the solo-breakout leg moved out of here in Oct 2026 when this cron
+    # went weekly). (The TikTok photo-carousel mirror leg was removed Aug
+    # 2026.)
+    # 11:30 UTC — after tweet-reel-recent (11:00) and tweet-reel-bank (11:15)
+    # so its dashboard render call doesn't fight their ffmpeg jobs, and
+    # before leila-linkedin (11:45).
+    # Day-N numbering counts shipped carousels, not calendar days, so the
+    # counter advances one per successful run regardless of cadence.
+    schedule: "30 11 * * 1"  # Weekly, Mondays at 11:30 AM UTC = 4:30 AM PDT
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: BUFFER_ACCESS_TOKEN
+        sync: false
+      - key: BUFFER_ORG_ID
+        sync: false
+      - key: DASHBOARD_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
       - key: CAROUSEL_MIN_LIKES  # bank-only slide bar (code default is 6500;
         value: "4000"            # lowered 2026-08-17 — the 6.5K pool was nearly mined out)
       - key: CAROUSEL_TWEET_COUNT  # optional — default 10 slides (IG's max)
         sync: false
       - key: CAROUSEL_DRY_RUN  # optional — "1" = pick + render only, no send
-        sync: false
-      - key: SOLO_BREAKOUT_HOURS  # optional — solo-post leg window, default 72h
-        sync: false
-      - key: SOLO_BREAKOUT_MIN_LIKES  # optional — solo-post leg bar, default 6000
         sync: false
 
   - type: cron

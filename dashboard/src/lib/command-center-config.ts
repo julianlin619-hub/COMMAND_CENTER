@@ -231,9 +231,10 @@ export const FORMATS: Format[] = [
     // publishes the tweet text as the pin description (the other legs
     // ship caption-free). The Instagram leg is PAUSED
     // (IG_TWEET_CARD_FORMAT defaults to 'off'): Instagram is now fed by
-    // the standalone carousel cron (cron/instagram_carousel_pipeline.py),
-    // which ships a daily 1080×1350 carousel of outlier tweets all
-    // >= 6500 likes (no title card — slide 1 is the strongest tweet).
+    // the standalone Instagram crons (cron/instagram_solo_pipeline.py
+    // daily + cron/instagram_carousel_pipeline.py weekly), which ship
+    // 1080×1350 outlier-tweet cards — one solo post every second day at
+    // 6pm Pacific plus a 10-slide carousel on Mondays.
     href: "/tweet-cards",
     // Cron writes one post row per platform per run (see
     // cron/_tweet_card_legs.py): facebook / linkedin / pinterest. Any of
@@ -246,35 +247,37 @@ export const FORMATS: Format[] = [
     healthPlatforms: ["facebook", "linkedin", "pinterest"],
   },
   {
-    // Instagram Carousels — the daily outlier-tweet carousel
-    // (cron/instagram_carousel_pipeline.py, Render cron
-    // `instagram-carousel`, 11:30 UTC daily). Two legs since 2026-08-17:
-    // (1) solo breakouts — every Apify tweet that went viral inside the
-    // window (<= 72h old AND >= 6000 likes) ships as its own standalone
-    // 1080×1350 card post; (2) ONE 10-slide 1080×1350 carousel (IG's
-    // max) to Alex's main IG via Buffer, bank-sourced only (>= 4000
-    // likes), most-liked first. No title/intro card — the carousel
-    // opens directly on
-    // its strongest tweet (the Day-N counter lives on in metadata as a
-    // dedup key only). Replaced the tweet-card fan-out's IG reel leg
-    // (paused via IG_TWEET_CARD_FORMAT).
+    // Instagram Carousels — Alex's main-IG automation, two crons:
+    // (1) instagram-solo (cron/instagram_solo_pipeline.py, 12:00 UTC
+    // every 2nd day) — ONE outlier tweet every second day as a standalone
+    // 1080×1350 (4:5) card post, handed to Buffer with an explicit 6pm
+    // Pacific publish time. Fresh breakout first (<= 72h old AND >= 6000
+    // likes), else a random unused bank tweet >= 4000 likes.
+    // (2) instagram-carousel (cron/instagram_carousel_pipeline.py, Mondays
+    // 11:30 UTC) — ONE 10-slide 1080×1350 carousel (IG's max), bank-sourced
+    // only (>= 4000 likes), most-liked first. No title/intro card — the
+    // carousel opens directly on its strongest tweet (the Day-N counter
+    // lives on in metadata as a dedup key only). The two share a dedup
+    // ledger so no tweet ships twice. Replaced the tweet-card fan-out's IG
+    // reel leg (paused via IG_TWEET_CARD_FORMAT).
     // No href yet — there's no detail page for this pipeline, so the
     // card is a status surface only (the schema treats a missing href as
     // a deliberate no-op, same as other pages-less formats).
     id: "instagram-carousels",
     name: "Instagram Carousels",
-    subtitle: "Day-N outlier carousels",
+    subtitle: "6pm post every 2nd day + weekly carousel",
     category: "graphics",
     status: "live",
     creator: "alex",
     subgroup: "creation",
     platforms: [{ id: "instagram", name: "Instagram" }],
-    // The pipeline writes one posts row per carousel under
-    // platform="instagram" (metadata.source='carousel'). With the reel
-    // leg paused, carousels are the only automation writing plain
-    // "instagram" rows. Daily cadence, so the default 24h health window
-    // applies — a fresh carousel is expected every day.
+    // Both crons write plain platform="instagram" rows (metadata.source
+    // 'solo_breakout' every 2nd day, 'carousel' on Mondays). With the reel
+    // leg paused they are the only automation writing those rows. The
+    // solo cron runs every second day, so the health window is 48h — with
+    // the default 24h the card would read "failing" on every off-day.
     healthPlatforms: ["instagram"],
+    healthWindowHours: 48,
   },
   {
     // Ad Carousels — manually-triggered permutation factory (no cron).

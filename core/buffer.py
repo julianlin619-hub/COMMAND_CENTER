@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 
@@ -325,12 +325,14 @@ def send_to_buffer(
     youtube: dict | None = None,
     pinterest: dict | None = None,
     caption_limit: int | None = None,
+    due_at: datetime | None = None,
 ) -> str:
     """Send content to Buffer's posting queue.
 
-    Creates a Buffer post with schedulingType=automatic (Buffer picks the
-    next available time slot) and mode=addToQueue (appends to the queue
-    instead of posting immediately).
+    Creates a Buffer post with schedulingType=automatic (Buffer's workers
+    publish it, nobody has to act) and, by default, mode=addToQueue (Buffer
+    slots it into the channel's next free posting time). Pass `due_at` to
+    pin the post to an exact moment instead — see below.
 
     Args:
         channel_id: Buffer channel ID (from get_channel_id).
@@ -356,6 +358,15 @@ def send_to_buffer(
         caption_limit: Override the 150-char TikTok truncation. YouTube callers
             pass 5000 (descriptions) and X callers pass 280 so captions aren't
             amputated unnecessarily.
+        due_at: Optional exact publish time. When set, the post is created
+            with mode=customScheduled and Buffer's `dueAt` field instead of
+            being appended to the channel's queue — so the publish time is
+            decided here, not by the channel's posting schedule in Buffer.
+            Must be timezone-aware (it's serialized as ISO 8601 in UTC; a
+            naive datetime would be ambiguous). The daily Instagram solo
+            cron uses this to land its post at 6pm Pacific. Confirmed
+            against Buffer's live schema (CreatePostInput.dueAt: DateTime,
+            ShareMode.customScheduled) in Oct 2026.
 
     Returns:
         The Buffer post ID on success.
@@ -409,6 +420,14 @@ def send_to_buffer(
     }
     if metadata:
         post_input["metadata"] = metadata
+    if due_at is not None:
+        if due_at.tzinfo is None:
+            raise ValueError("send_to_buffer due_at must be timezone-aware")
+        # customScheduled = "publish at exactly dueAt" (vs addToQueue, which
+        # ignores dueAt and takes the channel's next free slot). Normalize to
+        # UTC with an explicit offset so Buffer can't misread the wall time.
+        post_input["mode"] = "customScheduled"
+        post_input["dueAt"] = due_at.astimezone(timezone.utc).isoformat()
 
     data = _buffer_request(
         """

@@ -1,7 +1,7 @@
-"""Instagram Carousel pipeline — daily cron job.
+"""Instagram Carousel pipeline — weekly cron job (Mondays).
 
 Replaces the paused Instagram reel leg of the tweet-card fan-out (see
-IG_TWEET_CARD_FORMAT in cron/_tweet_card_legs.py) with a daily outlier-tweet
+IG_TWEET_CARD_FORMAT in cron/_tweet_card_legs.py) with an outlier-tweet
 carousel (there is no title/intro card — slide 1 is the strongest tweet):
 
   Slides 1-10 — ten outlier tweets (Instagram's carousel maximum), pulled
@@ -9,34 +9,33 @@ carousel (there is no title/intro card — slide 1 is the strongest tweet):
                 CAROUSEL_MIN_LIKES likes (default 6500 in code / 4000 on
                 Render), ordered most likes -> least likes.
 
-Since 2026-08-17 the run also ships a SEPARATE solo-breakout leg BEFORE
-the carousel: Apify scrapes the account's recent tweets, and every tweet
-that went viral inside the window — at most SOLO_BREAKOUT_HOURS old
-(default 72) AND already >= SOLO_BREAKOUT_MIN_LIKES likes (default 6000)
-— becomes its own standalone single-image IG post (same 1080x1350 card
-template as the carousel slides, blank Buffer caption). Breakouts are
-rare (usually 0-3 per run), and the 72h window plus the dedup gates mean
-a tweet that stays viral for three days still ships only once. The solo
-leg failing never blocks the carousel — each leg has its own cron_runs
-row and its own try/except.
+The daily single-tweet post is a SEPARATE cron now: between 2026-08-17 and
+Oct 2026 this module also ran a "Phase 0" solo-breakout leg that shipped
+every fresh viral tweet as its own post. Once this cron went weekly that
+leg could only fire on Mondays, so it moved to
+cron/instagram_solo_pipeline.py — one 4:5 post every day, scheduled for
+6pm Pacific. The two crons share a dedup ledger (see below), so a tweet
+shipped solo never reappears as a slide and vice versa.
 
 Internally each shipped carousel still advances a "Day N" counter — it no
 longer appears on any slide, but it remains a human-readable series
 marker in metadata.
 
 The carousel always ships with exactly CAROUSEL_TWEET_COUNT slides —
-if nine unused qualifying tweets can't be found, or any slide fails to
+if ten unused qualifying tweets can't be found, or any slide fails to
 render, the run skips/fails cleanly and nothing is posted (the "Day N"
 series never ships a short set).
 
 Dedup: every tweet used on any shipped carousel is tracked and never
 reused. Two layers:
   - metadata.tweet_ids on each carousel's posts row — the selection phase
-    unions these across all live carousel rows and skips those ids;
+    unions these across all live carousel rows and skips those ids (the
+    solo cron reads the same ledger via _fetch_carousel_history);
   - posts.caption stores slide 1's tweet text, so the existing
     (platform, md5(caption)) partial-unique index also arbitrates
     concurrent runs, and post_caption_exists() text-checks every candidate
-    against anything the old reel leg already shipped to the same channel.
+    against anything already shipped to the same channel — including the
+    solo cron's posts, whose caption is the full tweet text.
 
 The day counter needs no table of its own: day = (number of live carousel
 rows) + 1. A buffer_error row drops out of that count, so a failed day is
@@ -46,9 +45,7 @@ retried under the same number the next run.
 operator stopped publishing tweet carousels to TikTok. The historical
 platform='tiktok' carousel rows stay in the DB for dashboard history.)
 
-Four cron_runs phases, platform='instagram':
-  Phase 0 — solo_breakout:     render + send one standalone post per
-                               fresh viral tweet (72h / 6K gates)
+Three cron_runs phases, platform='instagram':
   Phase 1 — carousel_pick:     day number + 10 bank outlier tweets
   Phase 2 — carousel_generate: render the 10 tweet cards
   Phase 3 — carousel_send:     insert posts row + one Buffer carousel send
@@ -64,7 +61,7 @@ import sys
 
 from core.buffer import get_channel_id, send_to_buffer
 from core.content_gen_client import generate_content
-from core.content_sources import fetch_apify_tweets, select_bank_content_with_likes
+from core.content_sources import select_bank_content_with_likes
 from core.database import (
     get_client,
     insert_post,
@@ -78,7 +75,6 @@ from core.env_diag import log_env_diagnostics
 from core.media import build_proxy_url
 from core.models import Post
 from core.text_utils import normalize_tweet_text
-from core.tweet_filter import is_retweet
 from cron._tweet_card_legs import BUFFER_CAPTION, _is_unique_violation
 
 
@@ -150,7 +146,8 @@ def _pick_carousel_tweets(
     """Pick up to `count` unused outlier tweets from the bank.
 
     Bank-only since 2026-08-17: fresh Apify tweets no longer feed the
-    carousel — they ship as solo posts instead (see _pick_solo_breakouts).
+    carousel — they ship as solo posts instead (see
+    cron/instagram_solo_pipeline.py).
     The bank (the tweet_bank table, topped up daily by the threads cron's
     scrape) is a settled catalogue whose like counts are final, so
     `min_likes` (CAROUSEL_MIN_LIKES, default 6500 in code / 4000 on
@@ -207,166 +204,6 @@ def _pick_carousel_tweets(
     return picked
 
 
-def _pick_solo_breakouts(
-    apify_tweets: list[dict], used_tweet_ids: set[str]
-) -> list[dict]:
-    """Filter fresh Apify tweets down to the ones worth a solo post.
-
-    The window/likes gates (SOLO_BREAKOUT_HOURS / SOLO_BREAKOUT_MIN_LIKES)
-    are applied by fetch_apify_tweets before this runs — this helper only
-    applies the content/dedup gates:
-      - not a retweet ("RT @…" — someone else's content) and not a reply
-        (leading "@" — conversational, meaningless out of thread),
-      - id not used on any previous carousel slide (until 2026-08-17 the
-        carousel's Apify pathway shipped recent tweets as slides, so a
-        2-day-old tweet could already be on yesterday's carousel),
-      - text not already posted to Instagram in any format — this is also
-        what keeps a tweet that stays viral for all 72 hours of the window
-        from shipping again on the next run, because each solo post stores
-        the full tweet text as its caption,
-      - not a fingerprint-duplicate of a breakout picked earlier this run.
-
-    Returns dicts of {'tweet_id', 'text', 'normalized', 'favorite_count'},
-    keeping Apify's newest-first order.
-    """
-    picked: list[dict] = []
-    seen_fps: set[str] = set()
-    for tweet in apify_tweets:
-        tweet_id = str(tweet["id"])
-        text = tweet["text"]
-        if is_retweet(text) or text.lstrip().startswith("@"):
-            continue
-        normalized = normalize_tweet_text(text)
-        if not normalized.strip():
-            continue
-        fp = _text_fingerprint(normalized)
-        if fp in seen_fps:
-            continue
-        if tweet_id in used_tweet_ids:
-            continue
-        if post_caption_exists("instagram", normalized):
-            continue
-        seen_fps.add(fp)
-        picked.append({
-            "tweet_id": tweet_id,
-            "text": text,
-            "normalized": normalized,
-            "favorite_count": tweet.get("like_count", 0),
-        })
-    return picked
-
-
-def _send_solo_breakouts(
-    breakouts: list[dict],
-    *,
-    dashboard_url: str,
-    cron_secret: str,
-    dry_run: bool,
-) -> int:
-    """Render each breakout as a 1080x1350 card and ship it as its own
-    single-image IG post via Buffer. Returns how many were sent.
-
-    Unlike the carousel (all-or-nothing — the Day-N series never ships a
-    short set), each solo post is independent: a render or send failure on
-    one breakout logs and moves on, because holding back tweet A over
-    tweet B's failure helps no one. A failed one retries naturally on the
-    next run — nothing was inserted for it, so the dedup gates still let
-    it through.
-    """
-    if not breakouts:
-        logger.info("No solo breakouts this run.")
-        return 0
-
-    # One render call for the whole batch — same template row the carousel
-    # slides use, so solos and slides are visually identical.
-    data = generate_content(
-        dashboard_url=dashboard_url,
-        cron_secret=cron_secret,
-        tweets=[{"id": b["tweet_id"], "text": b["text"]} for b in breakouts],
-        platform="instagram",
-    )
-    if data.get("error"):
-        raise RuntimeError(data["error"])
-    for i, err in enumerate(data.get("errors", []) or []):
-        logger.warning("  solo render error[%d]: %s", i, err)
-    rendered = {str(item["id"]): item for item in data.get("generated", []) or []}
-
-    ig_channel_id = None if dry_run else get_channel_id(service="instagram")
-
-    sent = 0
-    for b in breakouts:
-        card = rendered.get(b["tweet_id"])
-        if card is None:
-            logger.warning(
-                "Solo breakout %s dropped by render — will retry next run", b["tweet_id"]
-            )
-            continue
-        if dry_run:
-            logger.info(
-                "DRY RUN — would send solo breakout (%d likes): %.60s",
-                b["favorite_count"], b["normalized"],
-            )
-            continue
-
-        # Insert-first-then-send, same as the carousel: the caption is the
-        # full tweet text (the route-normalized version, so future dedup
-        # checks re-derive the exact same string), and the partial-unique
-        # (platform, md5(caption)) index arbitrates concurrent runs.
-        post = Post(
-            platform="instagram",
-            status="sent_to_buffer",
-            media_type="image",
-            media_urls=[card["storagePath"]],
-            caption=card["text"],
-            metadata={
-                "source": "solo_breakout",
-                "tweet_id": b["tweet_id"],
-                "favorite_count": b["favorite_count"],
-            },
-        )
-        try:
-            post_id = insert_post(post)
-        except Exception as e:
-            if _is_unique_violation(e):
-                logger.info(
-                    "Dedup race lost (DB constraint) — breakout already posted: %.50s",
-                    card["text"],
-                )
-                continue
-            raise
-
-        try:
-            buffer_post_id = send_to_buffer(
-                ig_channel_id,
-                BUFFER_CAPTION,  # blank — the content is on the card
-                build_proxy_url(post_id, 0),
-                media_type="image",
-                instagram_post_type="post",
-            )
-            record_buffer_handoff(
-                post_id, buffer_post_id,
-                channel_id=ig_channel_id,
-                body=BUFFER_CAPTION,
-                media_type="image",
-                instagram_post_type="post",
-                base_metadata=post.metadata,
-            )
-            sent += 1
-            logger.info(
-                "Solo breakout queued (%d likes): post %s, Buffer %s — %.60s",
-                b["favorite_count"], post_id, buffer_post_id, b["normalized"],
-            )
-        except Exception as e:
-            # Flip to buffer_error so the row leaves the dedup index and the
-            # breakout can retry on the next run (still inside its 72h window).
-            logger.error("Solo breakout Buffer send failed: %s", e, exc_info=True)
-            try:
-                update_post(post_id, status="buffer_error", error_message=str(e)[:500])
-            except Exception as db_err:
-                logger.error("Also failed to mark post %s as buffer_error: %s", post_id, db_err)
-    return sent
-
-
 def main() -> None:
     log_env_diagnostics(
         "instagram-carousel-pipeline",
@@ -377,30 +214,17 @@ def main() -> None:
             "CRON_SECRET",
             "BUFFER_ACCESS_TOKEN",
             "BUFFER_ORG_ID",
-            # Solo-breakout leg. Missing -> fetch_apify_tweets returns []
-            # and the run is carousel-only.
-            "APIFY_API_KEY",
         ],
         optional=[
-            "APIFY_TWITTER_HANDLE",
             "CAROUSEL_MIN_LIKES",
             "CAROUSEL_TWEET_COUNT",
             "CAROUSEL_DRY_RUN",
-            "SOLO_BREAKOUT_HOURS",
-            "SOLO_BREAKOUT_MIN_LIKES",
         ],
     )
 
-    twitter_handle = os.environ.get("APIFY_TWITTER_HANDLE", "AlexHormozi")
     # Carousel bar — the bank is a settled catalogue, so this is a "proven
     # performer" floor (set to 4000 on Render, 2026-08-17).
     min_likes = int(os.environ.get("CAROUSEL_MIN_LIKES", "6500"))
-    # Solo-breakout gates: an Apify tweet only qualifies if it's at most
-    # this many hours old AND already above this likes bar — i.e. it went
-    # viral within the window. The bar sits higher than the carousel's
-    # because a 3-day-old tweet's count is still climbing.
-    solo_hours = int(os.environ.get("SOLO_BREAKOUT_HOURS", "72"))
-    solo_min_likes = int(os.environ.get("SOLO_BREAKOUT_MIN_LIKES", "6000"))
     # 10 tweet slides, Instagram's carousel maximum (no title card since
     # Aug 2026 — the carousel opens on its strongest tweet).
     tweet_count = int(os.environ.get("CAROUSEL_TWEET_COUNT", "10"))
@@ -413,45 +237,6 @@ def main() -> None:
     if not dashboard_url:
         logger.error("DASHBOARD_URL not set — cannot call dashboard API for rendering")
         sys.exit(1)
-
-    # ─────────────────────────────────────────────────────────────────────
-    # PHASE 0: Solo breakouts — one standalone post per fresh viral tweet
-    # ─────────────────────────────────────────────────────────────────────
-    # Runs BEFORE the carousel so its posts rows are visible to the
-    # carousel's post_caption_exists gate (a breakout that also lives in
-    # the bank can't ship twice in one run). Its failure never blocks the
-    # carousel: no sys.exit here, just its own cron_runs row.
-    run_id = log_cron_start(platform="instagram", job_type="solo_breakout")
-    try:
-        # Reuse the carousel ledger: until 2026-08-17 the carousel's Apify
-        # pathway shipped recent tweets as slides, so a 2-day-old breakout
-        # could already be on yesterday's carousel.
-        _, used_tweet_ids = _fetch_carousel_history()
-        # max_items=50 comfortably covers 72h of posting for one account —
-        # the window filter (not this cap) decides what qualifies.
-        breakouts = _pick_solo_breakouts(
-            fetch_apify_tweets(
-                twitter_handle,
-                max_items=50,
-                hours_lookback=solo_hours,
-                min_favorites=solo_min_likes,
-            ),
-            used_tweet_ids,
-        )
-        sent = _send_solo_breakouts(
-            breakouts,
-            dashboard_url=dashboard_url,
-            cron_secret=cron_secret,
-            dry_run=dry_run,
-        )
-        log_cron_finish(run_id, status="success", posts_processed=sent)
-        logger.info(
-            "Phase 0: %d solo breakout(s) shipped (%d qualified, window=%dh, >= %d likes)",
-            sent, len(breakouts), solo_hours, solo_min_likes,
-        )
-    except Exception as e:
-        logger.error("Phase 0 failed (solo breakouts): %s", e, exc_info=True)
-        log_cron_finish(run_id, status="failed", error_message=str(e))
 
     # ─────────────────────────────────────────────────────────────────────
     # PHASE 1: Day number + pick the outlier tweets (bank only)
