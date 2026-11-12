@@ -158,14 +158,23 @@ def live_posts_by_caption(platform: str) -> dict[str, str | None]:
 
 
 def _bank_rows_most_liked_first(min_likes: int) -> list[dict]:
-    """tweet_bank rows at or above `min_likes`, sorted by likes descending.
+    """tweet_bank rows at or above `min_likes`, in the order set by ORDER.
 
     select_bank_content_with_likes() shuffles and slices to `count`, so we
     ask for everything (sys.maxsize) and impose our own order — it is the
     only public bank reader, and the shuffle is harmless once we re-sort.
+
+    ORDER=likes (default): most-liked first.
+    ORDER=latest: newest tweet first. tweet_bank.created_at is the import
+    time (a bulk backfill stamps every row alike), so it can't say when a
+    tweet was written; X tweet ids are snowflakes — time-ordered integers —
+    so sorting by id descending is newest-first. Likes break ties.
     """
     rows = select_bank_content_with_likes(count=sys.maxsize, min_likes=min_likes)
-    rows.sort(key=lambda r: r["favorite_count"], reverse=True)
+    if os.environ.get("ORDER", "").strip().lower() == "latest":
+        rows.sort(key=lambda r: (int(r["tweet_id"]), r["favorite_count"]), reverse=True)
+    else:
+        rows.sort(key=lambda r: r["favorite_count"], reverse=True)
     return rows
 
 
