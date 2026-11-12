@@ -29,6 +29,10 @@ on:
         description: "Bank like floor (same default as the tweet-reel-bank cron)"
         required: false
         default: "6500"
+      order:
+        description: "likes = most-liked first; latest = newest tweets first"
+        required: false
+        default: "likes"
 
 # One push at a time — two overlapping runs would race for the same
 # top-of-bank picks. The DB unique index would dedup them, but every loser
@@ -76,4 +80,5 @@ jobs:
           # the UI arrives empty, and empty must never render or send.
           DRY_RUN: ${{ inputs.dry_run || '1' }}
           MIN_LIKES: ${{ inputs.min_likes }}
+          ORDER: ${{ inputs.order }}
         run: python scripts/pin_bank_tweets_to_pinterest.py
