@@ -1,6 +1,6 @@
 /*
  * DetailPageHeader — the shared hero header for every leaf page you reach by
- * clicking into a Command Center card (/snapchat, /posts, /leila/linkedin, …).
+ * clicking into a Command Center card (/posts, /leila/linkedin, …).
  *
  * It is the subpage counterpart to the home page's <PageHeader>: same voice,
  * same rhythm, so detail pages read as siblings of the home screen rather than
@@ -13,13 +13,12 @@
  *   - an animated full-width rule that closes the header block.
  *
  * The one knob that varies per page is `accent`: home is always terracotta, but
- * a detail page wears its own platform/category identity (Snapchat yellow, the
+ * a detail page wears its own platform/category identity (the
  * category colors). Every accent-tinted element (eyebrow, period, rule, pips)
  * reads from a single `--accent` CSS var so a page sets its color once and the
  * whole header follows. We also alias `--terracotta-hover` to the accent so the
  * shared `.cc-eyebrow` class (which is hard-wired to terracotta-hover) picks up
- * the page color without a bespoke style — the same trick the old /snapchat
- * header used inline.
+ * the page color without a bespoke style.
  */
 import Link from "next/link";
 import { ArrowLeftIcon } from "lucide-react";

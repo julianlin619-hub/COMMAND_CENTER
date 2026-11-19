@@ -38,17 +38,6 @@ services:
         sync: false
       - key: DASHBOARD_URL
         value: https://command-center-drnj.onrender.com
-      # YouTube cron is *also* run from the dashboard via the "Run cron now"
-      # UI button (dashboard/src/app/api/cron/run/route.ts spawns python).
-      # Keep these in sync with youtube-second-cron's envVars — rotating on
-      # only one service will cause the UI button to silently diverge from
-      # the scheduled cron.
-      - key: YOUTUBE_CLIENT_ID
-        sync: false
-      - key: YOUTUBE_CLIENT_SECRET
-        sync: false
-      - key: YOUTUBE_REFRESH_TOKEN
-        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       # Batch-video manual-upload pathway: the dashboard spawns
@@ -78,41 +67,6 @@ services:
   # ── Cron Jobs (Python) ─────────────────────────────────────────────────
   # IMPORTANT: Update the schedule values to match your actual posting cadence.
   # These are placeholders.
-
-  # 2nd channel (Hormozi Highlights) — YOUTUBE_* vars are repurposed for the 2nd channel, see naming-debt TODO.
-  # TEMPORARILY DEACTIVATED: suspended on Render. Uncomment to re-enable.
-  # - type: cron
-  #   name: youtube-second-cron
-  #   runtime: python
-  #   buildCommand: pip install -r requirements.txt && pip install -e .
-  #   startCommand: python -m cron.youtube_cron
-  #   # Daily at 10:00 UTC = 03:00 PDT / 02:00 PST. Chosen because it's
-  #   # pre-work-hours local time and because MIN_LEAD_MINUTES=30 will push
-  #   # assignments into the 12:00 UTC canonical slot or later (the 00:00,
-  #   # 02:24, 04:48, 07:12, 09:36 slots are all in the past by then).
-  #   # Staggered against the 11:00/11:30 UTC crons below.
-  #   schedule: "0 10 * * *"
-  #   envVars:
-  #     - key: SUPABASE_URL
-  #       sync: false
-  #     - key: SUPABASE_SERVICE_KEY
-  #       sync: false
-  #     - key: YOUTUBE_CLIENT_ID
-  #       sync: false
-  #     - key: YOUTUBE_CLIENT_SECRET
-  #       sync: false
-  #     - key: YOUTUBE_REFRESH_TOKEN
-  #       sync: false
-  #     # Flip to "1" to log would-be videos.update payloads without writing.
-  #     - key: YOUTUBE_STUDIO_DRY_RUN
-  #       sync: false
-  #     # If set, validate_credentials asserts the token owns this channel —
-  #     # guards against a misrouted refresh token.
-  #     - key: YOUTUBE_CHANNEL_ID
-  #       sync: false
-  #     # Powers the Sonnet title-cleanup pass. Missing = regex-only cleanup.
-  #     - key: ANTHROPIC_API_KEY
-  #       sync: false
 
   - type: cron
     name: tweet-reel-recent
@@ -327,82 +281,6 @@ services:
         sync: false
       - key: APIFY_LEILA_TWITTER_HANDLE  # optional — defaults to LeilaHormozi
         sync: false
-
-  # ── Snapchat content-gen trigger ─────────────────────────────────────
-  # Hourly POST to the dashboard's /api/snapchat-pipeline route, which
-  # picks one bank tweet, renders the MP4, uploads to Supabase Storage,
-  # and inserts the posts + schedules rows. Kept under runtime: python
-  # (matching every other cron in this file) instead of introducing a
-  # runtime: image curl service — a 3-line requests.post is cheaper to
-  # maintain than adding a new runtime to the repo.
-  #
-  # TEMPORARILY DEACTIVATED (2026-05-24): paused alongside the Playwright
-  # publisher below — generating content with no publisher would just pile
-  # up stale pending schedules. Suspend on Render too. Uncomment + redeploy
-  # to re-enable.
-  # - type: cron
-  #   name: snapchat-content-pipeline
-  #   runtime: python
-  #   buildCommand: pip install -r requirements.txt && pip install -e .
-  #   startCommand: python -m cron.snapchat_trigger
-  #   schedule: "0 * * * *"  # hourly at :00 UTC
-  #   envVars:
-  #     - key: CRON_SECRET
-  #       sync: false
-  #     - key: DASHBOARD_URL
-  #       sync: false
-
-  # ── Snapchat publisher (headless Chromium via Playwright) ────────────
-  # Runs 5 min after the generator above so it picks up the schedule row
-  # just inserted (scheduled_for is generator-now + 4 min, so the row is
-  # "due" by the time this fires).
-  #
-  # buildCommand installs `chromium-headless-shell` (not `chromium`):
-  # recent Playwright versions split the headless shell out as its own
-  # artifact, and `chromium.launch(headless=True)` resolves to the shell
-  # at runtime. Installing only `chromium` produces a "Executable doesn't
-  # exist at .../chromium_headless_shell-NNNN/..." error. Both snapchat
-  # launch sites (platforms/snapchat.py) use headless=True, so the shell
-  # is sufficient and ~1/3 the download size of full chromium.
-  #
-  # PLAYWRIGHT_BROWSERS_PATH pins the browser cache to a path inside
-  # /opt/render/project/src/ — Render's cron services only persist that
-  # directory from build → runtime, so the default ~/.cache/ms-playwright
-  # location gets wiped before the cron actually fires. We set the same
-  # env var at both build (inline VAR=val form below) and runtime (envVars
-  # list) so the install lands somewhere persistent and Playwright knows
-  # where to look at launch time.
-  #
-  # We deliberately omit --with-deps — Render's build env disallows the
-  # sudo apt-get it triggers, and the Ubuntu-based Python runtime already
-  # ships the shared libs headless Chromium needs. If the publisher later
-  # crashes at runtime with a missing .so, escalate to a Docker runtime
-  # + official Playwright image.
-  #
-  # TEMPORARILY DEACTIVATED (2026-05-24): Playwright Snapchat automation
-  # paused at user request. Suspend on Render too so the existing service
-  # stops firing. Uncomment + redeploy to re-enable.
-  # - type: cron
-  #   name: snapchat-pipeline
-  #   runtime: python
-  #   buildCommand: |
-  #     pip install -r requirements.txt &&
-  #     pip install -e . &&
-  #     PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/src/.playwright-browsers playwright install chromium-headless-shell
-  #   startCommand: python -m cron.snapchat_pipeline
-  #   schedule: "5 * * * *"  # hourly at :05 UTC
-  #   envVars:
-  #     - key: SUPABASE_URL
-  #       sync: false
-  #     - key: SUPABASE_SERVICE_KEY
-  #       sync: false
-  #     - key: SNAPCHAT_PROFILE_URL
-  #       sync: false
-  #     # Must match the path passed inline in buildCommand. Render cron
-  #     # services only persist /opt/render/project/src/ across the build
-  #     # → runtime boundary, so the browser cache has to live in there.
-  #     - key: PLAYWRIGHT_BROWSERS_PATH
-  #       value: /opt/render/project/src/.playwright-browsers
 
   - type: cron
     name: leila-linkedin

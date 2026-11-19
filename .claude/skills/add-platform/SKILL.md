@@ -7,13 +7,13 @@ argument-hint: [platform name, e.g. "bluesky" or "mastodon"]
 
 Target platform: $ARGUMENTS
 
-A "platform" here is one publishing destination (youtube, threads, snapchat…). Adding one touches **4 places in a fixed order**. Each platform string must be identical everywhere: the `platform_enum` value, the adapter's `name`, the cron's `process_due_posts(client, "<name>")`, and the `posts.platform` column rows.
+A "platform" here is one publishing destination (youtube, threads, tiktok…). Adding one touches **4 places in a fixed order**. Each platform string must be identical everywhere: the `platform_enum` value, the adapter's `name`, the cron's `process_due_posts(client, "<name>")`, and the `posts.platform` column rows.
 
-Read `platforms/base.py` and `platforms/snapchat.py` (the cleanest real direct-publish example) before writing. Per CLAUDE.md, write generous *why* comments — the developer is learning.
+Read `platforms/base.py` and `platforms/threads.py` (the cleanest real direct-publish example) before writing. Per CLAUDE.md, write generous *why* comments — the developer is learning.
 
 ## Decision to make first: Buffer or direct?
 
-- **Direct publish** (youtube, threads, snapchat): `create_post()` talks to the platform API and returns a real, already-live post id. Leave `publishes_via_buffer = False`.
+- **Direct publish** (youtube, threads): `create_post()` talks to the platform API and returns a real, already-live post id. Leave `publishes_via_buffer = False`.
 - **Buffer fan-out** (tiktok): `create_post()` only hands the post to Buffer's queue; it isn't live yet. Set `publishes_via_buffer = True`. The scheduler then marks the post `sent_to_buffer` (not `published`), and `cron/buffer_reconcile.py` confirms it later. If reconcile needs to re-send on failure, also override `buffer_replay()` to return the payload (e.g. `{"channel_id": ...}`).
 
 Ask the user which one if it isn't obvious.
@@ -40,7 +40,7 @@ Subclass `PlatformBase` and implement all 4 abstract methods (`validate_config`,
 
 ### 3. Add the cron entry point `cron/<name>_cron.py` (or `<name>_pipeline.py`)
 
-Model it on `cron/snapchat_pipeline.py` (direct) — that's the canonical shape. There is **no adapter registry**; you import and instantiate the class directly here.
+Model it on `cron/threads_cron.py` (direct) — that's the canonical shape. There is **no adapter registry**; you import and instantiate the class directly here.
 
 ```python
 from core.database import log_cron_finish, log_cron_start

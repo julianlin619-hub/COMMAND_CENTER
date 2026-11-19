@@ -51,9 +51,7 @@ export function FormatCard({ format, color, health }: FormatCardProps) {
   const isDisabled = !format.href;
 
   // A format is "muted" when its underlying cron is intentionally
-  // suspended at the infra layer but the detail page still works — e.g.
-  // the youtube-second-cron is commented out in render.yaml but
-  // /youtube-second still renders the last batch the cron scheduled.
+  // suspended at the infra layer but the detail page still works.
   // We want the card to read as inactive (lower opacity) while staying
   // clickable, which is different from fully disabled (no href, no
   // click). Live and href-less formats both bypass this state.

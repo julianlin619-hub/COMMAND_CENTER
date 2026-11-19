@@ -47,10 +47,9 @@ class Post(BaseModel):
         # X queue under the acq_official channel. Added in migration
         # 20260514120000_x_acq_official_enum.sql.
         "x_acq_official",
-        # Snapchat Spotlight. Published via headless Chromium (Playwright)
-        # against the Public Profile Web Uploader — no upload API exists for
-        # unattended posting. Session cookies live in the platform_session_state
-        # table. Added in migration 20260519120000_add_snapchat_enum.sql.
+        # Snapchat — publisher automation was removed, but the value stays so
+        # historical posts rows with platform='snapchat' still hydrate into
+        # Post(). Added in migration 20260519120000_add_snapchat_enum.sql.
         "snapchat",
         # Pinterest leg of the Tweet Card fan-out — ships the Facebook
         # 1080×1080 PNG as a pin via Buffer, with the tweet text as the pin
@@ -98,8 +97,7 @@ class Post(BaseModel):
     # Coerce a DB-returned NULL for hashtags into an empty list.
     #
     # The hashtags column is nullable in Postgres, so any route that inserts
-    # a posts row without setting it (e.g. /api/ig-pipeline, and previously
-    # /api/snapchat-pipeline) leaves the column as NULL. process_due_posts
+    # a posts row without setting it (e.g. a dashboard route) leaves the column as NULL. process_due_posts
     # then hydrates the row into Post() and Pydantic v2 rejects None for a
     # `list[str]` field with a type_error. That crashes the publisher cron
     # before it can even attempt the platform call.

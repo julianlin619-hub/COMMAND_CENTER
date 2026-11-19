@@ -35,7 +35,6 @@ const CRON_MODULES: Record<string, string> = {
   "threads-leila-cron": "cron.threads_leila_cron",
   "tiktok-pipeline": "cron.tiktok_pipeline",
   "tiktok-bank-pipeline": "cron.tiktok_bank_pipeline",
-  "youtube-cron": "cron.youtube_cron",
   "linkedin-leila-cron": "cron.linkedin_leila_cron",
 };
 

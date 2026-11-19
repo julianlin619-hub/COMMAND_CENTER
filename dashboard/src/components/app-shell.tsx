@@ -18,7 +18,7 @@ import { UserButton } from "@clerk/nextjs";
  * Column width matches the home page (max-w-[1100px], px-7) so a detail page
  * sits in the exact same column as home and reads as a sibling surface. The
  * `maxWidth` prop is an opt-out for the few genuinely wide pages (data tables
- * like /posts and /youtube-second) that need more room than the home column.
+ * like /posts) that need more room than the home column.
  */
 export function AppShell({
   children,

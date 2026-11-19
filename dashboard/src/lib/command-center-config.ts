@@ -10,7 +10,7 @@
 // The Command Center groups formats into its own category taxonomy. This
 // started out identical to the strategy page's `FormatGroup`
 // (long/mid/short/written), but the home page has since added "graphics"
-// (Tweet Cards, Bulk Tweet Cards, Playwright) — a visual-output bucket
+// (Tweet Cards, Instagram Carousels, Ad Carousels) — a visual-output bucket
 // that has no column in the strategy matrix. Rather than widen strategy's
 // `FormatGroup` (which would force a new matrix column and a new key on
 // every Show.distribution record), we define the Command Center's
@@ -36,7 +36,6 @@ export type PlatformId =
   | "linkedin"
   | "threads"
   | "facebook"
-  | "snapchat"
   | "pinterest";
 
 export interface FormatPlatform {
@@ -91,7 +90,7 @@ export interface Format {
   // Leave undefined when the format has no live automation behind it
   // (Reposts, L1 Q&A) — the card falls back to "paused" via `status`.
   // Set even on cards that are currently paused at the infra layer
-  // (Bulk Tweet Cards, Scheduling) so flipping `status` back to "live"
+  // (none today) so flipping `status` back to "live"
   // immediately surfaces real counts.
   healthPlatforms?: string[];
   // How many hours of post history count as "healthy" for this format.
@@ -161,7 +160,7 @@ export const FORMATS: Format[] = [
   // ──────────────────────────── Alex ────────────────────────────
   // Order within each category drives left-to-right placement in the
   // home page's CategorySection grid. The visual-output formats (Tweet
-  // Cards, Bulk Tweet Cards, Playwright) live under "graphics" below.
+  // Cards, Instagram Carousels, Ad Carousels) live under "graphics" below.
   {
     // Reposts — surfaces the account's best-performing Instagram posts by
     // saves count. Manually triggered from /instagram-reposts: upload CSV →
@@ -302,67 +301,6 @@ export const FORMATS: Format[] = [
     href: "/ads-carousels",
   },
   {
-    // Bulk Tweet Cards — the /instagram-2nd pipeline. Picks tweets from
-    // the CSV bank, renders quote-card media (PNG/MP4), and queues them
-    // to the "alexhighlights2026" Buffer channel (Instagram's 2nd
-    // account). Distinct from the regular Tweet Cards card (which
-    // multi-platform fans a single source tweet) — this one is the
-    // bulk, single-destination daily pipeline.
-    //
-    // Status is "paused" because the GitHub Actions schedule trigger
-    // is currently commented out in .github/workflows/ig-pipeline.yml
-    // (see also `instagram_2nd.paused: true` in lib/cron-schedule.ts).
-    // The detail page at /instagram-2nd still loads — it shows the
-    // last batch the cron queued and the remaining bank — so the card
-    // stays clickable while the muted opacity treatment signals that
-    // the automation is suspended at the infra layer. Flip to "live"
-    // when the workflow trigger is re-enabled.
-    id: "bulk-tweet-cards",
-    name: "Bulk Tweet Cards",
-    subtitle: "Bank → 2nd Instagram",
-    category: "graphics",
-    status: "paused",
-    creator: "alex",
-    subgroup: "creation",
-    platforms: [{ id: "instagram", name: "Instagram" }],
-    href: "/instagram-2nd",
-    // ig-pipeline writes posts under platform="instagram_2nd". Tagged
-    // even though status is currently "paused" so the count appears
-    // immediately when the GitHub Actions trigger is re-enabled.
-    healthPlatforms: ["instagram_2nd"],
-  },
-  {
-    // Snapchat Spotlight via Playwright. Hourly: /api/snapchat-pipeline
-    // (Next.js route) picks a tweet, renders MP4, and inserts posts +
-    // schedules rows. Five minutes later, cron/snapchat_pipeline.py claims
-    // the schedule and drives headless Chromium against Snap's Web
-    // Uploader. Distinct from every other format because the publish
-    // path is browser automation, not an HTTP API — there's no Buffer in
-    // the loop. See /snapchat for the full flow + AUTH_EXPIRED recovery
-    // instructions.
-    id: "snapchat-playwright",
-    name: "Playwright",
-    subtitle: "Snapchat Spotlight via headless Chromium",
-    category: "graphics",
-    // Paused: both halves of the automation (the snapchat-content-pipeline
-    // trigger and the snapchat-pipeline Playwright publisher) are
-    // commented out in render.yaml — see "TEMPORARILY DEACTIVATED
-    // (2026-05-24)" there — and the Render services are suspended. The
-    // card renders muted, drops out of the header's live tally, and shows
-    // no live pulse; the /snapchat detail page still loads. Flip back to
-    // "live" when the render.yaml cron services are uncommented + resumed.
-    status: "paused",
-    creator: "alex",
-    subgroup: "distribution",
-    platforms: [{ id: "snapchat", name: "Snapchat" }],
-    href: "/snapchat",
-    // The publisher cron writes posts under platform="snapchat" and flips
-    // them to status='published' only when Snap's success indicator
-    // confirms the post landed — so a healthy pill here means real
-    // publishes, not just "we queued something".
-    healthPlatforms: ["snapchat"],
-  },
-  {
     // L1 Q&A — pipeline doesn't exist yet, but /l1-qa hosts a static
     // visual map of the planned automation so the design is the source
     // of truth while the actual cron is being scoped. Status stays
@@ -440,34 +378,6 @@ export const FORMATS: Format[] = [
     subgroup: "creation",
     platforms: [{ id: "x", name: "X" }],
     href: "/tweet-extractor",
-  },
-  {
-    // Studio-first scheduling pipeline — discovers Private drafts in
-    // YouTube Studio (2nd channel), generates transcript-based titles,
-    // and assigns each video to a publish slot.
-    //
-    // Status is "paused" because the youtube-second-cron is currently
-    // suspended at the infra layer (see render.yaml — service commented
-    // out, and `youtube_second.paused: true` in lib/cron-schedule.ts).
-    // The detail page at /youtube-second still works and shows the
-    // last batch the cron scheduled; flip to "live" when the cron is
-    // resumed on Render.
-    id: "scheduling-mid",
-    name: "Scheduling",
-    subtitle: "Auto-schedule Studio drafts",
-    category: "mid",
-    status: "paused",
-    creator: "alex",
-    platforms: [{ id: "youtube", name: "YouTube" }],
-    href: "/youtube-second",
-    // No `healthPlatforms` on purpose: the youtube_cron writes posts
-    // under platform="youtube", but so does the /manual-upload route
-    // (crosspost-short's YouTube leg). Tagging this card with ["youtube"]
-    // would let manual-upload runs flip scheduling-mid green even when
-    // the studio cron itself is dead. The crons are distinguishable via
-    // metadata.source='studio' (see /youtube-second/page.tsx:121), so
-    // once this format is unpaused, switch to a {platform, metadataSource}
-    // filter rather than a bare platform list.
   },
   // ──────────────────────────── Leila ────────────────────────────
   // Wraps Leila's two existing crons as-is (linkedin-leila-cron at 11:45

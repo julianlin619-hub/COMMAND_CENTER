@@ -87,7 +87,7 @@ type Post = {
 
 // Posts whose metadata.source === 'manual_upload' belong to the Manual
 // Upload workflow (user-driven crosspost via /manual-upload page).
-// Everything else is pipeline-generated (tiktok_pipeline, youtube_cron, etc.).
+// Everything else is pipeline-generated (tiktok_pipeline, etc.).
 function isManualUpload(post: Post) {
   return (post.metadata as { source?: string } | null)?.source === "manual_upload";
 }
