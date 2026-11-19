@@ -157,6 +157,9 @@ services:
       # was removed with the TikTok leg — no MP4 renders anymore.)
       - key: IG_TWEET_CARD_FORMAT
         sync: false
+      # optional — 'off' (default, Alex LinkedIn leg paused) | 'on'.
+      - key: LINKEDIN_ALEX_LEG
+        sync: false
 
   - type: cron
     name: tweet-reel-bank
@@ -190,6 +193,9 @@ services:
         sync: false
       # optional — 'off' (default) | 'image'. See tweet-reel-recent.
       - key: IG_TWEET_CARD_FORMAT
+        sync: false
+      # optional — 'off' (default, Alex LinkedIn leg paused) | 'on'.
+      - key: LINKEDIN_ALEX_LEG
         sync: false
 
   - type: cron

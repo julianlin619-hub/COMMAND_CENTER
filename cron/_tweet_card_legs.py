@@ -123,6 +123,19 @@ def instagram_card_format() -> str:
     return val if val == "image" else "off"
 
 
+def linkedin_alex_enabled() -> bool:
+    """True only when LINKEDIN_ALEX_LEG is 'on'; the Alex LinkedIn leg is paused by default.
+
+    Paused Nov 2026 at the operator's request. Same env-toggle pattern as
+    instagram_card_format(): flip LINKEDIN_ALEX_LEG=on on Render to resume
+    without a code change. Any other value (including a typo) stays paused,
+    so a mistake can't silently resurrect the leg. This only affects Alex's
+    LinkedIn channel; Leila's separate cron (cron/linkedin_leila_cron.py)
+    and the FB/IG/Pinterest legs are untouched.
+    """
+    return os.environ.get("LINKEDIN_ALEX_LEG", "off").strip().lower() == "on"
+
+
 def _is_unique_violation(exc: Exception) -> bool:
     """True if exc is a Postgres unique-constraint violation.
 
@@ -506,8 +519,14 @@ def fanout_extra_legs_for_one_tweet(
         # half of the rule; the Leila half lives in cron/linkedin_leila_cron.py
         # via is_postable_tweet(). summarize_leg_failures only counts
         # db_failed/buffer_failed, so a profanity skip never flags the run.
+        #
+        # The whole leg is also PAUSED unless LINKEDIN_ALEX_LEG=on (see
+        # linkedin_alex_enabled). 'skipped_paused' isn't counted by
+        # summarize_leg_failures, so a paused leg never marks the run unhealthy.
         "linkedin": (
-            {"status": "skipped_profanity", "post_id": None, "buffer_post_id": None, "error": None}
+            {"status": "skipped_paused", "post_id": None, "buffer_post_id": None, "error": None}
+            if not linkedin_alex_enabled()
+            else {"status": "skipped_profanity", "post_id": None, "buffer_post_id": None, "error": None}
             if contains_profanity(tweet_caption)
             else _send_or_skip(
                 platform="linkedin",

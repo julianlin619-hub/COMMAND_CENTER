@@ -20,6 +20,9 @@ import cron._tweet_card_legs as legs
 def _patch_send_path(monkeypatch):
     """Stub the insert → proxy-url → Buffer-send → handoff chain, capturing calls."""
     captured: dict = {}
+    # The Alex LinkedIn leg is paused by default; these tests exercise the
+    # live leg, so turn it on. test_linkedin_leg_paused_by_default covers 'off'.
+    monkeypatch.setenv("LINKEDIN_ALEX_LEG", "on")
     monkeypatch.setattr(legs, "post_caption_exists", lambda platform, caption: False)
     monkeypatch.setattr(legs, "insert_post", lambda post: "post-1")
     monkeypatch.setattr(legs, "build_proxy_url", lambda post_id: f"https://proxy/{post_id}")
@@ -125,6 +128,17 @@ def test_linkedin_leg_skips_profanity_but_other_legs_ship(monkeypatch):
     assert result["facebook"]["status"] not in {"skipped_profanity"}
     assert "facebook" in sent_platforms
     assert "pinterest" in sent_platforms
+
+
+def test_linkedin_leg_paused_by_default(monkeypatch):
+    """With LINKEDIN_ALEX_LEG unset, nothing ships to Alex's LinkedIn, but
+    the other legs are unaffected and the run isn't flagged unhealthy."""
+    _patch_send_path(monkeypatch)
+    monkeypatch.delenv("LINKEDIN_ALEX_LEG")
+    result = _fanout()
+    assert result["linkedin"]["status"] == "skipped_paused"
+    assert result["facebook"]["status"] == "sent"
+    assert legs.summarize_leg_failures([result]) is None
 
 
 def test_linkedin_profanity_skip_is_not_a_failure():
