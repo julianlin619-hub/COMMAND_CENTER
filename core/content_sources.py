@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import time
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
@@ -68,44 +69,69 @@ def fetch_apify_tweets(
         logger.warning("APIFY_API_KEY not set — skipping tweet fetch")
         return []
 
-    try:
-        # Use Authorization header instead of query params so the API key
-        # doesn't appear in access logs, error messages, or Apify's URL history.
-        apify_headers = {"Authorization": f"Bearer {api_key}"}
+    # Authorization header instead of query params so the API key doesn't
+    # appear in access logs, error messages, or Apify's URL history.
+    apify_headers = {"Authorization": f"Bearer {api_key}"}
 
-        # Start the Apify actor and wait for it to finish (up to 5 min).
-        # The actor scrapes Twitter's frontend and returns structured data.
-        actor_input: dict = {
-            "twitterHandles": [twitter_handle],
-            "maxItems": max_items,
-            "sort": "Latest",
-        }
-        # minimumFavorites tells the Apify actor to only return tweets above
-        # this like threshold. Used by the TikTok pipeline to grab "outlier"
-        # tweets (viral content worth turning into videos).
-        if min_favorites is not None:
-            actor_input["minimumFavorites"] = min_favorites
+    # The actor sometimes "succeeds" (HTTP 200/201) but its dataset holds a
+    # single error item like {"error": true, "code": "C017", "message":
+    # "User: X not found"} — a flaky scraper-side failure, not a missing
+    # account (the same handle works seconds earlier/later). Without this
+    # check that item parsed as an empty tweet and the caller silently saw
+    # "0 tweets". We retry a few times with backoff, then give up with []
+    # (callers already treat [] as "nothing fetched").
+    attempts = 3
+    items: list = []
+    for attempt in range(1, attempts + 1):
+        try:
+            # Start the Apify actor and wait for it to finish (up to 5 min).
+            # The actor scrapes Twitter's frontend and returns structured data.
+            actor_input: dict = {
+                "twitterHandles": [twitter_handle],
+                "maxItems": max_items,
+                "sort": "Latest",
+            }
+            # minimumFavorites tells the Apify actor to only return tweets
+            # above this like threshold. Used by the TikTok pipeline to grab
+            # "outlier" tweets (viral content worth turning into videos).
+            if min_favorites is not None:
+                actor_input["minimumFavorites"] = min_favorites
 
-        run_resp = httpx.post(
-            "https://api.apify.com/v2/acts/apidojo~tweet-scraper/runs",
-            params={"waitForFinish": 300},
-            headers=apify_headers,
-            json=actor_input,
-            timeout=360,
-        )
-        run_resp.raise_for_status()
-        dataset_id = run_resp.json()["data"]["defaultDatasetId"]
+            run_resp = httpx.post(
+                "https://api.apify.com/v2/acts/apidojo~tweet-scraper/runs",
+                params={"waitForFinish": 300},
+                headers=apify_headers,
+                json=actor_input,
+                timeout=360,
+            )
+            run_resp.raise_for_status()
+            dataset_id = run_resp.json()["data"]["defaultDatasetId"]
 
-        # Fetch the scraped items from the Apify dataset
-        items_resp = httpx.get(
-            f"https://api.apify.com/v2/datasets/{dataset_id}/items",
-            headers=apify_headers,
-            timeout=60,
-        )
-        items_resp.raise_for_status()
-        items = items_resp.json()
-    except httpx.HTTPError as e:
-        logger.error("Apify request failed: %s", e)
+            # Fetch the scraped items from the Apify dataset
+            items_resp = httpx.get(
+                f"https://api.apify.com/v2/datasets/{dataset_id}/items",
+                headers=apify_headers,
+                timeout=60,
+            )
+            items_resp.raise_for_status()
+            items = items_resp.json()
+        except httpx.HTTPError as e:
+            logger.error("Apify request failed (attempt %d/%d): %s", attempt, attempts, e)
+            items = []
+        else:
+            error_items = [it for it in items if isinstance(it, dict) and it.get("error")]
+            if not error_items:
+                break
+            logger.warning(
+                "Apify returned an error item for @%s (attempt %d/%d): code=%s message=%s",
+                twitter_handle, attempt, attempts,
+                error_items[0].get("code"), error_items[0].get("message"),
+            )
+            items = []
+        if attempt < attempts:
+            time.sleep(5 * attempt)
+    else:
+        logger.error("Apify fetch for @%s failed after %d attempts", twitter_handle, attempts)
         return []
 
     # Filter to tweets within the lookback window. cutoff=None disables
