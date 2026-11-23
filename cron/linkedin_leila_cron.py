@@ -31,11 +31,13 @@ The Alex `linkedin-pipeline` cron is untouched — it's a separate requeue-off-
 Facebook flow with its own Render service and its own dedup state.
 """
 
+import csv
 import logging
 import os
 import sys
 import uuid
 from datetime import timedelta
+from pathlib import Path
 
 from core.buffer import send_to_buffer
 from core.content_gen_client import generate_content
@@ -103,6 +105,11 @@ LINKEDIN_LEILA_CAPTION = ""
 # tweets deep including the profile round). Bounds Apify spend per run.
 _WIDE_MAX_ROUNDS = 5
 
+# Pre-filtered bank of old Leila tweets, built by scripts/build_leila_bank.py.
+# Lives in the repo (not a DB table) so it ships with the Render checkout and
+# needs no migration; "already posted" is still decided by the posts table.
+LEILA_BANK_PATH = Path(__file__).resolve().parent.parent / "data" / "LeilaTweetBank.csv"
+
 
 def _select_postable(tweets: list[dict], *, wide: bool) -> tuple[list[dict], int, int]:
     """Dedup against the posts table and filter to clean standalone quotes.
@@ -153,6 +160,28 @@ def _select_postable(tweets: list[dict], *, wide: bool) -> tuple[list[dict], int
         if wide:
             break
     return new_tweets, duplicates, filtered
+
+
+def _select_from_bank() -> list[dict]:
+    """Pick the most-liked bank tweet that hasn't been queued yet.
+
+    Bank rows were already regex+LLM filtered when the bank was built, so only
+    the dedup against the posts table is re-checked here (a tweet posted since
+    the build must not repeat). Returns [] when the bank file is missing or
+    every row has been used — the caller then falls back to scraping.
+    """
+    if not LEILA_BANK_PATH.exists():
+        logger.info("No Leila bank at %s — skipping bank draw", LEILA_BANK_PATH)
+        return []
+    with LEILA_BANK_PATH.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    rows.sort(key=lambda r: int(r.get("favorite_count") or 0), reverse=True)
+    for row in rows:
+        if not post_caption_exists("linkedin_leila", row["text"]):
+            logger.info("Bank draw: picked tweet %s (%s likes)", row["tweet_id"], row["favorite_count"])
+            return [{"id": row["tweet_id"], "text": row["text"]}]
+    logger.warning("Leila bank exhausted (%d rows, all already posted)", len(rows))
+    return []
 
 
 def main() -> None:
@@ -227,6 +256,10 @@ def main() -> None:
                 duplicates,
                 filtered,
             )
+            # Preferred source: the pre-built bank of old tweets. Only when it
+            # is missing/used up do we spend Apify runs paging backward.
+            new_tweets = _select_from_bank()
+            duplicates = filtered = 0
             # The scraper returns only ~40-140 tweets per call however high
             # max_items is, and Leila's most recent ones are usually already
             # queued. So walk backward: round 0 is the profile timeline,
@@ -235,7 +268,7 @@ def main() -> None:
             # round that yields a postable tweet. Each round costs one
             # Apify run plus a dedup/LLM scan, hence the small cap.
             until_date: str | None = None
-            for round_no in range(_WIDE_MAX_ROUNDS):
+            for round_no in range(0 if new_tweets else _WIDE_MAX_ROUNDS):
                 wide = fetch_apify_tweets(
                     twitter_handle,
                     max_items=300,
