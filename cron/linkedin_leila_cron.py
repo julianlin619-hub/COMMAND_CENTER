@@ -7,9 +7,9 @@ quote-card PNGs and queues them on Buffer's Leila LinkedIn channel.
 Phases (each logged as its own cron_runs row):
   Phase 0 — SOURCE: Apify-scrape recent @LeilaHormozi tweets. Tries a 24-hour
             window first; if nothing postable survives filtering, fetches
-            the latest 100 tweets ignoring time and posts exactly one fresh
+            the latest 300 tweets ignoring time and posts exactly one fresh
             (not-yet-queued) tweet from that list. Guarantees a daily
-            LinkedIn post unless every one of Leila's 100 most recent tweets
+            LinkedIn post unless every one of Leila's 300 most recent tweets
             is a retweet/link or has already been quote-carded — replaces
             the older 72-hour fallback, which still produced 0 posts on
             quiet days.
@@ -112,7 +112,7 @@ def _select_postable(tweets: list[dict], *, wide: bool) -> tuple[list[dict], int
 
     Returns (new_tweets, duplicates, filtered). When wide=True, output is
     capped to a single fresh post: the break fires only after an append, so
-    a rejected most-recent tweet keeps the scan going through the latest 100
+    a rejected most-recent tweet keeps the scan going through the latest 300
     until one passes. The goal on the wide path is "one LinkedIn post per
     quiet day," not "burn down Leila's entire backlog."
     """
@@ -209,7 +209,7 @@ def main() -> None:
         # fallback on the postable count fixes that.
         #
         # The 1-year lookback on the wide call is a deliberate "effectively no
-        # time filter" — we request the latest 100 tweets sorted Latest, so the
+        # time filter" — we request the latest 300 tweets sorted Latest, so the
         # date filter in core/content_sources.py becomes a no-op for any account
         # that's tweeted within the past year. Done this way to avoid changing
         # fetch_apify_tweets' signature, which Threads-Leila also depends on.
@@ -219,13 +219,13 @@ def main() -> None:
         if not new_tweets:
             logger.info(
                 "No postable tweets in 24h window for @%s (%d raw, %d duplicates, "
-                "%d filtered) — fetching latest 100 to pick one",
+                "%d filtered) — fetching latest 300 to pick one",
                 twitter_handle,
                 len(tweets),
                 duplicates,
                 filtered,
             )
-            wide = fetch_apify_tweets(twitter_handle, max_items=100, hours_lookback=24 * 365)
+            wide = fetch_apify_tweets(twitter_handle, max_items=300, hours_lookback=24 * 365)
             new_tweets, duplicates, filtered = _select_postable(wide, wide=True)
             used_wide_fallback = True
 
@@ -243,8 +243,15 @@ def main() -> None:
         sys.exit(1)
 
     if not new_tweets:
-        logger.info("No new tweets to process — exiting before generation.")
-        return
+        # Reaching here means even the 300-tweet wide scan found nothing
+        # (or Apify kept erroring after retries). Exit non-zero so Render
+        # shows a failed run instead of a green "success" that hid a
+        # missed daily post.
+        logger.error(
+            "No postable tweets found for @%s even after the wide fallback — failing the run.",
+            twitter_handle,
+        )
+        sys.exit(1)
 
     # ─────────────────────────────────────────────────────────────────────
     # PHASE 1: Generate 1080×1080 PNG quote cards via dashboard endpoint
