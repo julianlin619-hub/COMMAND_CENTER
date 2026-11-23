@@ -39,6 +39,7 @@ def fetch_apify_tweets(
     max_items: int = 50,
     hours_lookback: int | None = 24,
     min_favorites: int | None = None,
+    until_date: str | None = None,
 ) -> list[dict]:
     """Scrape recent tweets from a Twitter account via Apify.
 
@@ -58,6 +59,13 @@ def fetch_apify_tweets(
         min_favorites: If set, passed as minimumFavorites to the Apify actor
             AND used for post-fetch filtering. The TikTok pipeline uses this
             to only grab high-engagement "outlier" tweets (e.g. 4000+ likes).
+        until_date: "YYYY-MM-DD". When set, the actor runs a search query
+            (`from:handle until:date`, replies and native retweets excluded)
+            instead of reading the profile timeline. The profile timeline
+            caps out at ~40-140 tweets no matter how high max_items is; a
+            search is capped the same way, but `until:` lets a caller page
+            backward in windows to reach older tweets (see the wide
+            fallback in cron/linkedin_leila_cron.py).
 
     Returns:
         List of dicts with 'id', 'text', 'created_at', 'url', and
@@ -86,11 +94,14 @@ def fetch_apify_tweets(
         try:
             # Start the Apify actor and wait for it to finish (up to 5 min).
             # The actor scrapes Twitter's frontend and returns structured data.
-            actor_input: dict = {
-                "twitterHandles": [twitter_handle],
-                "maxItems": max_items,
-                "sort": "Latest",
-            }
+            actor_input: dict = {"maxItems": max_items, "sort": "Latest"}
+            if until_date:
+                actor_input["searchTerms"] = [
+                    f"from:{twitter_handle} -filter:replies -filter:nativeretweets "
+                    f"until:{until_date}"
+                ]
+            else:
+                actor_input["twitterHandles"] = [twitter_handle]
             # minimumFavorites tells the Apify actor to only return tweets
             # above this like threshold. Used by the TikTok pipeline to grab
             # "outlier" tweets (viral content worth turning into videos).
